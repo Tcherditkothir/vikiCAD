@@ -369,6 +369,36 @@ void MainWindow::toggleUnits()
                                                                : QStringLiteral("millimeters")));
 }
 
+void MainWindow::openPath(const QString& path)
+{
+    QString error;
+    if (path.endsWith(QLatin1String(".vkd"), Qt::CaseInsensitive)) {
+        auto doc = NativeStore::load(path, error);
+        if (doc)
+            adoptDocument(std::move(doc));
+        else
+            m_commandBar->appendHistory(QStringLiteral("! %1").arg(error));
+        return;
+    }
+#ifdef VIKICAD_HAS_DXF
+    if (path.endsWith(QLatin1String(".dxf"), Qt::CaseInsensitive) ||
+        path.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)) {
+        DxfImportResult r = path.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)
+                                ? importDwg(path)
+                                : importDxf(path);
+        if (r.ok) {
+            adoptDocument(std::move(r.document));
+            m_commandBar->appendHistory(
+                QStringLiteral("Imported %1 entities from %2").arg(r.imported).arg(path));
+        } else {
+            m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+        }
+        return;
+    }
+#endif
+    m_commandBar->appendHistory(QStringLiteral("! unsupported file: %1").arg(path));
+}
+
 void MainWindow::newFile()
 {
     adoptDocument(std::make_unique<Document>());

@@ -14,5 +14,8 @@ int main(int argc, char** argv)
 
     viki::MainWindow window;
     window.show();
+    const QStringList args = QApplication::arguments();
+    if (args.size() > 1)
+        window.openPath(args.at(1));
     return QApplication::exec();
 }

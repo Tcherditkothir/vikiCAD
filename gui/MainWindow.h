@@ -27,6 +27,9 @@ public:
     MainWindow();
     ~MainWindow() override;
 
+    // Opens any supported file (used for command-line / desktop launch).
+    void openPath(const QString& path);
+
 private slots:
     void onCommandEntered(const QString& line);
     void onInteraction();

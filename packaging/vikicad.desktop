@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VikiCAD
+GenericName=CAD 2D/3D
+Comment=Dessin technique 2D et solides 3D
+Exec=/home/lex/.local/bin/vikicad %f
+Icon=vikicad
+Terminal=false
+Categories=Graphics;Engineering;
+MimeType=application/x-vikicad;image/vnd.dxf;image/vnd.dwg;
+StartupWMClass=vikicad
