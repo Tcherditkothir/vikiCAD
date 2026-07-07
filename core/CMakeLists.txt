@@ -27,12 +27,16 @@ add_library(vikicore STATIC
     cmd/CommandsBlock.cpp
     cmd/CommandsArrayNote.cpp
     cmd/CommandsLayout.cpp
+    cmd/Commands3D.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp
     io/PdfPlotter.cpp
     script/ScriptRunner.cpp
     solid/OcctOps.cpp
+    solid/SolidEntity.cpp
+    solid/SolidOps.cpp
+    io/StepIo.cpp
 )
 
 if(VIKICAD_HAS_DXF)
@@ -46,14 +50,17 @@ target_link_libraries(vikicore
     PUBLIC
         Qt6::Core
         Qt6::Gui
+    PUBLIC
+        # OCCT modeling toolkits — public because SolidEntity.h exposes
+        # TopoDS_Shape to consumers (visualization stays out of core).
+        TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
+        TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset
+        TKDESTEP TKXSBase TKShHealing
     PRIVATE
         viki_warnings
         SQLite::SQLite3
-        # OCCT modeling toolkits (visualization stays out of core)
-        TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
-        TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset
 )
-target_include_directories(vikicore SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+target_include_directories(vikicore SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
 if(VIKICAD_HAS_DXF)
     target_link_libraries(vikicore PRIVATE dxfrw)

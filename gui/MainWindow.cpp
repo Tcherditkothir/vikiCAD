@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QShortcut>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QLabel>
 #include <QMenuBar>
@@ -21,6 +22,7 @@
 #include "io/NativeStore.h"
 #include "io/QueryJson.h"
 #include "ipc/RpcServer.h"
+#include "occview/OcctViewWidget.h"
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
@@ -32,7 +34,11 @@ MainWindow::MainWindow()
     resize(1400, 860);
 
     m_canvas = new CanvasWidget(this);
-    setCentralWidget(m_canvas);
+    m_occtView = new OcctViewWidget(this);
+    m_viewStack = new QStackedWidget(this);
+    m_viewStack->addWidget(m_canvas);
+    m_viewStack->addWidget(m_occtView);
+    setCentralWidget(m_viewStack);
 
     m_commandBar = new CommandBar(this);
     auto* commandDock = new QDockWidget(QStringLiteral("Command"), this);
@@ -89,6 +95,7 @@ MainWindow::MainWindow()
     makeToggle(QStringLiteral("GRID"), false, [this](bool on) { m_canvas->setGridSnap(on); });
     makeToggle(QStringLiteral("ORTHO"), false, [this](bool on) { m_canvas->setOrtho(on); });
     makeToggle(QStringLiteral("POLAR"), false, [this](bool on) { m_canvas->setPolar(on); });
+    makeToggle(QStringLiteral("3D"), false, [this](bool on) { toggle3D(on); });
 
     m_unitsBtn = new QToolButton(this);
     m_unitsBtn->setText(QStringLiteral("mm"));
@@ -128,6 +135,20 @@ MainWindow::MainWindow()
 
     loadShortcuts();
     m_commandBar->focusInput();
+}
+
+void MainWindow::toggle3D(bool on)
+{
+    if (on) {
+        m_occtView->refreshFrom(*m_doc);
+        m_viewStack->setCurrentWidget(m_occtView);
+        if (!m_occtView->isReady())
+            m_commandBar->appendHistory(
+                QStringLiteral("3D view unavailable (no OpenGL/X11 in this session)"));
+    } else {
+        m_viewStack->setCurrentWidget(m_canvas);
+        m_canvas->markDocumentDirty();
+    }
 }
 
 QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& params)

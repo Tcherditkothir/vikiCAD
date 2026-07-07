@@ -9,12 +9,14 @@
 #include "doc/SelectionSet.h"
 
 class QLabel;
+class QStackedWidget;
 class QToolButton;
 
 namespace viki {
 
 class CanvasWidget;
 class CommandBar;
+class OcctViewWidget;
 class LayerPanel;
 class PropertiesPanel;
 class RpcServer;
@@ -54,7 +56,10 @@ private:
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
     RpcServer* m_rpc = nullptr;
+    OcctViewWidget* m_occtView = nullptr;
+    QStackedWidget* m_viewStack = nullptr;
 
+    void toggle3D(bool on);
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);
     void loadShortcuts();
 };

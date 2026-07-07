@@ -16,6 +16,7 @@
 #endif
 #include "io/NativeStore.h"
 #include "io/PdfPlotter.h"
+#include "io/StepIo.h"
 #include "io/QueryJson.h"
 #include "script/ScriptRunner.h"
 #include "solid/OcctOps.h"
@@ -62,6 +63,8 @@ int printUsage(FILE* out)
         "  vikicad-cli import IN.dxf --save-as OUT.vkd\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
+        "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
+        "  vikicad-cli import IN.step --save-as OUT.vkd\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
@@ -195,9 +198,24 @@ int cmdImport(const QStringList& args)
 #else
     if (args.size() < 3 || args[1] != QLatin1String("--save-as"))
         return emitError(QStringLiteral("E_ARGS"),
-                         QStringLiteral("usage: import IN.dxf --save-as OUT.vkd"));
+                         QStringLiteral("usage: import IN.dxf|IN.step --save-as OUT.vkd"));
     const QString inPath = args[0];
     const QString outPath = args[2];
+
+    if (inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
+        inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive)) {
+        std::unique_ptr<Document> doc;
+        const StepResult r = importStep(inPath, doc);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_STEP"), r.error);
+        QString error;
+        if (!NativeStore::save(*doc, outPath, error))
+            return emitError(QStringLiteral("E_SAVE"), error);
+        return emitOk(QJsonObject{{QStringLiteral("solids"), r.solids},
+                                  {QStringLiteral("sidecarNotes"), r.notes},
+                                  {QStringLiteral("savedTo"), outPath}});
+    }
+
     DxfImportResult r = importDxf(inPath);
     if (!r.ok)
         return emitError(QStringLiteral("E_IMPORT"), r.error);
@@ -241,6 +259,16 @@ int cmdExport(const QStringList& args)
     const auto doc = NativeStore::load(inPath, error);
     if (!doc)
         return emitError(QStringLiteral("E_OPEN"), error);
+
+    if (outPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
+        outPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive)) {
+        const StepResult r = exportStep(*doc, outPath);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_STEP"), r.error);
+        return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
+                                  {QStringLiteral("solids"), r.solids},
+                                  {QStringLiteral("sidecarNotes"), r.notes}});
+    }
 
     if (outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive)) {
         QString layoutName;

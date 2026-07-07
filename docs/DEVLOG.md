@@ -122,3 +122,14 @@ Tag : `m5`.
 - **Mesures (build DEBUG, CLI)** : création 10k commandes + save = 0,19 s ; load+bounds = 0,05 s ; load+JSON complet (1,7 Mo) = 0,10 s ; load+édit+save = 0,09 s ; export DXF = 0,14 s ; export PDF = 0,14 s ; réimport DXF = 0,13 s. **Porte de décision M6 : passée très largement — le scan linéaire et QPainter restent ; pas de R-tree nécessaire.**
 - **ASan/UBSan** : a attrapé un **vrai use-after-free** dans TRIM/BREAK (copyStyle lisait l'entité source APRÈS removeEntity l'ait détruite — marchait « par chance » en pratique). Corrigé en capturant calque+couleur avant la suppression. 71/71 verts sous sanitizers.
 - La partie « deux semaines d'usage réel quotidien » de M6 appartient à Lex — en cours en parallèle du développement 3D.
+
+## 2026-07-07 — Clôture M7 : cœur 3D ✅
+
+- **SolidEntity** : wrapper TopoDS_Shape, sérialisation BinTools en base64 dans le JSON (un seul sérialiseur pour .vkd ET l'undo — l'undo/redo des solides marche gratuitement, testé). Rendu 2D = empreinte XY + étiquette `[3D LxlxH]` ; la vraie visu est la vue OCCT. Transformations 2D relevées en 3D (rotation Z + translation + échelle uniforme, miroir → échelle négative).
+- **Profils → fils OCCT** : cercles, polylignes fermées (segments + bulges → GC_MakeArcOfCircle), ellipses (aplaties), et **chaînage automatique** de lignes/arcs libres en boucles fermées. WORKPLANE XY|OFFSET z (plans sur face : différés à la GUI 3D, consigné).
+- **EXTRUDE/REVOLVE/UNION/SUBTRACT/INTERSECT** : BRepPrimAPI_MakePrism/MakeRevol + BRepAlgoAPI ; profils consommés, résultat = solide journalisé. Volumes vérifiés exacts en tests (boîte, cylindre, triangle chaîné, Pappus pour la révolution, soustraction de perçage).
+- **STEP** : STEPControl_Reader/Writer (TKDESTEP), un SolidEntity par SOLID à l'import, **sidecar `.vikinotes.json` toujours écrit/relu** (Plan B du plan de risques — les notes survivent au STEP). **OCCT écrivait ses statistiques sur stdout et corrompait le JSON du CLI** → messenger réduit au silence.
+- **Vue 3D OCCT** : OcctViewWidget (AIS ombré, trièdre, rotation/pan/zoom souris) dans un QStackedWidget avec bouton « 3D » dans la barre d'état ; dégradation propre sans OpenGL/X (offscreen).
+- **79/79 tests verts.** Sortie M7 : flasque construite en script (plaque + moyeu via UNION, alésage + perçage via SUBTRACT) → STEP 916 entités → réimport avec note sidecar intacte.
+
+Tag : `m7`.

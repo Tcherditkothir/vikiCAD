@@ -4,6 +4,7 @@
 #include "ArrayEntity.h"
 #include "Block.h"
 #include "StickyNote.h"
+#include "solid/SolidEntity.h"
 #include "Entities.h"
 #include "EntitiesEx.h"
 
@@ -43,6 +44,8 @@ std::unique_ptr<Entity> createEntityByType(const QString& typeName)
         return std::make_unique<ArrayEntity>();
     if (typeName == QLatin1String("sticky_note"))
         return std::make_unique<StickyNoteEntity>();
+    if (typeName == QLatin1String("solid"))
+        return std::make_unique<SolidEntity>();
     return nullptr;
 }
 
