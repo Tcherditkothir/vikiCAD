@@ -1,5 +1,10 @@
 #include "DxfImporter.h"
 
+#include <QDir>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+
 #include <drw_interface.h>
 #include <libdwgr.h>
 #include <libdxfrw.h>
@@ -485,18 +490,53 @@ DxfImportResult importDxf(const QString& path)
     return finish(builder);
 }
 
+namespace {
+
+// AC1032 (2018+) DWGs are beyond libdxfrw's reader. Fall back to GNU
+// LibreDWG's dwg2dxf converter when it is installed (PATH or ~/.local/bin).
+DxfImportResult importDwgViaLibredwg(const QString& path, const QString& reason)
+{
+    DxfImportResult result;
+    QString tool = QStandardPaths::findExecutable(QStringLiteral("dwg2dxf"));
+    if (tool.isEmpty())
+        tool = QStandardPaths::findExecutable(
+            QStringLiteral("dwg2dxf"),
+            {QDir::homePath() + QStringLiteral("/.local/bin")});
+    if (tool.isEmpty()) {
+        result.error = reason +
+                       QStringLiteral(" — and the dwg2dxf fallback converter "
+                                      "(GNU LibreDWG) is not installed");
+        return result;
+    }
+    QTemporaryDir tmp;
+    const QString dxfPath = tmp.filePath(QStringLiteral("converted.dxf"));
+    QProcess proc;
+    proc.start(tool, {QStringLiteral("-y"), QStringLiteral("-o"), dxfPath, path});
+    if (!proc.waitForFinished(120000) || proc.exitCode() != 0 ||
+        !QFile::exists(dxfPath)) {
+        result.error =
+            QStringLiteral("dwg2dxf conversion failed: %1")
+                .arg(QString::fromLocal8Bit(proc.readAllStandardError()).left(300));
+        return result;
+    }
+    DxfImportResult converted = importDxf(dxfPath);
+    if (converted.ok)
+        converted.skippedTypes.append(QStringLiteral("via-dwg2dxf"));
+    return converted;
+}
+
+} // namespace
+
 DxfImportResult importDwg(const QString& path)
 {
     Builder builder;
     dwgR reader(path.toUtf8().constData());
     if (!reader.read(&builder, /*ext=*/true)) {
-        DxfImportResult result;
-        result.error =
-            QStringLiteral("failed to parse DWG (version too new or damaged?): %1 "
-                           "[dwg error %2]")
-                .arg(path)
+        const QString reason =
+            QStringLiteral("libdxfrw cannot read this DWG (2018+ format or "
+                           "damaged) [dwg error %1]")
                 .arg(int(reader.getError()));
-        return result;
+        return importDwgViaLibredwg(path, reason);
     }
     return finish(builder);
 }

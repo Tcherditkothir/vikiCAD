@@ -144,3 +144,13 @@ Tag : `m7`.
 **Le plan initial M0→M8 est intégralement livré, en une session, le jour de sa conception.** Reste ouvert : M6-usage (les deux semaines de pratique réelle de Lex), et le backlog v2 consigné au fil du DEVLOG (pick-point hatch, MLEADER, plans de travail sur face, picking d'arêtes 3D, XDATA VIKI_ARRAY, éditeur MText in-canvas, dialogue DimStyle, R-tree si jamais nécessaire).
 
 Tag : `m8`.
+
+## 2026-07-07 — M6-usage, première session réelle de Lex
+
+**Premier vrai fichier ouvert** : `Ligne de temps.dxf` (clé USB) — 19 340 entités, 26 calques, import en ~0,1 s, 92 entités sautées (viewports papier, solid-fills). Rendu correct. Retours de Lex et actions :
+
+1. **« On se croirait au début des années 2000 »** → thème sombre complet (Fusion + palette + stylesheet : docks, tables, boutons d'état, barre de commande monospace à prompt accentué). `gui/Theme.cpp`.
+2. **STEP réel** : `BASE_BLACK.step` (clé USB) importé → 1 solide, bornes cohérentes. ✅
+3. **« Ma bibliothèque est surtout en DWG »** — le DWG n'était PAS au plan (DXF seulement). Solution en deux étages :
+   - `importDwg()` via le lecteur DWG de libdxfrw (libdwgr, R14→2013) — même pipeline Builder que le DXF, dispatch par extension partout (CLI + GUI).
+   - **Découverte** : la Pyramide de Lex est en DWG **AC1032 (2018)**, au-delà de libdwgr. Fallback : conversion via `dwg2dxf` de **GNU LibreDWG** (compilé depuis ftp.gnu.org — pas packagé Ubuntu ; premier essai cassé par -Werror sous GCC 15, recompilé avec -Wno-error) détecté dans PATH/~/.local/bin, QProcess + import du DXF temporaire.
