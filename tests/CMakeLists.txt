@@ -3,7 +3,11 @@ find_package(Catch2 3 REQUIRED)
 add_executable(vikicad-tests
     test_version.cpp
     test_vec2d.cpp
+    test_geom_util.cpp
     test_occt_smoke.cpp
+    test_document.cpp
+    test_commands.cpp
+    test_store.cpp
 )
 
 target_link_libraries(vikicad-tests PRIVATE vikicore Catch2::Catch2WithMain viki_warnings)

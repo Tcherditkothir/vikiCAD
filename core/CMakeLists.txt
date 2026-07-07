@@ -1,7 +1,20 @@
+find_package(SQLite3 REQUIRED)
+
 add_library(vikicore STATIC
     Version.cpp
     geom/Vec2d.cpp
+    geom/Xform2d.cpp
+    geom/GeomUtil.cpp
+    doc/Entity.cpp
+    doc/Entities.cpp
+    doc/EntityFactory.cpp
     doc/Document.cpp
+    render/HitTest.cpp
+    cmd/Input.cpp
+    cmd/CommandProcessor.cpp
+    cmd/Commands2D.cpp
+    io/NativeStore.cpp
+    script/ScriptRunner.cpp
     solid/OcctOps.cpp
 )
 
@@ -14,6 +27,7 @@ target_link_libraries(vikicore
         Qt6::Gui
     PRIVATE
         viki_warnings
+        SQLite::SQLite3
         # OCCT modeling toolkits (visualization stays out of core)
         TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
         TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset

@@ -1,27 +1,105 @@
 #pragma once
 
+#include <functional>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include <QJsonObject>
 #include <QString>
+
+#include "Entity.h"
+#include "Layer.h"
 
 namespace viki {
 
 enum class DisplayUnits { Millimeters, Inches };
 
-// M0 stub. The real Document (entity ownership, layers, transaction journal)
-// lands in M1; only what the skeleton targets need exists here.
+// One recorded mutation inside a transaction. Inverses are replayed on undo.
+struct Change {
+    enum class Kind { Added, Removed, Modified };
+    Kind kind;
+    EntityId id;
+    QJsonObject before; // Removed / Modified
+    QJsonObject after;  // Added / Modified
+};
+
+struct Transaction {
+    QString name;
+    std::vector<Change> changes;
+};
+
+// The drawing database. ALL mutations go through addEntity / removeEntity /
+// beginModify+endModify so the undo journal and change notifications are
+// recorded at a single choke point — commands never write undo logic.
 class Document {
 public:
-    Document() = default;
+    Document();
 
-    QString name() const { return m_name; }
-    void setName(const QString& name) { m_name = name; }
+    // --- entity access
+    Entity* entity(EntityId id);
+    const Entity* entity(EntityId id) const;
+    // Draw order (insertion order). Iterate this for rendering and queries.
+    const std::vector<EntityId>& drawOrder() const { return m_drawOrder; }
+    size_t entityCount() const { return m_entities.size(); }
+    BBox2d extents() const;
 
-    // All stored geometry is always in mm; this only affects formatting/input.
+    // --- mutations (require an open transaction)
+    EntityId addEntity(std::unique_ptr<Entity> entity);
+    bool removeEntity(EntityId id);
+    // Capture-before / capture-after pair around any in-place edit.
+    Entity* beginModify(EntityId id);
+    void endModify(EntityId id);
+
+    // --- transactions / undo
+    void beginTransaction(const QString& name);
+    void commitTransaction();
+    void rollbackTransaction();
+    bool inTransaction() const { return m_openTransaction != nullptr; }
+    bool canUndo() const { return !m_undoStack.empty(); }
+    bool canRedo() const { return !m_redoStack.empty(); }
+    // Return the name of the undone/redone transaction, empty if none.
+    QString undo();
+    QString redo();
+
+    // --- layers
+    const std::vector<Layer>& layers() const { return m_layers; }
+    const Layer* layer(LayerId id) const;
+    uint32_t resolveColor(const Entity& e) const;
+
+    // --- settings
     DisplayUnits displayUnits() const { return m_displayUnits; }
     void setDisplayUnits(DisplayUnits u) { m_displayUnits = u; }
+    QString filePath() const { return m_filePath; }
+    void setFilePath(const QString& p) { m_filePath = p; }
+
+    // Change notification (any entity/undo mutation). GUI repaints on this.
+    void addChangeListener(std::function<void()> fn) { m_listeners.push_back(std::move(fn)); }
+
+    // Used by NativeStore on load: insert with a known id, no transaction.
+    void restoreEntity(std::unique_ptr<Entity> entity, EntityId id);
+    void setNextId(EntityId next) { m_nextId = next; }
+    EntityId nextId() const { return m_nextId; }
 
 private:
-    QString m_name = QStringLiteral("untitled");
+    void applyInverse(const Change& change);
+    void applyForward(const Change& change);
+    void notifyChanged();
+
+    std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
+    std::vector<EntityId> m_drawOrder;
+    EntityId m_nextId = 1;
+
+    std::unique_ptr<Transaction> m_openTransaction;
+    QJsonObject m_modifyBefore;
+    std::vector<Transaction> m_undoStack;
+    std::vector<Transaction> m_redoStack;
+    static constexpr size_t kMaxUndo = 100;
+
+    std::vector<Layer> m_layers;
     DisplayUnits m_displayUnits = DisplayUnits::Millimeters;
+    QString m_filePath;
+    std::vector<std::function<void()>> m_listeners;
 };
 
 } // namespace viki
