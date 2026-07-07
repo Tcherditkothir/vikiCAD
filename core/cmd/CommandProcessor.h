@@ -61,5 +61,6 @@ void registerBuiltinCommands(CommandProcessor& processor);
 // Individual groups (called by registerBuiltinCommands).
 void registerDrawCommands2(CommandProcessor& processor);
 void registerModifyCommands(CommandProcessor& processor);
+void registerEditCommands(CommandProcessor& processor);
 
 } // namespace viki

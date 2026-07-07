@@ -57,6 +57,18 @@ public:
     // quadrant). Perpendicular and intersection are computed by SnapEngine.
     virtual void snapPoints(std::vector<SnapPoint>& out) const { (void)out; }
 
+    // STRETCH: vertices inside `window` move by `delta`; the default moves
+    // the whole entity when it is entirely inside, else does nothing.
+    virtual void stretch(const BBox2d& window, const Vec2d& delta)
+    {
+        if (window.contains(bounds()))
+            transform(Xform2d::translation(delta));
+    }
+
+    // Grip points for direct editing; moveGrip relocates one of them.
+    virtual std::vector<Vec2d> gripPoints() const { return {}; }
+    virtual void moveGrip(int index, const Vec2d& to) { (void)index; (void)to; }
+
     // Serializes the full state (type + common + geometry). Used by the native
     // format, CLI queries and undo deltas alike.
     QJsonObject toJson() const;

@@ -10,6 +10,7 @@
 #include "cmd/CommandProcessor.h"
 #include "doc/SelectionSet.h"
 #ifdef VIKICAD_HAS_DXF
+#include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
 #include "io/NativeStore.h"
@@ -55,6 +56,7 @@ int printUsage(FILE* out)
         "              [--save] [--save-as OUT.vkd]\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "  vikicad-cli import IN.dxf --save-as OUT.vkd\n"
+        "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|2000|2004|2007|2010|2013|2018]\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
 }
@@ -229,6 +231,43 @@ int cmdImport(const QStringList& args)
 #endif
 }
 
+int cmdExport(const QStringList& args)
+{
+#ifndef VIKICAD_HAS_DXF
+    (void)args;
+    return emitError(QStringLiteral("E_NODXF"), QStringLiteral("built without DXF support"));
+#else
+    if (args.size() < 2)
+        return emitError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("usage: export FILE.vkd OUT.dxf [--dxf-version V]"));
+    const QString inPath = args[0];
+    const QString outPath = args[1];
+    QString version = QStringLiteral("2013");
+    const int vi = args.indexOf(QLatin1String("--dxf-version"));
+    if (vi >= 0 && vi + 1 < args.size())
+        version = args[vi + 1];
+
+    QString error;
+    const auto doc = NativeStore::load(inPath, error);
+    if (!doc)
+        return emitError(QStringLiteral("E_OPEN"), error);
+    const DxfExportResult r = exportDxf(*doc, outPath, version);
+    if (!r.ok)
+        return emitError(QStringLiteral("E_EXPORT"), r.error);
+
+    QJsonObject result;
+    result[QStringLiteral("exported")] = r.exported;
+    result[QStringLiteral("skipped")] = r.skipped;
+    QJsonArray st;
+    for (const QString& t : r.skippedTypes)
+        st.append(t);
+    result[QStringLiteral("skippedTypes")] = st;
+    result[QStringLiteral("savedTo")] = outPath;
+    result[QStringLiteral("dxfVersion")] = version;
+    return emitOk(result);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -254,6 +293,8 @@ int main(int argc, char** argv)
         return cmdNewOrOpen(verb, args);
     if (verb == QLatin1String("import"))
         return cmdImport(args);
+    if (verb == QLatin1String("export"))
+        return cmdExport(args);
 
     return emitError(QStringLiteral("E_UNKNOWN_VERB"),
                      QStringLiteral("unknown verb: %1").arg(verb));

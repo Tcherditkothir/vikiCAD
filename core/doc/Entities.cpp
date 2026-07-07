@@ -182,4 +182,81 @@ void ArcEntity::snapPoints(std::vector<SnapPoint>& out) const
     }
 }
 
+
+// ---- stretch & grips ---------------------------------------------------------
+
+void LineEntity::stretch(const BBox2d& window, const Vec2d& delta)
+{
+    if (window.contains(m_p1))
+        m_p1 += delta;
+    if (window.contains(m_p2))
+        m_p2 += delta;
+}
+
+std::vector<Vec2d> LineEntity::gripPoints() const
+{
+    return {m_p1, (m_p1 + m_p2) * 0.5, m_p2};
+}
+
+void LineEntity::moveGrip(int index, const Vec2d& to)
+{
+    switch (index) {
+    case 0: m_p1 = to; break;
+    case 1: { // midpoint grip moves the whole line
+        const Vec2d d = to - (m_p1 + m_p2) * 0.5;
+        m_p1 += d;
+        m_p2 += d;
+        break;
+    }
+    case 2: m_p2 = to; break;
+    default: break;
+    }
+}
+
+std::vector<Vec2d> CircleEntity::gripPoints() const
+{
+    return {m_center, m_center + Vec2d{m_radius, 0}, m_center + Vec2d{0, m_radius},
+            m_center - Vec2d{m_radius, 0}, m_center - Vec2d{0, m_radius}};
+}
+
+void CircleEntity::moveGrip(int index, const Vec2d& to)
+{
+    if (index == 0)
+        m_center = to;
+    else if (to.distanceTo(m_center) > kGeomTol)
+        m_radius = to.distanceTo(m_center);
+}
+
+std::vector<Vec2d> ArcEntity::gripPoints() const
+{
+    return {startPoint(), m_center + Vec2d::polar(m_radius, m_startAngle + m_sweep * 0.5),
+            endPoint(), m_center};
+}
+
+void ArcEntity::moveGrip(int index, const Vec2d& to)
+{
+    switch (index) {
+    case 0: { // start: re-aim start angle, keep end fixed
+        const double newStart = (to - m_center).angle();
+        const double end = m_startAngle + m_sweep;
+        m_startAngle = normalizeAngle(newStart);
+        m_sweep = ccwSweep(m_startAngle, end);
+        break;
+    }
+    case 1: // mid: change radius
+        if (to.distanceTo(m_center) > kGeomTol)
+            m_radius = to.distanceTo(m_center);
+        break;
+    case 2: { // end
+        const double newEnd = (to - m_center).angle();
+        m_sweep = ccwSweep(m_startAngle, newEnd);
+        break;
+    }
+    case 3: // center: move whole
+        m_center = to;
+        break;
+    default: break;
+    }
+}
+
 } // namespace viki

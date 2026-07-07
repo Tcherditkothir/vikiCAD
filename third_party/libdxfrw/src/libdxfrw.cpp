@@ -933,6 +933,14 @@ bool dxfRW::writeSpline(DRW_Spline *ent){
             writer->writeDouble(20, crd->y);
             writer->writeDouble(30, crd->z);
         }
+        /* VikiCAD patch 0001: also write fit points (codes 11/21/31) so
+           fit-point-only splines survive a round trip. */
+        for (int i = 0;  i< ent->nfit; i++){
+            auto crd = ent->fitlist.at(i);
+            writer->writeDouble(11, crd->x);
+            writer->writeDouble(21, crd->y);
+            writer->writeDouble(31, crd->z);
+        }
     } else {
         //RLZ: TODO convert spline in polyline (not exist in acad 12)
     }

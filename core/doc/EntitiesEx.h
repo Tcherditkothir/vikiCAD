@@ -25,6 +25,9 @@ public:
     void transform(const Xform2d& xf) override;
     void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const override;
     void snapPoints(std::vector<SnapPoint>& out) const override;
+    void stretch(const BBox2d& window, const Vec2d& delta) override;
+    std::vector<Vec2d> gripPoints() const override;
+    void moveGrip(int index, const Vec2d& to) override;
 
     const std::vector<PolyVertex>& vertices() const { return m_vertices; }
     bool isClosed() const { return m_closed; }
@@ -60,6 +63,8 @@ public:
     Vec2d majorAxis() const { return m_major; }
     double ratio() const { return m_ratio; }
     bool isFull() const { return nearEqual(m_endParam - m_startParam, 2.0 * M_PI, 1e-9); }
+    double startParam() const { return m_startParam; }
+    double endParam() const { return m_endParam; }
     Vec2d pointAt(double t) const
     {
         return m_center + m_major * std::cos(t) + m_major.perp() * (m_ratio * std::sin(t));
@@ -90,6 +95,7 @@ public:
     void transform(const Xform2d& xf) override;
     void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const override;
     void snapPoints(std::vector<SnapPoint>& out) const override;
+    void stretch(const BBox2d& window, const Vec2d& delta) override;
 
     int degree = 3;
     std::vector<Vec2d> controlPoints;

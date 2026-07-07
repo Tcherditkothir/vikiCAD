@@ -80,6 +80,16 @@ private:
     std::optional<SnapResult> m_activeSnap;
     Vec2d m_effectiveCursor;
 
+    // Grip editing (selection, no active command).
+    struct GripDrag {
+        bool active = false;
+        EntityId id = kInvalidEntityId;
+        int index = -1;
+    };
+    GripDrag m_grip;
+    std::optional<std::pair<EntityId, int>> gripAt(const QPointF& px) const;
+    void drawGrips(QPainter& p) const;
+
     QPointF m_cursorPx;
     bool m_panning = false;
     QPointF m_panLast;

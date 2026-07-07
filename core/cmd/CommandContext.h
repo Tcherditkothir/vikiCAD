@@ -34,6 +34,19 @@ public:
     Vec2d lastPoint() const { return m_lastPoint; }
     void setLastPoint(const Vec2d& p) { m_lastPoint = p; }
 
+    // World tolerance for point-driven entity picks (TRIM target, etc.).
+    // The GUI sets it from the zoom; headless falls back to a size-relative one.
+    void setPickTolerance(double tol) { m_pickTolerance = tol; }
+    double pickTolerance() const
+    {
+        if (m_pickTolerance > 0)
+            return m_pickTolerance;
+        const BBox2d ext = m_doc.extents();
+        return ext.isValid()
+                   ? std::max(1e-3, 1e-3 * std::max(ext.width(), ext.height()))
+                   : 1e-3;
+    }
+
     // Messages surfaced to the user (command bar history / CLI output).
     void info(const QString& msg) { m_messages.push_back(msg); }
     const std::vector<QString>& messages() const { return m_messages; }
@@ -44,6 +57,7 @@ private:
     SelectionSet& m_selection;
     ViewHook* m_view;
     Vec2d m_lastPoint;
+    double m_pickTolerance = 0.0;
     std::vector<QString> m_messages;
 };
 

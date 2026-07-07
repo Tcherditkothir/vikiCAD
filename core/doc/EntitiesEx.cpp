@@ -456,4 +456,38 @@ void PointEntity::snapPoints(std::vector<SnapPoint>& out) const
     out.push_back({m_pos, SnapKind::Endpoint});
 }
 
+
+// ---- stretch & grips ---------------------------------------------------------
+
+void PolylineEntity::stretch(const BBox2d& window, const Vec2d& delta)
+{
+    for (PolyVertex& v : m_vertices)
+        if (window.contains(v.pos))
+            v.pos += delta;
+}
+
+std::vector<Vec2d> PolylineEntity::gripPoints() const
+{
+    std::vector<Vec2d> out;
+    for (const PolyVertex& v : m_vertices)
+        out.push_back(v.pos);
+    return out;
+}
+
+void PolylineEntity::moveGrip(int index, const Vec2d& to)
+{
+    if (index >= 0 && index < int(m_vertices.size()))
+        m_vertices[size_t(index)].pos = to;
+}
+
+void SplineEntity::stretch(const BBox2d& window, const Vec2d& delta)
+{
+    for (Vec2d& c : controlPoints)
+        if (window.contains(c))
+            c += delta;
+    for (Vec2d& f : fitPoints)
+        if (window.contains(f))
+            f += delta;
+}
+
 } // namespace viki

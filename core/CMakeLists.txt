@@ -5,6 +5,7 @@ add_library(vikicore STATIC
     geom/Vec2d.cpp
     geom/Xform2d.cpp
     geom/GeomUtil.cpp
+    geom/Intersect.cpp
     doc/Entity.cpp
     doc/Entities.cpp
     doc/EntityFactory.cpp
@@ -17,13 +18,15 @@ add_library(vikicore STATIC
     cmd/Commands2D.cpp
     cmd/CommandsDraw2.cpp
     cmd/CommandsModify.cpp
+    cmd/CommandsEdit.cpp
+    edit/EditOps.cpp
     io/NativeStore.cpp
     script/ScriptRunner.cpp
     solid/OcctOps.cpp
 )
 
 if(VIKICAD_HAS_DXF)
-    target_sources(vikicore PRIVATE io/DxfImporter.cpp)
+    target_sources(vikicore PRIVATE io/DxfImporter.cpp io/DxfExporter.cpp)
 endif()
 
 target_include_directories(vikicore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -294,6 +294,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     p.registerCommand(&make<ZoomCommand>, {QStringLiteral("Z")});
     registerDrawCommands2(p);
     registerModifyCommands(p);
+    registerEditCommands(p);
 }
 
 } // namespace viki

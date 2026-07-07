@@ -19,6 +19,7 @@ const QColor kCrosshair(140, 140, 140);
 const QColor kSelection(64, 200, 255);
 const QColor kPreview(255, 210, 90);
 const QColor kSnapGlyph(80, 255, 120);
+const QColor kGrip(60, 130, 246);
 const QColor kRubberWindow(90, 140, 255);
 const QColor kRubberCrossing(90, 220, 120);
 } // namespace
@@ -206,6 +207,9 @@ void CanvasWidget::paintEvent(QPaintEvent*)
         }
     }
 
+    if (m_processor && !m_processor->hasActiveCommand())
+        drawGrips(p);
+
     // Active-command preview, anchored at the effective (snapped) cursor.
     if (m_processor && m_processor->hasActiveCommand()) {
         PrimitiveList preview;
@@ -226,6 +230,20 @@ void CanvasWidget::paintEvent(QPaintEvent*)
                     path.closeSubpath();
                 p.drawPath(path);
             }
+        }
+    }
+
+    // Grip drag ghost.
+    if (m_grip.active && m_doc) {
+        if (const Entity* e = m_doc->entity(m_grip.id)) {
+            auto ghost = e->clone();
+            ghost->moveGrip(m_grip.index, m_effectiveCursor);
+            RenderContext gc;
+            gc.chordTolerance = m_camera.pixelsToWorld(0.5);
+            gc.pixelSize = m_camera.pixelsToWorld(1.0);
+            PrimitiveList gl;
+            ghost->buildPrimitives(gc, gl);
+            drawPrimitives(p, gl, kPreview);
         }
     }
 
@@ -270,8 +288,8 @@ Vec2d CanvasWidget::effectivePoint(const Vec2d& cursorWorld)
     if (!m_doc)
         return cursorWorld;
 
-    // 1. Object snap.
-    if (m_snapSettings.enabled && commandWantsPoint()) {
+    // 1. Object snap (also active while dragging a grip).
+    if (m_snapSettings.enabled && (commandWantsPoint() || m_grip.active)) {
         const std::optional<Vec2d> perpBase =
             m_processor->ctx().lastPoint().lengthSq() > 0
                 ? std::optional<Vec2d>(m_processor->ctx().lastPoint())
@@ -305,6 +323,41 @@ Vec2d CanvasWidget::effectivePoint(const Vec2d& cursorWorld)
     return p;
 }
 
+std::optional<std::pair<EntityId, int>> CanvasWidget::gripAt(const QPointF& px) const
+{
+    if (!m_doc || !m_selection)
+        return std::nullopt;
+    for (const EntityId id : m_selection->ids()) {
+        const Entity* e = m_doc->entity(id);
+        if (!e)
+            continue;
+        const auto grips = e->gripPoints();
+        for (size_t i = 0; i < grips.size(); ++i) {
+            const QPointF g = m_camera.worldToScreen(grips[i]);
+            if (QLineF(g, px).length() <= 6.0)
+                return std::make_pair(id, int(i));
+        }
+    }
+    return std::nullopt;
+}
+
+void CanvasWidget::drawGrips(QPainter& p) const
+{
+    if (!m_doc || !m_selection || m_selection->isEmpty())
+        return;
+    p.setPen(QPen(Qt::white, 0));
+    for (const EntityId id : m_selection->ids()) {
+        const Entity* e = m_doc->entity(id);
+        if (!e)
+            continue;
+        for (const Vec2d& g : e->gripPoints()) {
+            const QPointF s = m_camera.worldToScreen(g);
+            p.fillRect(QRectF(s.x() - 4, s.y() - 4, 8, 8),
+                       (m_grip.active && m_grip.id == id) ? kPreview : kGrip);
+        }
+    }
+}
+
 void CanvasWidget::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::MiddleButton) {
@@ -319,6 +372,13 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event)
             handleLeftClick(m_effectiveCursor, event->modifiers());
             return;
         }
+        // Grip drag takes precedence over selection.
+        if (const auto grip = gripAt(event->position())) {
+            m_grip.active = true;
+            m_grip.id = grip->first;
+            m_grip.index = grip->second;
+            return;
+        }
         // Otherwise: pick or start a rubber band, decided on release/move.
         m_rubberBand = true;
         m_rubberStart = event->position();
@@ -327,6 +387,8 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event)
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_processor)
+        m_processor->ctx().setPickTolerance(pickTolerance());
     m_cursorPx = event->position();
     if (m_panning) {
         m_camera.panPixels(event->position() - m_panLast);
@@ -343,6 +405,19 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::MiddleButton && m_panning) {
         m_panning = false;
         setCursor(Qt::BlankCursor);
+        return;
+    }
+    if (event->button() == Qt::LeftButton && m_grip.active) {
+        m_grip.active = false;
+        if (m_doc && m_doc->entity(m_grip.id)) {
+            m_doc->beginTransaction(QStringLiteral("GRIP EDIT"));
+            if (Entity* e = m_doc->beginModify(m_grip.id)) {
+                e->moveGrip(m_grip.index, m_effectiveCursor);
+                m_doc->endModify(m_grip.id);
+            }
+            m_doc->commitTransaction();
+        }
+        emit interaction();
         return;
     }
     if (event->button() == Qt::LeftButton && m_rubberBand) {

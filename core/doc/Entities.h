@@ -15,6 +15,9 @@ public:
     void transform(const Xform2d& xf) override;
     void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const override;
     void snapPoints(std::vector<SnapPoint>& out) const override;
+    void stretch(const BBox2d& window, const Vec2d& delta) override;
+    std::vector<Vec2d> gripPoints() const override;
+    void moveGrip(int index, const Vec2d& to) override;
 
     Vec2d p1() const { return m_p1; }
     Vec2d p2() const { return m_p2; }
@@ -41,6 +44,8 @@ public:
     void transform(const Xform2d& xf) override;
     void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const override;
     void snapPoints(std::vector<SnapPoint>& out) const override;
+    std::vector<Vec2d> gripPoints() const override;
+    void moveGrip(int index, const Vec2d& to) override;
 
     Vec2d center() const { return m_center; }
     double radius() const { return m_radius; }
@@ -67,6 +72,8 @@ public:
     void transform(const Xform2d& xf) override;
     void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const override;
     void snapPoints(std::vector<SnapPoint>& out) const override;
+    std::vector<Vec2d> gripPoints() const override;
+    void moveGrip(int index, const Vec2d& to) override;
 
     Vec2d center() const { return m_center; }
     double radius() const { return m_radius; }
