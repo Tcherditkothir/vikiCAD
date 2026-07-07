@@ -12,6 +12,9 @@ add_library(vikicore STATIC
     doc/Document.cpp
     doc/EntitiesEx.cpp
     doc/Annotations.cpp
+    doc/Block.cpp
+    doc/ArrayEntity.cpp
+    doc/StickyNote.cpp
     render/HitTest.cpp
     snap/SnapEngine.cpp
     cmd/Input.cpp
@@ -21,8 +24,13 @@ add_library(vikicore STATIC
     cmd/CommandsModify.cpp
     cmd/CommandsEdit.cpp
     cmd/CommandsAnnotate.cpp
+    cmd/CommandsBlock.cpp
+    cmd/CommandsArrayNote.cpp
+    cmd/CommandsLayout.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
+    io/QueryJson.cpp
+    io/PdfPlotter.cpp
     script/ScriptRunner.cpp
     solid/OcctOps.cpp
 )

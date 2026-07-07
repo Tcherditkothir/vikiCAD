@@ -1,6 +1,7 @@
 #include <cstdio>
 
-#include <QCoreApplication>
+#include <QGuiApplication>
+#include <QLocalSocket>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -14,6 +15,8 @@
 #include "io/DxfImporter.h"
 #endif
 #include "io/NativeStore.h"
+#include "io/PdfPlotter.h"
+#include "io/QueryJson.h"
 #include "script/ScriptRunner.h"
 #include "solid/OcctOps.h"
 
@@ -55,20 +58,13 @@ int printUsage(FILE* out)
         "  vikicad-cli open FILE.vkd [--exec \"CMD ...\"]... [--run script.vks]\n"
         "              [--save] [--save-as OUT.vkd]\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
+        "              [--notes] [--blocks] [--layouts]\n"
         "  vikicad-cli import IN.dxf --save-as OUT.vkd\n"
-        "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|2000|2004|2007|2010|2013|2018]\n"
+        "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
+        "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
+        "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
-}
-
-QJsonObject entityToJsonWithId(const Document& doc, EntityId id)
-{
-    const Entity* e = doc.entity(id);
-    QJsonObject obj = e->toJson();
-    obj[QStringLiteral("id")] = qint64(id);
-    const BBox2d b = e->bounds();
-    obj[QStringLiteral("bounds")] = QJsonArray{b.min.x, b.min.y, b.max.x, b.max.y};
-    return obj;
 }
 
 int cmdQuery(const QStringList& args)
@@ -84,34 +80,28 @@ int cmdQuery(const QStringList& args)
     const bool wantEntities = args.contains(QLatin1String("--entities"));
     const bool wantLayers = args.contains(QLatin1String("--layers"));
     const bool wantBounds = args.contains(QLatin1String("--bounds"));
+    const bool wantNotes = args.contains(QLatin1String("--notes"));
+    const bool wantBlocks = args.contains(QLatin1String("--blocks"));
+    const bool wantLayouts = args.contains(QLatin1String("--layouts"));
+    const bool anyFlag =
+        wantEntities || wantLayers || wantBounds || wantNotes || wantBlocks || wantLayouts;
 
     QJsonObject result;
     result[QStringLiteral("file")] = path;
     result[QStringLiteral("count")] = qint64(doc->entityCount());
 
-    if (wantEntities || (!wantLayers && !wantBounds)) {
-        QJsonArray entities;
-        for (const EntityId id : doc->drawOrder())
-            entities.append(entityToJsonWithId(*doc, id));
-        result[QStringLiteral("entities")] = entities;
-    }
-    if (wantLayers) {
-        QJsonArray layers;
-        for (const Layer& l : doc->layers())
-            layers.append(QJsonObject{
-                {QStringLiteral("id"), qint64(l.id)},
-                {QStringLiteral("name"), l.name},
-                {QStringLiteral("color"),
-                 QStringLiteral("#%1").arg(l.rgb, 6, 16, QLatin1Char('0'))},
-                {QStringLiteral("visible"), l.visible},
-                {QStringLiteral("locked"), l.locked}});
-        result[QStringLiteral("layers")] = layers;
-    }
-    if (wantBounds) {
-        const BBox2d b = doc->extents();
-        result[QStringLiteral("bounds")] =
-            b.isValid() ? QJsonArray{b.min.x, b.min.y, b.max.x, b.max.y} : QJsonArray{};
-    }
+    if (wantEntities || !anyFlag)
+        result[QStringLiteral("entities")] = queryjson::entitiesJson(*doc);
+    if (wantLayers)
+        result[QStringLiteral("layers")] = queryjson::layersJson(*doc);
+    if (wantBounds)
+        result[QStringLiteral("bounds")] = queryjson::boundsJson(*doc);
+    if (wantNotes)
+        result[QStringLiteral("notes")] = queryjson::notesJson(*doc);
+    if (wantBlocks)
+        result[QStringLiteral("blocks")] = queryjson::blocksJson(*doc);
+    if (wantLayouts)
+        result[QStringLiteral("layouts")] = queryjson::layoutsJson(*doc);
     return emitOk(result);
 }
 
@@ -251,6 +241,47 @@ int cmdExport(const QStringList& args)
     const auto doc = NativeStore::load(inPath, error);
     if (!doc)
         return emitError(QStringLiteral("E_OPEN"), error);
+
+    if (outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive)) {
+        QString layoutName;
+        const int li = args.indexOf(QLatin1String("--layout"));
+        if (li >= 0 && li + 1 < args.size())
+            layoutName = args[li + 1];
+        Layout* layout = nullptr;
+        if (!layoutName.isEmpty()) {
+            layout = doc->layoutByName(layoutName);
+            if (!layout)
+                return emitError(QStringLiteral("E_LAYOUT"),
+                                 QStringLiteral("no layout named %1").arg(layoutName));
+        } else if (!doc->layouts().empty()) {
+            layout = const_cast<Layout*>(&doc->layouts().front());
+        }
+        Layout autoLayout;
+        if (!layout) {
+            // No layout defined: fit everything on A4 landscape.
+            autoLayout.name = QStringLiteral("AUTO");
+            Viewport vp;
+            vp.x = vp.y = 10;
+            vp.w = 277;
+            vp.h = 190;
+            const BBox2d ext = doc->extents();
+            if (ext.isValid()) {
+                vp.center = ext.center();
+                vp.scale = 0.95 * std::min(vp.w / std::max(ext.width(), 1e-6),
+                                           vp.h / std::max(ext.height(), 1e-6));
+            }
+            autoLayout.viewports.push_back(vp);
+            layout = &autoLayout;
+        }
+        if (!plotToPdf(*doc, *layout, outPath, error,
+                       args.contains(QLatin1String("--with-notes"))))
+            return emitError(QStringLiteral("E_PLOT"), error);
+        return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
+                                  {QStringLiteral("layout"), layout->name},
+                                  {QStringLiteral("paper"),
+                                   QJsonArray{layout->paperW, layout->paperH}}});
+    }
+
     const DxfExportResult r = exportDxf(*doc, outPath, version);
     if (!r.ok)
         return emitError(QStringLiteral("E_EXPORT"), r.error);
@@ -268,12 +299,54 @@ int cmdExport(const QStringList& args)
 #endif
 }
 
+int cmdConnect(const QStringList& args)
+{
+    if (args.isEmpty())
+        return emitError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("connect needs a method: ping|exec|query|open|"
+                                        "save|screenshot"));
+    const QString method = args.first();
+    QJsonObject params;
+    if (method == QLatin1String("exec") && args.size() > 1)
+        params[QStringLiteral("line")] = QStringList(args.mid(1)).join(QLatin1Char(' '));
+    else if (method == QLatin1String("query") && args.size() > 1)
+        params[QStringLiteral("kind")] = args[1];
+    else if ((method == QLatin1String("open") || method == QLatin1String("save") ||
+              method == QLatin1String("screenshot")) &&
+             args.size() > 1)
+        params[QStringLiteral("path")] = args[1];
+
+    QLocalSocket socket;
+    socket.connectToServer(QStringLiteral("vikicad"));
+    if (!socket.waitForConnected(2000))
+        return emitError(QStringLiteral("E_CONNECT"),
+                         QStringLiteral("no running VikiCAD GUI (socket 'vikicad')"));
+    const QJsonObject req{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                          {QStringLiteral("id"), 1},
+                          {QStringLiteral("method"), method},
+                          {QStringLiteral("params"), params}};
+    socket.write(QJsonDocument(req).toJson(QJsonDocument::Compact) + "\n");
+    socket.flush();
+    if (!socket.waitForReadyRead(10000))
+        return emitError(QStringLiteral("E_TIMEOUT"), QStringLiteral("no response"));
+    const QJsonObject resp = QJsonDocument::fromJson(socket.readLine()).object();
+    if (resp.contains(QStringLiteral("error")))
+        return emitError(QStringLiteral("E_RPC"),
+                         resp[QStringLiteral("error")]
+                             .toObject()[QStringLiteral("message")]
+                             .toString());
+    return emitOk(resp[QStringLiteral("result")].toObject());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    QCoreApplication app(argc, argv);
-    QStringList args = QCoreApplication::arguments();
+    // Headless but font-capable (text metrics, PDF plotting).
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+    QStringList args = QGuiApplication::arguments();
     args.removeFirst();
 
     if (args.isEmpty())
@@ -295,6 +368,8 @@ int main(int argc, char** argv)
         return cmdImport(args);
     if (verb == QLatin1String("export"))
         return cmdExport(args);
+    if (verb == QLatin1String("connect"))
+        return cmdConnect(args);
 
     return emitError(QStringLiteral("E_UNKNOWN_VERB"),
                      QStringLiteral("unknown verb: %1").arg(verb));

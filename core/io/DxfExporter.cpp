@@ -3,9 +3,14 @@
 #include <drw_interface.h>
 #include <libdxfrw.h>
 
+#include <QJsonDocument>
+
 #include "doc/Annotations.h"
+#include "doc/ArrayEntity.h"
+#include "doc/Block.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
+#include "doc/StickyNote.h"
 
 namespace viki {
 namespace {
@@ -76,15 +81,41 @@ public:
                 writeOne(*e);
     }
 
+    void writeBlockRecords() override
+    {
+        for (const auto& blk : m_doc.blocks())
+            m_rw.writeBlockRecord(blk->name.toStdString());
+    }
+
+    void writeBlocks() override
+    {
+        for (const auto& blk : m_doc.blocks()) {
+            DRW_Block out;
+            out.name = blk->name.toStdString();
+            out.basePoint = {blk->basePoint.x, blk->basePoint.y, 0};
+            m_rw.writeBlock(&out);
+            for (const auto& e : blk->entities) {
+                if (dynamic_cast<const AttDefEntity*>(e.get()))
+                    continue; // ATTDEF has no libdxfrw writer — documented gap
+                writeOne(*e);
+                --exported; // block contents don't count as model entities
+            }
+        }
+    }
+
+    void writeAppId() override
+    {
+        DRW_AppId app;
+        app.name = "VIKI_STICKYNOTE";
+        m_rw.writeAppId(&app);
+    }
+
     // Required but unused callbacks.
-    void writeBlocks() override {}
-    void writeBlockRecords() override {}
     void writeLTypes() override {}
     void writeTextstyles() override {}
     void writeVports() override {}
     void writeDimstyles() override {}
     void writeObjects() override {}
-    void writeAppId() override {}
 
     // Reader-side callbacks — never used while writing.
     void addHeader(const DRW_Header*) override {}
@@ -285,6 +316,43 @@ private:
                 t.text = leader->text.toStdString();
                 m_rw.writeMText(&t);
             }
+        } else if (const auto* ins = dynamic_cast<const InsertEntity*>(&e)) {
+            DRW_Insert out;
+            applyCommon(e, out);
+            out.name = ins->blockName.toStdString();
+            out.basePoint = {ins->position.x, ins->position.y, 0};
+            out.xscale = out.yscale = ins->scale;
+            out.zscale = 1.0;
+            out.angle = ins->rotation * 180.0 / M_PI;
+            m_rw.writeInsert(&out);
+        } else if (const auto* arr = dynamic_cast<const ArrayEntity*>(&e)) {
+            // Arrays export flattened (associativity is native-format only).
+            for (const auto& item : arr->materialize()) {
+                writeOne(*item);
+                --exported;
+            }
+            skippedTypes.removeAll(QStringLiteral("array-flattened"));
+            skippedTypes.append(QStringLiteral("array-flattened"));
+        } else if (const auto* note = dynamic_cast<const StickyNoteEntity*>(&e)) {
+            DRW_Point out;
+            applyCommon(e, out);
+            out.basePoint = {note->anchor.x, note->anchor.y, 0};
+            out.extData.push_back(std::make_shared<DRW_Variant>(
+                1001, UTF8STRING("VIKI_STICKYNOTE")));
+            QJsonObject header{{QStringLiteral("v"), 1},
+                               {QStringLiteral("author"), note->author},
+                               {QStringLiteral("created"), note->created},
+                               {QStringLiteral("modified"), note->modified}};
+            out.extData.push_back(std::make_shared<DRW_Variant>(
+                1000, UTF8STRING(QJsonDocument(header)
+                                     .toJson(QJsonDocument::Compact)
+                                     .constData())));
+            // Text chunked to stay under the 255-byte group limit.
+            const QByteArray utf8 = note->text.toUtf8();
+            for (int i = 0; i < utf8.size(); i += 240)
+                out.extData.push_back(std::make_shared<DRW_Variant>(
+                    1000, UTF8STRING(utf8.mid(i, 240).constData())));
+            m_rw.writePoint(&out);
         } else if (const auto* hatch = dynamic_cast<const HatchEntity*>(&e)) {
             if (m_r12) {
                 skip("hatch-r12");

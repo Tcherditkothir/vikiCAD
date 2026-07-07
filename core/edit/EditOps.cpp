@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+#include "doc/Annotations.h"
+#include "doc/ArrayEntity.h"
+#include "doc/Block.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
@@ -718,6 +721,46 @@ OpResult explodeEntities(Document& doc, const std::vector<EntityId>& ids)
 {
     int made = 0, failed = 0;
     for (const EntityId id : ids) {
+        // Block reference: materialize the definition.
+        if (const auto* ins = dynamic_cast<const InsertEntity*>(doc.entity(id))) {
+            const BlockDef* def = doc.blockByName(ins->blockName);
+            if (!def) {
+                ++failed;
+                continue;
+            }
+            const Xform2d xf = ins->insertXform(def->basePoint);
+            for (const auto& sub : def->entities) {
+                if (const auto* ad = dynamic_cast<const AttDefEntity*>(sub.get())) {
+                    const QString value = ins->attributes.contains(ad->tag())
+                                              ? ins->attributes[ad->tag()].toString()
+                                              : ad->defaultValue();
+                    if (value.isEmpty())
+                        continue;
+                    auto t = std::make_unique<TextEntity>(xf.apply(ad->position()),
+                                                          ad->height() * ins->scale,
+                                                          ins->rotation, value);
+                    copyStyle(*ins, *t);
+                    doc.addEntity(std::move(t));
+                    ++made;
+                    continue;
+                }
+                auto piece = sub->clone();
+                piece->transform(xf);
+                doc.addEntity(std::move(piece));
+                ++made;
+            }
+            doc.removeEntity(id);
+            continue;
+        }
+        // Associative array: materialize items.
+        if (const auto* arr = dynamic_cast<const ArrayEntity*>(doc.entity(id))) {
+            for (auto& e : arr->materialize()) {
+                doc.addEntity(std::move(e));
+                ++made;
+            }
+            doc.removeEntity(id);
+            continue;
+        }
         const auto* pl = dynamic_cast<const PolylineEntity*>(doc.entity(id));
         if (!pl) {
             ++failed;
@@ -738,7 +781,8 @@ OpResult explodeEntities(Document& doc, const std::vector<EntityId>& ids)
         doc.removeEntity(id);
     }
     if (made == 0)
-        return {false, QStringLiteral("nothing exploded (only polylines explode in v1)")};
+        return {false,
+                QStringLiteral("nothing exploded (polylines, inserts and arrays only)")};
     QString msg = QStringLiteral("exploded into %1 entities").arg(made);
     if (failed > 0)
         msg += QStringLiteral(" (%1 not explodable)").arg(failed);

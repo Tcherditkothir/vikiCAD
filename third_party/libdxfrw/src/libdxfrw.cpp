@@ -189,6 +189,15 @@ bool dxfRW::writeEntity(DRW_Entity *ent) {
     if (version >= DRW::AC1014) {
         writeAppData(ent->appData);
     }
+    /* VikiCAD patch 0002: entity XDATA was parsed on read but never written.
+       Emit it here so application data (sticky notes) survives export. */
+    if (!ent->extData.empty()) {
+        std::vector<DRW_Variant*> raw;
+        raw.reserve(ent->extData.size());
+        for (auto& v : ent->extData)
+            raw.push_back(v.get());
+        writeExtData(raw);
+    }
     return true;
 }
 

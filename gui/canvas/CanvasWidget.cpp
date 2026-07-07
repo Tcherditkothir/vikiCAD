@@ -114,7 +114,7 @@ void CanvasWidget::rebuildStaticLayer()
         if (layer && !layer->visible)
             continue;
         // View culling.
-        if (!e->bounds().intersects(ctx.viewBox))
+        if (!m_doc->entityBounds(*e).intersects(ctx.viewBox))
             continue;
         ctx.resolvedColor = m_doc->resolveColor(*e);
         PrimitiveList list;

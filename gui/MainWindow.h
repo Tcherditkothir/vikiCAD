@@ -17,6 +17,7 @@ class CanvasWidget;
 class CommandBar;
 class LayerPanel;
 class PropertiesPanel;
+class RpcServer;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -52,6 +53,10 @@ private:
     PropertiesPanel* m_propsPanel = nullptr;
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
+    RpcServer* m_rpc = nullptr;
+
+    QJsonObject handleRpc(const QString& method, const QJsonObject& params);
+    void loadShortcuts();
 };
 
 } // namespace viki

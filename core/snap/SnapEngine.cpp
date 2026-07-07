@@ -117,7 +117,7 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
         const Layer* layer = doc.layer(e->layerId());
         if (layer && !layer->visible)
             continue;
-        if (!e->bounds().inflated(tolerance).contains(cursor))
+        if (!doc.entityBounds(*e).inflated(tolerance).contains(cursor))
             continue;
         cands.push_back({e, {}});
     }

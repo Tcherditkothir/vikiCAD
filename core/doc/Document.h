@@ -8,7 +8,9 @@
 #include <QJsonObject>
 #include <QString>
 
+#include "Block.h"
 #include "DimStyle.h"
+#include "Layout.h"
 #include "Entity.h"
 #include "Layer.h"
 
@@ -44,6 +46,8 @@ public:
     const std::vector<EntityId>& drawOrder() const { return m_drawOrder; }
     size_t entityCount() const { return m_entities.size(); }
     BBox2d extents() const;
+    // Insert-aware bounds (block references expand their definition).
+    BBox2d entityBounds(const Entity& e) const;
 
     // --- mutations (require an open transaction)
     EntityId addEntity(std::unique_ptr<Entity> entity);
@@ -71,11 +75,25 @@ public:
     LayerId ensureLayer(const QString& name, uint32_t rgb = 0xFFFFFF,
                         bool visible = true, bool locked = false);
     void setLayerProps(LayerId id, uint32_t rgb, bool visible, bool locked);
+    void setLayerPrintable(LayerId id, bool printable);
     // Deletes an empty, non-current layer. False if it has entities/is current/is 0.
     bool removeLayer(LayerId id);
     LayerId currentLayer() const { return m_currentLayer; }
     void setCurrentLayer(LayerId id) { m_currentLayer = id; }
     uint32_t resolveColor(const Entity& e) const;
+
+    // --- blocks (definition edits are direct/not journaled — v1 choice)
+    const std::vector<std::unique_ptr<BlockDef>>& blocks() const { return m_blocks; }
+    const BlockDef* blockByName(const QString& name) const;
+    BlockDef* blockByName(const QString& name);
+    const BlockDef* blockById(int64_t id) const;
+    // Creates (or returns) a definition; entities are moved in directly.
+    BlockDef* createBlock(const QString& name, const Vec2d& basePoint);
+
+    // --- layouts (paper space; direct edits — v1 choice)
+    const std::vector<Layout>& layouts() const { return m_layouts; }
+    Layout* layoutByName(const QString& name);
+    Layout* ensureLayout(const QString& name);
 
     // --- dimension styles (direct edits, not journaled — v1 choice)
     const DimStyle& dimStyle(const QString& name) const;
@@ -115,6 +133,10 @@ private:
     static constexpr size_t kMaxUndo = 100;
 
     std::vector<Layer> m_layers;
+    std::vector<std::unique_ptr<BlockDef>> m_blocks;
+    int64_t m_nextBlockId = 1;
+    std::vector<Layout> m_layouts;
+    int64_t m_nextLayoutId = 1;
     std::vector<DimStyle> m_dimStyles{DimStyle{}};
     LayerId m_currentLayer = 0;
     LayerId m_nextLayerId = 1;

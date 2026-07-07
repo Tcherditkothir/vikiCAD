@@ -296,6 +296,9 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerModifyCommands(p);
     registerEditCommands(p);
     registerAnnotateCommands(p);
+    registerBlockCommands(p);
+    registerArrayNoteCommands(p);
+    registerLayoutCommands(p);
 }
 
 } // namespace viki

@@ -33,7 +33,7 @@ BBox2d Document::extents() const
     BBox2d box;
     for (const auto& [id, e] : m_entities)
         if (!e->isInfinite())
-            box.expand(e->bounds());
+            box.expand(entityBounds(*e));
     return box;
 }
 
@@ -257,6 +257,13 @@ void Document::setLayerProps(LayerId id, uint32_t rgb, bool visible, bool locked
     }
 }
 
+void Document::setLayerPrintable(LayerId id, bool printable)
+{
+    for (Layer& l : m_layers)
+        if (l.id == id)
+            l.printable = printable;
+}
+
 bool Document::removeLayer(LayerId id)
 {
     if (id == 0 || id == m_currentLayer)
@@ -269,6 +276,81 @@ bool Document::removeLayer(LayerId id)
                    m_layers.end());
     notifyChanged();
     return true;
+}
+
+BBox2d Document::entityBounds(const Entity& e) const
+{
+    const auto* ins = dynamic_cast<const InsertEntity*>(&e);
+    if (!ins)
+        return e.bounds();
+    const BlockDef* def = blockByName(ins->blockName);
+    if (!def)
+        return e.bounds();
+    const Xform2d xf = ins->insertXform(def->basePoint);
+    BBox2d box;
+    for (const auto& sub : def->entities) {
+        auto ghost = sub->clone();
+        ghost->transform(xf);
+        box.expand(ghost->bounds());
+    }
+    return box.isValid() ? box : e.bounds();
+}
+
+const BlockDef* Document::blockByName(const QString& name) const
+{
+    for (const auto& b : m_blocks)
+        if (b->name.compare(name, Qt::CaseInsensitive) == 0)
+            return b.get();
+    return nullptr;
+}
+
+BlockDef* Document::blockByName(const QString& name)
+{
+    for (auto& b : m_blocks)
+        if (b->name.compare(name, Qt::CaseInsensitive) == 0)
+            return b.get();
+    return nullptr;
+}
+
+const BlockDef* Document::blockById(int64_t id) const
+{
+    for (const auto& b : m_blocks)
+        if (b->id == id)
+            return b.get();
+    return nullptr;
+}
+
+BlockDef* Document::createBlock(const QString& name, const Vec2d& basePoint)
+{
+    if (BlockDef* existing = blockByName(name))
+        return existing;
+    auto def = std::make_unique<BlockDef>();
+    def->id = m_nextBlockId++;
+    def->name = name;
+    def->basePoint = basePoint;
+    m_blocks.push_back(std::move(def));
+    notifyChanged();
+    return m_blocks.back().get();
+}
+
+Layout* Document::layoutByName(const QString& name)
+{
+    for (Layout& l : m_layouts)
+        if (l.name.compare(name, Qt::CaseInsensitive) == 0)
+            return &l;
+    return nullptr;
+}
+
+Layout* Document::ensureLayout(const QString& name)
+{
+    if (Layout* existing = layoutByName(name))
+        return existing;
+    Layout l;
+    l.id = m_nextLayoutId++;
+    l.name = name;
+    m_layouts.push_back(l);
+    notifyChanged();
+    return &m_layouts.back();
 }
 
 const DimStyle& Document::dimStyle(const QString& name) const

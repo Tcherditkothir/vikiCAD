@@ -1,7 +1,12 @@
 #include "MainWindow.h"
 
+#include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QShortcut>
+#include <QStandardPaths>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -14,6 +19,8 @@
 #include "io/DxfImporter.h"
 #endif
 #include "io/NativeStore.h"
+#include "io/QueryJson.h"
+#include "ipc/RpcServer.h"
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
@@ -108,7 +115,114 @@ MainWindow::MainWindow()
     });
 
     adoptDocument(std::make_unique<Document>());
+
+    // JSON-RPC server for agents (vikicad-cli connect ...).
+    m_rpc = new RpcServer(
+        [this](const QString& method, const QJsonObject& params) {
+            return handleRpc(method, params);
+        },
+        this);
+    if (m_rpc->start())
+        m_commandBar->appendHistory(
+            QStringLiteral("IPC: listening on local socket 'vikicad'"));
+
+    loadShortcuts();
     m_commandBar->focusInput();
+}
+
+QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& params)
+{
+    if (method == QLatin1String("ping"))
+        return {{QStringLiteral("pong"), true}};
+    if (method == QLatin1String("exec")) {
+        const QString line = params[QStringLiteral("line")].toString();
+        const auto r = m_processor->submit(line, /*strict=*/true);
+        refreshPromptAndMessages();
+        m_canvas->markDocumentDirty();
+        if (!r.ok)
+            return {{QStringLiteral("error"), r.error}};
+        return {{QStringLiteral("ok"), true},
+                {QStringLiteral("entityCount"), qint64(m_doc->entityCount())}};
+    }
+    if (method == QLatin1String("query")) {
+        const QString kind = params[QStringLiteral("kind")].toString();
+        QJsonObject result{{QStringLiteral("count"), qint64(m_doc->entityCount())}};
+        if (kind.isEmpty() || kind == QLatin1String("entities"))
+            result[QStringLiteral("entities")] = queryjson::entitiesJson(*m_doc);
+        if (kind == QLatin1String("layers"))
+            result[QStringLiteral("layers")] = queryjson::layersJson(*m_doc);
+        if (kind == QLatin1String("bounds"))
+            result[QStringLiteral("bounds")] = queryjson::boundsJson(*m_doc);
+        if (kind == QLatin1String("notes"))
+            result[QStringLiteral("notes")] = queryjson::notesJson(*m_doc);
+        if (kind == QLatin1String("blocks"))
+            result[QStringLiteral("blocks")] = queryjson::blocksJson(*m_doc);
+        if (kind == QLatin1String("layouts"))
+            result[QStringLiteral("layouts")] = queryjson::layoutsJson(*m_doc);
+        return result;
+    }
+    if (method == QLatin1String("open")) {
+        const QString path = params[QStringLiteral("path")].toString();
+        QString error;
+        auto doc = NativeStore::load(path, error);
+        if (!doc)
+            return {{QStringLiteral("error"), error}};
+        adoptDocument(std::move(doc));
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (method == QLatin1String("save")) {
+        QString path = params[QStringLiteral("path")].toString();
+        if (path.isEmpty())
+            path = m_doc->filePath();
+        if (path.isEmpty())
+            return {{QStringLiteral("error"), QStringLiteral("no file path")}};
+        QString error;
+        if (!NativeStore::save(*m_doc, path, error))
+            return {{QStringLiteral("error"), error}};
+        m_doc->setFilePath(path);
+        updateWindowTitle();
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+    }
+    if (method == QLatin1String("screenshot")) {
+        const QString path = params[QStringLiteral("path")].toString();
+        if (path.isEmpty())
+            return {{QStringLiteral("error"), QStringLiteral("path required")}};
+        const QPixmap shot = m_canvas->grab();
+        if (!shot.save(path))
+            return {{QStringLiteral("error"), QStringLiteral("cannot write %1").arg(path)}};
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+    }
+    return {{QStringLiteral("error"), QStringLiteral("unknown method: %1").arg(method)}};
+}
+
+void MainWindow::loadShortcuts()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/shortcuts.json");
+    QFile file(path);
+    if (!file.exists()) {
+        // Seed a commented-by-example default file.
+        const QJsonObject defaults{{QStringLiteral("Ctrl+Z"), QStringLiteral("UNDO")},
+                                   {QStringLiteral("Ctrl+Y"), QStringLiteral("REDO")},
+                                   {QStringLiteral("Ctrl+Shift+E"), QStringLiteral("ZOOM E")},
+                                   {QStringLiteral("F2"), QStringLiteral("ZOOM E")}};
+        if (file.open(QIODevice::WriteOnly))
+            file.write(QJsonDocument(defaults).toJson(QJsonDocument::Indented));
+        file.close();
+    }
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const QJsonObject map = QJsonDocument::fromJson(file.readAll()).object();
+    for (auto it = map.begin(); it != map.end(); ++it) {
+        const QString commandLine = it.value().toString();
+        auto* shortcut = new QShortcut(QKeySequence(it.key()), this);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, commandLine] {
+            onCommandEntered(commandLine);
+        });
+    }
 }
 
 MainWindow::~MainWindow() = default;

@@ -75,7 +75,7 @@ EntityId pick(const Document& doc, const Vec2d& point, double tolerance)
     // Later in draw order wins ties (matches what the user sees on top).
     for (const EntityId id : doc.drawOrder()) {
         const Entity* e = doc.entity(id);
-        if (!e || !e->bounds().inflated(tolerance).contains(point))
+        if (!e || !doc.entityBounds(*e).inflated(tolerance).contains(point))
             continue;
         const double d = distanceToPrimitives(flatten(doc, *e, tolerance * 0.1), point);
         if (d <= bestDist) {
@@ -92,7 +92,7 @@ std::vector<EntityId> window(const Document& doc, const BBox2d& box)
     for (const EntityId id : doc.drawOrder()) {
         const Entity* e = doc.entity(id);
         // Geometry ⊆ bounds, so bounds inside the box means fully inside.
-        if (e && box.contains(e->bounds()))
+        if (e && box.contains(doc.entityBounds(*e)))
             out.push_back(id);
     }
     return out;
@@ -106,7 +106,7 @@ std::vector<EntityId> crossing(const Document& doc, const BBox2d& box)
         const Entity* e = doc.entity(id);
         if (!e)
             continue;
-        if (box.contains(e->bounds()) ||
+        if (box.contains(doc.entityBounds(*e)) ||
             primitivesTouchBox(flatten(doc, *e, tol), box))
             out.push_back(id);
     }

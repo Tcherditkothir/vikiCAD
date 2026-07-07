@@ -101,3 +101,17 @@ Tag : `m3`.
 - **63/63 tests verts** ; sortie M4 : pièce annotée complète (4 types de cotes + texte + hachure + leader) → export DXF 2013 → réimport 10/10, hachure et pattern intacts.
 
 Tag : `m4`.
+
+## 2026-07-07 — Clôture M5 : daily driver 2D = v1.0-2D ✅
+
+- **Blocs** : BlockDef dans le Document (création directe, swap model-space journalisé), InsertEntity (pos/rotation/échelle uniforme/attributs JSON), AttDefEntity, `entityBounds()` insert-aware branché partout (extents/culling/hittest/snap). BLOCK convertit la sélection en bloc + insert ; INSERT demande les valeurs d'attributs ; EXPLODE matérialise (attributs → textes). Persistés en .vkd (owner_kind=1) — **bug attrapé au test de sortie : collision d'ids SQLite (rowid auto des entités de bloc vs ids explicites) → ordre d'écriture inversé**.
+- **Réseaux associatifs** : ArrayEntity (clones prototypes + params rect/polaire + suppressions), régénération à chaque rendu, ARRAYRECT/ARRAYPOLAR (**leçon : paramètres AVANT la sélection**, sinon le glouton EntitySet avale les nombres), ARRAYEDIT clé/valeur journalisé (undo des paramètres testé), EXPLODE matérialise. DXF : export aplati (l'associativité vit dans le format natif — XDATA VIKI_ARRAY renvoyé à plus tard, consigné).
+- **Sticky notes** 📌 : entité non géométrique (markdown, auteur, création/modification ISO, ancre point OU épinglée à une entité qu'elle suit), calque VIKI_NOTES auto non imprimable, NOTE/NOTEPIN/NOTEEDIT, `query --notes`. **DXF : POINT + XDATA VIKI_STICKYNOTE** (APPID enregistré, header JSON + texte chunké ≤240 o) — round-trip complet testé avec auteur/timestamps. **Patch vendored 0002** : `writeEntity` n'écrivait jamais les XDATA des entités (writeExtData jamais branché, signature incompatible).
+- **Layouts + PDF** : Layout/Viewport persistés, LAYOUT name papier échelle|FIT (viewport unique marges 10 mm), PLOT + `export .pdf --layout` ; QPdfWriter 1200 dpi, échelle exacte (mm papier = mm modèle × échelle), épaisseur fixe 0,35 mm (v1), notes et calques non imprimables exclus. **Le CLI est passé en QGuiApplication offscreen** (les métriques de police du plot l'exigent).
+- **IPC JSON-RPC 2.0** sur QLocalSocket 'vikicad' : ping/exec/query/open/save/screenshot ; `vikicad-cli connect <method>` réutilise la même surface — testé en live contre la GUI offscreen. QueryJson partagé CLI/IPC (une seule surface agent).
+- **Raccourcis configurables** : ~/.config/vikicad/shortcuts.json (touche → ligne de commande), fichier d'exemple auto-créé.
+- **71/71 tests verts.** Sortie M5 : dessin complet (blocs, réseau, cote, note) → .vkd → PDF 10 Ko → DXF → réimport avec note et blocs intacts → IPC live OK.
+
+**v1.0-2D atteinte. Critère nanoCAD-désinstallé : à valider par Lex à l'usage (M6).**
+
+Tag : `m5`.

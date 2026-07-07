@@ -17,7 +17,7 @@ option(VIKICAD_BUILD_TESTS "Build the test suite" ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(VikiWarnings)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network)
 find_package(OpenCASCADE REQUIRED)
 
 set(CMAKE_AUTOMOC ON)

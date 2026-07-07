@@ -3,7 +3,11 @@
 #include <drw_interface.h>
 #include <libdxfrw.h>
 
+#include <QJsonDocument>
+
 #include "doc/Annotations.h"
+#include "doc/Block.h"
+#include "doc/StickyNote.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
@@ -34,6 +38,7 @@ public:
     int skipped = 0;
     QStringList skippedTypes;
     bool inBlock = false;
+    BlockDef* currentBlock = nullptr;
 
     // ---- helpers ------------------------------------------------------------
 
@@ -48,9 +53,8 @@ public:
     void place(std::unique_ptr<Entity> e, const DRW_Entity& src)
     {
         if (inBlock) {
-            // Block definitions are M5 scope; their entities are not model
-            // space content, so they are dropped (and counted once).
-            skip("block-content");
+            if (currentBlock)
+                currentBlock->entities.push_back(std::move(e));
             return;
         }
         const LayerId layer =
@@ -87,6 +91,31 @@ public:
 
     void addPoint(const DRW_Point& data) override
     {
+        // A point carrying VIKI_STICKYNOTE XDATA is one of our notes.
+        bool isNote = false;
+        QStringList strings;
+        for (const auto& v : data.extData) {
+            if (v->code() == 1001 && v->type() == DRW_Variant::STRING)
+                isNote = isNote ||
+                         *v->content.s == std::string("VIKI_STICKYNOTE");
+            else if (v->code() == 1000 && v->type() == DRW_Variant::STRING)
+                strings.append(QString::fromStdString(*v->content.s));
+        }
+        if (isNote && !strings.isEmpty()) {
+            auto note = std::make_unique<StickyNoteEntity>();
+            const QJsonObject header =
+                QJsonDocument::fromJson(strings.first().toUtf8()).object();
+            note->author = header[QStringLiteral("author")].toString();
+            note->created = header[QStringLiteral("created")].toString();
+            note->modified = header[QStringLiteral("modified")].toString();
+            QString text;
+            for (int i = 1; i < strings.size(); ++i)
+                text += strings[i];
+            note->text = text;
+            note->anchor = {data.basePoint.x, data.basePoint.y};
+            place(std::move(note), data);
+            return;
+        }
         place(std::make_unique<PointEntity>(Vec2d{data.basePoint.x, data.basePoint.y}), data);
     }
 
@@ -352,7 +381,15 @@ public:
 
     // ---- unsupported (counted, will land in later milestones) ---------------
 
-    void addInsert(const DRW_Insert&) override { skip("insert"); }
+    void addInsert(const DRW_Insert& data) override
+    {
+        auto ins = std::make_unique<InsertEntity>();
+        ins->blockName = QString::fromStdString(data.name);
+        ins->position = {data.basePoint.x, data.basePoint.y};
+        ins->scale = data.xscale;
+        ins->rotation = data.angle * M_PI / 180.0;
+        place(std::move(ins), data);
+    }
     void addDimAngular(const DRW_DimAngular*) override { skip("dimension-2line"); }
     void addDimOrdinate(const DRW_DimOrdinate*) override { skip("dimension-ordinate"); }
     void addTrace(const DRW_Trace&) override { skip("trace"); }
@@ -363,9 +400,24 @@ public:
 
     // ---- blocks: definitions dropped for now ---------------------------------
 
-    void addBlock(const DRW_Block&) override { inBlock = true; }
+    void addBlock(const DRW_Block& data) override
+    {
+        inBlock = true;
+        const QString name = QString::fromStdString(data.name);
+        // Skip anonymous/system blocks (*Model_Space, *Paper_Space, *D...).
+        if (name.startsWith(QLatin1Char('*'))) {
+            currentBlock = nullptr;
+            return;
+        }
+        currentBlock =
+            doc->createBlock(name, {data.basePoint.x, data.basePoint.y});
+    }
     void setBlock(const int) override {}
-    void endBlock() override { inBlock = false; }
+    void endBlock() override
+    {
+        inBlock = false;
+        currentBlock = nullptr;
+    }
 
     // ---- uninteresting callbacks ---------------------------------------------
 
@@ -410,7 +462,7 @@ DxfImportResult importDxf(const QString& path)
     DxfImportResult result;
     Builder builder;
     dxfRW reader(path.toUtf8().constData());
-    if (!reader.read(&builder, /*ext=*/false)) {
+    if (!reader.read(&builder, /*ext=*/true)) {
         result.error = QStringLiteral("failed to parse DXF: %1").arg(path);
         return result;
     }

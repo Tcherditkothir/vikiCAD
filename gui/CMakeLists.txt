@@ -5,7 +5,8 @@ add_executable(vikicad
     panels/CommandBar.cpp
     panels/LayerPanel.cpp
     panels/PropertiesPanel.cpp
+    ipc/RpcServer.cpp
 )
 
 target_include_directories(vikicad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(vikicad PRIVATE vikicore Qt6::Widgets viki_warnings)
+target_link_libraries(vikicad PRIVATE vikicore Qt6::Widgets Qt6::Network viki_warnings)

@@ -39,6 +39,26 @@ CREATE TABLE IF NOT EXISTS layers (
     printable  INTEGER NOT NULL DEFAULT 1,
     sort       INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS layouts (
+    id      INTEGER PRIMARY KEY,
+    name    TEXT UNIQUE NOT NULL,
+    paper_w REAL NOT NULL,
+    paper_h REAL NOT NULL,
+    sort    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS viewports (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    layout_id INTEGER NOT NULL,
+    x REAL, y REAL, w REAL, h REAL,
+    center_x REAL, center_y REAL,
+    scale REAL NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS blocks (
+    id     INTEGER PRIMARY KEY,
+    name   TEXT UNIQUE NOT NULL,
+    base_x REAL NOT NULL DEFAULT 0,
+    base_y REAL NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS dim_styles (
     name TEXT PRIMARY KEY,
     data TEXT NOT NULL
@@ -83,7 +103,8 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
     // Full rewrite: simple and correct at this document scale.
     if (!exec(db.get(),
                "DELETE FROM meta; DELETE FROM layers; DELETE FROM entities; "
-               "DELETE FROM dim_styles;",
+               "DELETE FROM dim_styles; DELETE FROM blocks; "
+               "DELETE FROM layouts; DELETE FROM viewports;",
                error))
         return false;
 
@@ -125,6 +146,55 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
     }
     sqlite3_finalize(stmt);
 
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO layouts(id,name,paper_w,paper_h,sort) VALUES(?,?,?,?,?);",
+                       -1, &stmt, nullptr);
+    {
+        int lsort = 0;
+        for (const Layout& l : doc.layouts()) {
+            sqlite3_reset(stmt);
+            sqlite3_bind_int64(stmt, 1, l.id);
+            sqlite3_bind_text(stmt, 2, l.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(stmt, 3, l.paperW);
+            sqlite3_bind_double(stmt, 4, l.paperH);
+            sqlite3_bind_int(stmt, 5, lsort++);
+            sqlite3_step(stmt);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO viewports(layout_id,x,y,w,h,center_x,center_y,scale) "
+                       "VALUES(?,?,?,?,?,?,?,?);",
+                       -1, &stmt, nullptr);
+    for (const Layout& l : doc.layouts()) {
+        for (const Viewport& vp : l.viewports) {
+            sqlite3_reset(stmt);
+            sqlite3_bind_int64(stmt, 1, l.id);
+            sqlite3_bind_double(stmt, 2, vp.x);
+            sqlite3_bind_double(stmt, 3, vp.y);
+            sqlite3_bind_double(stmt, 4, vp.w);
+            sqlite3_bind_double(stmt, 5, vp.h);
+            sqlite3_bind_double(stmt, 6, vp.center.x);
+            sqlite3_bind_double(stmt, 7, vp.center.y);
+            sqlite3_bind_double(stmt, 8, vp.scale);
+            sqlite3_step(stmt);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO blocks(id,name,base_x,base_y) VALUES(?,?,?,?);", -1,
+                       &stmt, nullptr);
+    for (const auto& blk : doc.blocks()) {
+        sqlite3_reset(stmt);
+        sqlite3_bind_int64(stmt, 1, blk->id);
+        sqlite3_bind_text(stmt, 2, blk->name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(stmt, 3, blk->basePoint.x);
+        sqlite3_bind_double(stmt, 4, blk->basePoint.y);
+        sqlite3_step(stmt);
+    }
+    sqlite3_finalize(stmt);
+
     sqlite3_prepare_v2(db.get(), "INSERT INTO dim_styles(name,data) VALUES(?,?);", -1,
                        &stmt, nullptr);
     for (const DimStyle& ds : doc.dimStyles()) {
@@ -158,6 +228,27 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
             error = QString::fromUtf8(sqlite3_errmsg(db.get()));
             sqlite3_finalize(stmt);
             return false;
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // Block definition entities: owner_kind=1, auto row ids.
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO entities(owner_kind,owner_id,type,layer_id,sort,data) "
+                       "VALUES(1,?,?,?,?,?);",
+                       -1, &stmt, nullptr);
+    for (const auto& blk : doc.blocks()) {
+        int bsort = 0;
+        for (const auto& e : blk->entities) {
+            const QByteArray data =
+                QJsonDocument(e->toJson()).toJson(QJsonDocument::Compact);
+            sqlite3_reset(stmt);
+            sqlite3_bind_int64(stmt, 1, blk->id);
+            sqlite3_bind_text(stmt, 2, e->typeName(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(stmt, 3, e->layerId());
+            sqlite3_bind_int(stmt, 4, bsort++);
+            sqlite3_bind_text(stmt, 5, data.constData(), data.size(), SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
         }
     }
     sqlite3_finalize(stmt);
@@ -229,8 +320,80 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
         sqlite3_finalize(stmt);
     }
 
-    if (sqlite3_prepare_v2(db.get(), "SELECT id,data FROM entities ORDER BY sort;", -1, &stmt,
-                           nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT id,name,paper_w,paper_h FROM layouts ORDER BY sort;", -1,
+                           &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            Layout* l = doc->ensureLayout(QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))));
+            l->id = sqlite3_column_int64(stmt, 0);
+            l->paperW = sqlite3_column_double(stmt, 2);
+            l->paperH = sqlite3_column_double(stmt, 3);
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT layout_id,x,y,w,h,center_x,center_y,scale FROM viewports;",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const int64_t lid = sqlite3_column_int64(stmt, 0);
+            for (const Layout& cl : doc->layouts()) {
+                if (cl.id == lid) {
+                    Viewport vp;
+                    vp.x = sqlite3_column_double(stmt, 1);
+                    vp.y = sqlite3_column_double(stmt, 2);
+                    vp.w = sqlite3_column_double(stmt, 3);
+                    vp.h = sqlite3_column_double(stmt, 4);
+                    vp.center = {sqlite3_column_double(stmt, 5),
+                                 sqlite3_column_double(stmt, 6)};
+                    vp.scale = sqlite3_column_double(stmt, 7);
+                    const_cast<Layout&>(cl).viewports.push_back(vp);
+                    break;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT id,name,base_x,base_y FROM blocks ORDER BY id;", -1,
+                           &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const int64_t bid = sqlite3_column_int64(stmt, 0);
+            const QString name = QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            BlockDef* def = doc->createBlock(
+                name, {sqlite3_column_double(stmt, 2), sqlite3_column_double(stmt, 3)});
+            def->id = bid;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT owner_id,data FROM entities WHERE owner_kind=1 "
+                           "ORDER BY sort;",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const int64_t bid = sqlite3_column_int64(stmt, 0);
+            const QByteArray data(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)),
+                sqlite3_column_bytes(stmt, 1));
+            auto entity = entityFromJson(QJsonDocument::fromJson(data).object());
+            if (!entity)
+                continue;
+            for (const auto& blk : doc->blocks()) {
+                if (blk->id == bid) {
+                    const_cast<BlockDef*>(blk.get())->entities.push_back(std::move(entity));
+                    break;
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT id,data FROM entities WHERE owner_kind=0 ORDER BY sort;",
+                           -1, &stmt, nullptr) != SQLITE_OK) {
         error = QStringLiteral("not a VikiCAD file (no entities table): %1").arg(path);
         return nullptr;
     }
