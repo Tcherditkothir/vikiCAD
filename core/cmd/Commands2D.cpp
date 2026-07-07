@@ -295,6 +295,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerDrawCommands2(p);
     registerModifyCommands(p);
     registerEditCommands(p);
+    registerAnnotateCommands(p);
 }
 
 } // namespace viki

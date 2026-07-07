@@ -11,6 +11,7 @@ add_library(vikicore STATIC
     doc/EntityFactory.cpp
     doc/Document.cpp
     doc/EntitiesEx.cpp
+    doc/Annotations.cpp
     render/HitTest.cpp
     snap/SnapEngine.cpp
     cmd/Input.cpp
@@ -19,6 +20,7 @@ add_library(vikicore STATIC
     cmd/CommandsDraw2.cpp
     cmd/CommandsModify.cpp
     cmd/CommandsEdit.cpp
+    cmd/CommandsAnnotate.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     script/ScriptRunner.cpp

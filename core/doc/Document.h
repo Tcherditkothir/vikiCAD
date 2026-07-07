@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QString>
 
+#include "DimStyle.h"
 #include "Entity.h"
 #include "Layer.h"
 
@@ -76,6 +77,12 @@ public:
     void setCurrentLayer(LayerId id) { m_currentLayer = id; }
     uint32_t resolveColor(const Entity& e) const;
 
+    // --- dimension styles (direct edits, not journaled — v1 choice)
+    const DimStyle& dimStyle(const QString& name) const;
+    DimStyle& currentDimStyle();
+    const std::vector<DimStyle>& dimStyles() const { return m_dimStyles; }
+    void upsertDimStyle(const DimStyle& style);
+
     // --- settings
     DisplayUnits displayUnits() const { return m_displayUnits; }
     void setDisplayUnits(DisplayUnits u) { m_displayUnits = u; }
@@ -108,6 +115,7 @@ private:
     static constexpr size_t kMaxUndo = 100;
 
     std::vector<Layer> m_layers;
+    std::vector<DimStyle> m_dimStyles{DimStyle{}};
     LayerId m_currentLayer = 0;
     LayerId m_nextLayerId = 1;
     DisplayUnits m_displayUnits = DisplayUnits::Millimeters;

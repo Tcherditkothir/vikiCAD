@@ -3,6 +3,7 @@
 #include <drw_interface.h>
 #include <libdxfrw.h>
 
+#include "doc/Annotations.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
@@ -197,20 +198,163 @@ public:
         place(std::move(s), *data);
     }
 
+    // ---- annotations ---------------------------------------------------------
+
+    static QString cleanMtext(QString t)
+    {
+        t.replace(QLatin1String("\\P"), QLatin1String("\n"));
+        return t;
+    }
+
+    void addText(const DRW_Text& data) override
+    {
+        auto t = std::make_unique<TextEntity>(
+            Vec2d{data.basePoint.x, data.basePoint.y}, data.height,
+            data.angle * M_PI / 180.0, QString::fromStdString(data.text));
+        place(std::move(t), data);
+    }
+
+    void addMText(const DRW_MText& data) override
+    {
+        auto t = std::make_unique<TextEntity>(
+            Vec2d{data.basePoint.x, data.basePoint.y}, data.height,
+            data.angle * M_PI / 180.0,
+            cleanMtext(QString::fromStdString(data.text)));
+        place(std::move(t), data);
+    }
+
+    void addHatch(const DRW_Hatch* data) override
+    {
+        auto hatch = std::make_unique<HatchEntity>();
+        hatch->pattern = data->solid
+                             ? QStringLiteral("SOLID")
+                             : QString::fromStdString(data->name).toUpper();
+        hatch->scale = data->scale > 0 ? data->scale : 1.0;
+        hatch->angle = data->angle * M_PI / 180.0;
+        for (const auto& loop : data->looplist) {
+            std::vector<Vec2d> ring;
+            for (const auto& obj : loop->objlist) {
+                if (const auto* pl =
+                        dynamic_cast<const DRW_LWPolyline*>(obj.get())) {
+                    const size_t n = pl->vertlist.size();
+                    for (size_t i = 0; i < n; ++i) {
+                        const auto& v = pl->vertlist[i];
+                        if (!nearZero(v->bulge) && n > 1) {
+                            const auto& w = pl->vertlist[(i + 1) % n];
+                            std::vector<Vec2d> pts;
+                            const double sweep = 4.0 * std::atan(v->bulge);
+                            const Vec2d va{v->x, v->y}, vb{w->x, w->y};
+                            const double chord = va.distanceTo(vb);
+                            if (chord > kGeomTol) {
+                                const double radius =
+                                    chord / (2.0 * std::fabs(std::sin(sweep / 2.0)));
+                                const Vec2d mid = (va + vb) * 0.5;
+                                const double h = radius * std::cos(sweep / 2.0) *
+                                                 (v->bulge > 0 ? 1.0 : -1.0);
+                                const Vec2d center =
+                                    mid + (vb - va).normalized().perp() * h;
+                                flattenArc(center, radius, (va - center).angle(), sweep,
+                                           0.05, pts);
+                                pts.pop_back();
+                                ring.insert(ring.end(), pts.begin(), pts.end());
+                                continue;
+                            }
+                        }
+                        ring.push_back({v->x, v->y});
+                    }
+                } else if (const auto* ln = dynamic_cast<const DRW_Line*>(obj.get())) {
+                    ring.push_back({ln->basePoint.x, ln->basePoint.y});
+                } else if (const auto* arc = dynamic_cast<const DRW_Arc*>(obj.get())) {
+                    std::vector<Vec2d> pts;
+                    flattenArc({arc->basePoint.x, arc->basePoint.y}, arc->radious,
+                               arc->staangle, ccwSweep(arc->staangle, arc->endangle),
+                               0.05, pts);
+                    pts.pop_back();
+                    ring.insert(ring.end(), pts.begin(), pts.end());
+                }
+            }
+            if (ring.size() >= 3)
+                hatch->rings.push_back(std::move(ring));
+        }
+        if (hatch->rings.empty()) {
+            skip("empty-hatch");
+            return;
+        }
+        place(std::move(hatch), *data);
+    }
+
+    void addDimLinear(const DRW_DimLinear* data) override
+    {
+        auto dim = std::make_unique<DimensionEntity>();
+        dim->kind = DimensionEntity::Kind::Linear;
+        dim->a = {data->getDef1Point().x, data->getDef1Point().y};
+        dim->b = {data->getDef2Point().x, data->getDef2Point().y};
+        dim->pos = {data->getDimPoint().x, data->getDimPoint().y};
+        const double ang = data->getAngle() * M_PI / 180.0;
+        dim->axis = Vec2d::polar(1.0, ang);
+        place(std::move(dim), *data);
+    }
+
+    void addDimAlign(const DRW_DimAligned* data) override
+    {
+        auto dim = std::make_unique<DimensionEntity>();
+        dim->kind = DimensionEntity::Kind::Aligned;
+        dim->a = {data->getDef1Point().x, data->getDef1Point().y};
+        dim->b = {data->getDef2Point().x, data->getDef2Point().y};
+        dim->pos = {data->getDimPoint().x, data->getDimPoint().y};
+        place(std::move(dim), *data);
+    }
+
+    void addDimRadial(const DRW_DimRadial* data) override
+    {
+        auto dim = std::make_unique<DimensionEntity>();
+        dim->kind = DimensionEntity::Kind::Radius;
+        dim->a = {data->getCenterPoint().x, data->getCenterPoint().y};
+        dim->b = {data->getDiameterPoint().x, data->getDiameterPoint().y};
+        dim->pos = {data->getTextPoint().x, data->getTextPoint().y};
+        place(std::move(dim), *data);
+    }
+
+    void addDimDiametric(const DRW_DimDiametric* data) override
+    {
+        auto dim = std::make_unique<DimensionEntity>();
+        dim->kind = DimensionEntity::Kind::Diameter;
+        const Vec2d p1{data->getDiameter1Point().x, data->getDiameter1Point().y};
+        const Vec2d p2{data->getDiameter2Point().x, data->getDiameter2Point().y};
+        dim->a = (p1 + p2) * 0.5;
+        dim->b = p1;
+        dim->pos = {data->getTextPoint().x, data->getTextPoint().y};
+        place(std::move(dim), *data);
+    }
+
+    void addDimAngular3P(const DRW_DimAngular3p* data) override
+    {
+        auto dim = std::make_unique<DimensionEntity>();
+        dim->kind = DimensionEntity::Kind::Angular;
+        dim->a = {data->getVertexPoint().x, data->getVertexPoint().y};
+        dim->b = {data->getFirstLine().x, data->getFirstLine().y};
+        dim->c = {data->getSecondLine().x, data->getSecondLine().y};
+        dim->pos = {data->getDimPoint().x, data->getDimPoint().y};
+        place(std::move(dim), *data);
+    }
+
+    void addLeader(const DRW_Leader* data) override
+    {
+        auto leader = std::make_unique<LeaderEntity>();
+        for (const auto& v : data->vertexlist)
+            leader->points.push_back({v->x, v->y});
+        if (leader->points.size() < 2) {
+            skip("degenerate-leader");
+            return;
+        }
+        place(std::move(leader), *data);
+    }
+
     // ---- unsupported (counted, will land in later milestones) ---------------
 
     void addInsert(const DRW_Insert&) override { skip("insert"); }
-    void addText(const DRW_Text&) override { skip("text"); }
-    void addMText(const DRW_MText&) override { skip("mtext"); }
-    void addHatch(const DRW_Hatch*) override { skip("hatch"); }
-    void addDimAlign(const DRW_DimAligned*) override { skip("dimension"); }
-    void addDimLinear(const DRW_DimLinear*) override { skip("dimension"); }
-    void addDimRadial(const DRW_DimRadial*) override { skip("dimension"); }
-    void addDimDiametric(const DRW_DimDiametric*) override { skip("dimension"); }
-    void addDimAngular(const DRW_DimAngular*) override { skip("dimension"); }
-    void addDimAngular3P(const DRW_DimAngular3p*) override { skip("dimension"); }
-    void addDimOrdinate(const DRW_DimOrdinate*) override { skip("dimension"); }
-    void addLeader(const DRW_Leader*) override { skip("leader"); }
+    void addDimAngular(const DRW_DimAngular*) override { skip("dimension-2line"); }
+    void addDimOrdinate(const DRW_DimOrdinate*) override { skip("dimension-ordinate"); }
     void addTrace(const DRW_Trace&) override { skip("trace"); }
     void add3dFace(const DRW_3Dface&) override { skip("3dface"); }
     void addSolid(const DRW_Solid&) override { skip("solid-fill"); }

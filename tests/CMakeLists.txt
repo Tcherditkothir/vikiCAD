@@ -12,6 +12,7 @@ add_executable(vikicad-tests
     test_m2_commands.cpp
     test_snap.cpp
     test_editops.cpp
+    test_annotations.cpp
 )
 
 if(VIKICAD_HAS_DXF)

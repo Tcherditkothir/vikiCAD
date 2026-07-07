@@ -8,10 +8,12 @@ namespace {
 
 // Flatten with a tolerance tied to the pick tolerance so curve error stays
 // far below what a user can perceive.
-PrimitiveList flatten(const Entity& e, double chordTol)
+PrimitiveList flatten(const Document& doc, const Entity& e, double chordTol)
 {
     RenderContext ctx;
     ctx.chordTolerance = chordTol;
+    ctx.doc = &doc;
+    ctx.forHitTest = true;
     PrimitiveList list;
     e.buildPrimitives(ctx, list);
     return list;
@@ -75,7 +77,7 @@ EntityId pick(const Document& doc, const Vec2d& point, double tolerance)
         const Entity* e = doc.entity(id);
         if (!e || !e->bounds().inflated(tolerance).contains(point))
             continue;
-        const double d = distanceToPrimitives(flatten(*e, tolerance * 0.1), point);
+        const double d = distanceToPrimitives(flatten(doc, *e, tolerance * 0.1), point);
         if (d <= bestDist) {
             bestDist = d;
             best = id;
@@ -105,7 +107,7 @@ std::vector<EntityId> crossing(const Document& doc, const BBox2d& box)
         if (!e)
             continue;
         if (box.contains(e->bounds()) ||
-            primitivesTouchBox(flatten(*e, tol), box))
+            primitivesTouchBox(flatten(doc, *e, tol), box))
             out.push_back(id);
     }
     return out;

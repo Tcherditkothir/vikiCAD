@@ -1,5 +1,6 @@
 #include "EntityFactory.h"
 
+#include "Annotations.h"
 #include "Entities.h"
 #include "EntitiesEx.h"
 
@@ -23,6 +24,14 @@ std::unique_ptr<Entity> createEntityByType(const QString& typeName)
         return std::make_unique<PointEntity>();
     if (typeName == QLatin1String("xline"))
         return std::make_unique<XLineEntity>();
+    if (typeName == QLatin1String("text"))
+        return std::make_unique<TextEntity>();
+    if (typeName == QLatin1String("dimension"))
+        return std::make_unique<DimensionEntity>();
+    if (typeName == QLatin1String("leader"))
+        return std::make_unique<LeaderEntity>();
+    if (typeName == QLatin1String("hatch"))
+        return std::make_unique<HatchEntity>();
     return nullptr;
 }
 

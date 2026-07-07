@@ -271,6 +271,32 @@ bool Document::removeLayer(LayerId id)
     return true;
 }
 
+const DimStyle& Document::dimStyle(const QString& name) const
+{
+    for (const DimStyle& s : m_dimStyles)
+        if (s.name.compare(name, Qt::CaseInsensitive) == 0)
+            return s;
+    return m_dimStyles.front();
+}
+
+DimStyle& Document::currentDimStyle()
+{
+    return m_dimStyles.front(); // "Standard" is always index 0 in v1
+}
+
+void Document::upsertDimStyle(const DimStyle& style)
+{
+    for (DimStyle& s : m_dimStyles) {
+        if (s.name.compare(style.name, Qt::CaseInsensitive) == 0) {
+            s = style;
+            notifyChanged();
+            return;
+        }
+    }
+    m_dimStyles.push_back(style);
+    notifyChanged();
+}
+
 uint32_t Document::resolveColor(const Entity& e) const
 {
     if (!e.color().byLayer)

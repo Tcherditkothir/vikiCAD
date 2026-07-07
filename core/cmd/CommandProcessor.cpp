@@ -33,8 +33,10 @@ CommandProcessor::Result CommandProcessor::submit(const QString& line, bool stri
             return r;
         r = feedPendingTokens();
         if (r.ok && r.pending && strict) {
-            // One implicit Finish lets repeating commands (LINE) terminate.
-            r = provideInput(InputValue::makeFinish());
+            // Implicit Finishes let repeating/optional stages terminate
+            // (LINE points, LEADER text, MIRROR's Y/N default...).
+            for (int i = 0; i < 3 && r.ok && r.pending; ++i)
+                r = provideInput(InputValue::makeFinish());
             if (r.ok && r.pending) {
                 cancelActive();
                 return {false, QStringLiteral("incomplete input for command %1").arg(name),
@@ -79,6 +81,13 @@ CommandProcessor::Result CommandProcessor::feedPendingTokens()
     Result r{true, {}, true, m_currentRequest.prompt};
     while (m_active && !m_pendingTokens.isEmpty()) {
         QString error;
+        // Text consumes the whole remaining line.
+        if (m_currentRequest.kind == InputKind::Text) {
+            const QString joined = m_pendingTokens.join(QLatin1Char(' '));
+            m_pendingTokens.clear();
+            r = provideInput(InputValue::makeText(joined));
+            continue;
+        }
         // EntitySet consumes every remaining numeric token in one gulp.
         if (m_currentRequest.kind == InputKind::EntitySet) {
             std::vector<EntityId> ids;

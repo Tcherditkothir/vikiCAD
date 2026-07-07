@@ -62,5 +62,6 @@ void registerBuiltinCommands(CommandProcessor& processor);
 void registerDrawCommands2(CommandProcessor& processor);
 void registerModifyCommands(CommandProcessor& processor);
 void registerEditCommands(CommandProcessor& processor);
+void registerAnnotateCommands(CommandProcessor& processor);
 
 } // namespace viki

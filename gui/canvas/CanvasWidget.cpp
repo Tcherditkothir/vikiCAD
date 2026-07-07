@@ -1,5 +1,6 @@
 #include "CanvasWidget.h"
 
+#include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -103,6 +104,7 @@ void CanvasWidget::rebuildStaticLayer()
     ctx.pixelSize = m_camera.pixelsToWorld(1.0);
     ctx.viewBox = BBox2d(m_camera.screenToWorld({0, double(height())}),
                          m_camera.screenToWorld({double(width()), 0}));
+    ctx.doc = m_doc;
 
     for (const EntityId id : m_doc->drawOrder()) {
         const Entity* e = m_doc->entity(id);
@@ -128,7 +130,9 @@ void CanvasWidget::drawPrimitives(QPainter& painter, const PrimitiveList& list,
     for (const StrokePrimitive& s : list.strokes) {
         if (s.points.size() < 2)
             continue;
-        QPen pen(overrideColor.isValid() ? overrideColor : QColor::fromRgb(s.rgb));
+        const QColor color =
+            overrideColor.isValid() ? overrideColor : QColor::fromRgb(s.rgb);
+        QPen pen(color);
         pen.setWidthF(overrideColor.isValid() ? 2.0 : 0.0); // 0 = cosmetic 1px
         pen.setCosmetic(true);
         painter.setPen(pen);
@@ -138,7 +142,37 @@ void CanvasWidget::drawPrimitives(QPainter& painter, const PrimitiveList& list,
             path.lineTo(m_camera.worldToScreen(s.points[i]));
         if (s.closed)
             path.closeSubpath();
-        painter.drawPath(path);
+        if (s.filled)
+            painter.fillPath(path, color);
+        else
+            painter.drawPath(path);
+    }
+
+    for (const TextPrimitive& t : list.texts) {
+        const QColor color = overrideColor.isValid() ? overrideColor : QColor::fromRgb(t.rgb);
+        const double px = t.height * m_camera.scale();
+        if (px < 2.0) { // LOD: too small to read, draw a bar
+            painter.setPen(QPen(color, 0));
+            const QPointF a = m_camera.worldToScreen(t.pos);
+            painter.drawLine(a, a + QPointF(t.text.size() * px * 0.6, 0));
+            continue;
+        }
+        QFont font(QStringLiteral("DejaVu Sans"));
+        font.setPixelSize(std::max(1, int(std::lround(px))));
+        painter.save();
+        painter.setPen(color);
+        painter.setFont(font);
+        const QPointF anchor = m_camera.worldToScreen(t.pos);
+        painter.translate(anchor);
+        painter.rotate(-t.rotation * 180.0 / M_PI);
+        double dx = 0;
+        const double w = QFontMetricsF(font).horizontalAdvance(t.text);
+        if (t.hAlign == TextHAlign::Center)
+            dx = -w / 2;
+        else if (t.hAlign == TextHAlign::Right)
+            dx = -w;
+        painter.drawText(QPointF(dx, 0), t.text);
+        painter.restore();
     }
 }
 
@@ -197,6 +231,7 @@ void CanvasWidget::paintEvent(QPaintEvent*)
         ctx.pixelSize = m_camera.pixelsToWorld(1.0);
         ctx.viewBox = BBox2d(m_camera.screenToWorld({0, double(height())}),
                              m_camera.screenToWorld({double(width()), 0}));
+        ctx.doc = m_doc;
         for (const EntityId id : m_selection->ids()) {
             const Entity* e = m_doc->entity(id);
             if (!e)
@@ -241,6 +276,7 @@ void CanvasWidget::paintEvent(QPaintEvent*)
             RenderContext gc;
             gc.chordTolerance = m_camera.pixelsToWorld(0.5);
             gc.pixelSize = m_camera.pixelsToWorld(1.0);
+            gc.doc = m_doc;
             PrimitiveList gl;
             ghost->buildPrimitives(gc, gl);
             drawPrimitives(p, gl, kPreview);

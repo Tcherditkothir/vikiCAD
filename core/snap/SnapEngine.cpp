@@ -33,11 +33,13 @@ bool kindEnabled(SnapKind k, const SnapSettings& s)
     return false;
 }
 
-PrimitiveList flatten(const Entity& e, double tol, const BBox2d& viewBox)
+PrimitiveList flatten(const Document& doc, const Entity& e, double tol,
+                      const BBox2d& viewBox)
 {
     RenderContext ctx;
     ctx.chordTolerance = tol;
     ctx.viewBox = viewBox;
+    ctx.doc = &doc;
     PrimitiveList list;
     e.buildPrimitives(ctx, list);
     return list;
@@ -143,7 +145,7 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
     if (settings.intersection && cands.size() >= 2) {
         const BBox2d flattenBox = probe.inflated(tolerance * 4);
         for (Cand& c : cands)
-            collectSegments(flatten(*c.e, tolerance * 0.05, flattenBox), c.segs);
+            collectSegments(flatten(doc, *c.e, tolerance * 0.05, flattenBox), c.segs);
         for (size_t i = 0; i < cands.size(); ++i) {
             for (size_t j = i + 1; j < cands.size(); ++j) {
                 for (const auto& [a1, a2] : cands[i].segs) {
@@ -163,7 +165,8 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
     if (settings.perpendicular && perpBase) {
         for (Cand& c : cands) {
             if (c.segs.empty())
-                collectSegments(flatten(*c.e, tolerance * 0.05, probe.inflated(tolerance * 4)),
+                collectSegments(flatten(doc, *c.e, tolerance * 0.05,
+                                        probe.inflated(tolerance * 4)),
                                 c.segs);
             const Vec2d foot = closestOnSegments(c.segs, *perpBase);
             consider(foot, SnapKind::Perpendicular, c.e->id());

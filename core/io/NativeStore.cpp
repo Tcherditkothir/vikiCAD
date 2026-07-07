@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS layers (
     printable  INTEGER NOT NULL DEFAULT 1,
     sort       INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS dim_styles (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS entities (
     id         INTEGER PRIMARY KEY,
     owner_kind INTEGER NOT NULL DEFAULT 0,
@@ -77,7 +81,10 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         return false;
 
     // Full rewrite: simple and correct at this document scale.
-    if (!exec(db.get(), "DELETE FROM meta; DELETE FROM layers; DELETE FROM entities;", error))
+    if (!exec(db.get(),
+               "DELETE FROM meta; DELETE FROM layers; DELETE FROM entities; "
+               "DELETE FROM dim_styles;",
+               error))
         return false;
 
     sqlite3_stmt* stmt = nullptr;
@@ -115,6 +122,18 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
             sqlite3_finalize(stmt);
             return false;
         }
+    }
+    sqlite3_finalize(stmt);
+
+    sqlite3_prepare_v2(db.get(), "INSERT INTO dim_styles(name,data) VALUES(?,?);", -1,
+                       &stmt, nullptr);
+    for (const DimStyle& ds : doc.dimStyles()) {
+        const QByteArray data =
+            QJsonDocument(ds.toJson()).toJson(QJsonDocument::Compact);
+        sqlite3_reset(stmt);
+        sqlite3_bind_text(stmt, 1, ds.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, data.constData(), data.size(), SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
     }
     sqlite3_finalize(stmt);
 
@@ -194,6 +213,18 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
             l.locked = sqlite3_column_int(stmt, 4) != 0;
             l.printable = sqlite3_column_int(stmt, 5) != 0;
             doc->restoreLayer(l);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db.get(), "SELECT data FROM dim_styles;", -1, &stmt, nullptr) ==
+        SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const QByteArray data(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)),
+                sqlite3_column_bytes(stmt, 0));
+            doc->upsertDimStyle(
+                DimStyle::fromJson(QJsonDocument::fromJson(data).object()));
         }
         sqlite3_finalize(stmt);
     }

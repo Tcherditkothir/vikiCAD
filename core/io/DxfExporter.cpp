@@ -3,6 +3,7 @@
 #include <drw_interface.h>
 #include <libdxfrw.h>
 
+#include "doc/Annotations.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 
@@ -226,11 +227,162 @@ private:
             out.basePoint = {xl->basePoint().x, xl->basePoint().y, 0};
             out.secPoint = {xl->direction().x, xl->direction().y, 0};
             m_rw.writeXline(&out);
+        } else if (const auto* txt = dynamic_cast<const TextEntity*>(&e)) {
+            const QStringList lines = txt->text().split(QLatin1Char('\n'));
+            if (lines.size() == 1 || m_r12) {
+                // TEXT records (one per line in R12, which has no MTEXT).
+                const Vec2d down =
+                    Vec2d{0, -TextEntity::kLineSpacing * txt->height()}.rotated(
+                        txt->rotation());
+                for (int i = 0; i < lines.size(); ++i) {
+                    DRW_Text out;
+                    applyCommon(e, out);
+                    const Vec2d p = txt->position() + down * double(i);
+                    out.basePoint = {p.x, p.y, 0};
+                    out.secPoint = out.basePoint;
+                    out.height = txt->height();
+                    out.angle = txt->rotation() * 180.0 / M_PI;
+                    out.text = lines[i].toStdString();
+                    m_rw.writeText(&out);
+                }
+            } else {
+                DRW_MText out;
+                applyCommon(e, out);
+                out.basePoint = {txt->position().x, txt->position().y, 0};
+                out.secPoint = out.basePoint;
+                out.height = txt->height();
+                out.angle = txt->rotation() * 180.0 / M_PI;
+                QString content = txt->text();
+                content.replace(QLatin1Char('\n'), QLatin1String("\\P"));
+                out.text = content.toStdString();
+                m_rw.writeMText(&out);
+            }
+        } else if (const auto* dim = dynamic_cast<const DimensionEntity*>(&e)) {
+            if (m_r12) { // DIMENSION writing needs R13+ in libdxfrw
+                skip("dimension-r12");
+                return;
+            }
+            writeDim(*dim, e);
+        } else if (const auto* leader = dynamic_cast<const LeaderEntity*>(&e)) {
+            if (m_r12) {
+                skip("leader-r12");
+                return;
+            }
+            DRW_Leader out;
+            applyCommon(e, out);
+            out.arrow = 1;
+            for (const Vec2d& p : leader->points)
+                out.vertexlist.push_back(std::make_shared<DRW_Coord>(p.x, p.y, 0));
+            out.vertnum = int(leader->points.size());
+            m_rw.writeLeader(&out);
+            if (!leader->text.isEmpty()) {
+                DRW_MText t;
+                applyCommon(e, t);
+                const Vec2d at = leader->points.back();
+                t.basePoint = {at.x, at.y, 0};
+                t.secPoint = t.basePoint;
+                t.height = 3.5;
+                t.text = leader->text.toStdString();
+                m_rw.writeMText(&t);
+            }
+        } else if (const auto* hatch = dynamic_cast<const HatchEntity*>(&e)) {
+            if (m_r12) {
+                skip("hatch-r12");
+                return;
+            }
+            DRW_Hatch out;
+            applyCommon(e, out);
+            const bool solid =
+                hatch->pattern.compare(QLatin1String("SOLID"), Qt::CaseInsensitive) == 0;
+            out.solid = solid ? 1 : 0;
+            out.name = solid ? std::string("SOLID")
+                             : hatch->pattern.toUpper().toStdString();
+            out.scale = hatch->scale;
+            out.angle = hatch->angle * 180.0 / M_PI;
+            out.hstyle = 0;
+            for (const auto& ring : hatch->rings) {
+                // Edge-type loop of LINE segments: the vendored writer has
+                // no polyline-loop support ("writeme" upstream).
+                auto loop = std::make_shared<DRW_HatchLoop>(1); // external
+                const size_t n = ring.size();
+                for (size_t i = 0; i < n; ++i) {
+                    auto edge = std::make_shared<DRW_Line>();
+                    edge->basePoint = {ring[i].x, ring[i].y, 0};
+                    edge->secPoint = {ring[(i + 1) % n].x, ring[(i + 1) % n].y, 0};
+                    loop->objlist.push_back(edge);
+                }
+                loop->update();
+                out.appendLoop(loop);
+            }
+            out.loopsnum = int(hatch->rings.size());
+            m_rw.writeHatch(&out);
         } else {
             skip(e.typeName());
             return;
         }
         ++exported;
+    }
+
+    void writeDim(const DimensionEntity& dim, const Entity& e)
+    {
+        using K = DimensionEntity::Kind;
+        switch (dim.kind) {
+        case K::Linear: {
+            DRW_DimLinear out;
+            applyCommon(e, out);
+            out.setDef1Point({dim.a.x, dim.a.y, 0});
+            out.setDef2Point({dim.b.x, dim.b.y, 0});
+            out.setDimPoint({dim.pos.x, dim.pos.y, 0});
+            out.setAngle(dim.axis.angle() * 180.0 / M_PI);
+            out.setTextPoint({dim.pos.x, dim.pos.y, 0});
+            if (!dim.textOverride.isEmpty())
+                out.setText(dim.textOverride.toStdString());
+            m_rw.writeDimension(&out);
+            break;
+        }
+        case K::Aligned: {
+            DRW_DimAligned out;
+            applyCommon(e, out);
+            out.setDef1Point({dim.a.x, dim.a.y, 0});
+            out.setDef2Point({dim.b.x, dim.b.y, 0});
+            out.setDimPoint({dim.pos.x, dim.pos.y, 0});
+            out.setTextPoint({dim.pos.x, dim.pos.y, 0});
+            m_rw.writeDimension(&out);
+            break;
+        }
+        case K::Radius: {
+            DRW_DimRadial out;
+            applyCommon(e, out);
+            out.setCenterPoint({dim.a.x, dim.a.y, 0});
+            out.setDiameterPoint({dim.b.x, dim.b.y, 0});
+            out.setTextPoint({dim.pos.x, dim.pos.y, 0});
+            m_rw.writeDimension(&out);
+            break;
+        }
+        case K::Diameter: {
+            DRW_DimDiametric out;
+            applyCommon(e, out);
+            const Vec2d dir = (dim.b - dim.a).normalized();
+            const double r = dim.a.distanceTo(dim.b);
+            const Vec2d opposite = dim.a - dir * r;
+            out.setDiameter1Point({dim.b.x, dim.b.y, 0});
+            out.setDiameter2Point({opposite.x, opposite.y, 0});
+            out.setTextPoint({dim.pos.x, dim.pos.y, 0});
+            m_rw.writeDimension(&out);
+            break;
+        }
+        case K::Angular: {
+            DRW_DimAngular3p out;
+            applyCommon(e, out);
+            out.SetVertexPoint({dim.a.x, dim.a.y, 0});
+            out.setFirstLine({dim.b.x, dim.b.y, 0});
+            out.setSecondLine({dim.c.x, dim.c.y, 0});
+            out.setDimPoint({dim.pos.x, dim.pos.y, 0});
+            out.setTextPoint({dim.pos.x, dim.pos.y, 0});
+            m_rw.writeDimension(&out);
+            break;
+        }
+        }
     }
 
     const Document& m_doc;
