@@ -1,6 +1,7 @@
 #include "DxfImporter.h"
 
 #include <drw_interface.h>
+#include <libdwgr.h>
 #include <libdxfrw.h>
 
 #include <QJsonDocument>
@@ -457,21 +458,47 @@ public:
 
 } // namespace
 
-DxfImportResult importDxf(const QString& path)
+namespace {
+
+DxfImportResult finish(Builder& builder)
 {
     DxfImportResult result;
-    Builder builder;
-    dxfRW reader(path.toUtf8().constData());
-    if (!reader.read(&builder, /*ext=*/true)) {
-        result.error = QStringLiteral("failed to parse DXF: %1").arg(path);
-        return result;
-    }
     result.ok = true;
     result.imported = builder.imported;
     result.skipped = builder.skipped;
     result.skippedTypes = builder.skippedTypes;
     result.document = std::move(builder.doc);
     return result;
+}
+
+} // namespace
+
+DxfImportResult importDxf(const QString& path)
+{
+    Builder builder;
+    dxfRW reader(path.toUtf8().constData());
+    if (!reader.read(&builder, /*ext=*/true)) {
+        DxfImportResult result;
+        result.error = QStringLiteral("failed to parse DXF: %1").arg(path);
+        return result;
+    }
+    return finish(builder);
+}
+
+DxfImportResult importDwg(const QString& path)
+{
+    Builder builder;
+    dwgR reader(path.toUtf8().constData());
+    if (!reader.read(&builder, /*ext=*/true)) {
+        DxfImportResult result;
+        result.error =
+            QStringLiteral("failed to parse DWG (version too new or damaged?): %1 "
+                           "[dwg error %2]")
+                .arg(path)
+                .arg(int(reader.getError()));
+        return result;
+    }
+    return finish(builder);
 }
 
 } // namespace viki

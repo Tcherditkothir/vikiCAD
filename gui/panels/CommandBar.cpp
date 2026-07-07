@@ -12,15 +12,20 @@ CommandBar::CommandBar(QWidget* parent)
 {
     m_history = new QPlainTextEdit(this);
     m_history->setReadOnly(true);
-    m_history->setMaximumHeight(80);
+    m_history->setMaximumHeight(84);
     m_history->setFrameShape(QFrame::NoFrame);
     m_history->setFocusPolicy(Qt::NoFocus);
+    QFont mono(QStringLiteral("DejaVu Sans Mono"));
+    mono.setPointSize(9);
+    m_history->setFont(mono);
 
     m_prompt = new QLabel(QStringLiteral("Command:"), this);
-    m_prompt->setContentsMargins(4, 0, 4, 0);
+    m_prompt->setContentsMargins(6, 0, 4, 0);
+    m_prompt->setStyleSheet(QStringLiteral("color:#4ba3ff;font-weight:600;"));
 
     m_input = new QLineEdit(this);
     m_input->setPlaceholderText(QStringLiteral("Type a command (LINE, CIRCLE, ARC, ...)"));
+    m_input->setFont(mono);
 
     auto* inputRow = new QHBoxLayout;
     inputRow->setContentsMargins(0, 0, 0, 0);

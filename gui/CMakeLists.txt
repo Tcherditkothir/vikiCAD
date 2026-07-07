@@ -1,6 +1,7 @@
 add_executable(vikicad
     main.cpp
     MainWindow.cpp
+    Theme.cpp
     canvas/CanvasWidget.cpp
     panels/CommandBar.cpp
     panels/LayerPanel.cpp

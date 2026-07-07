@@ -22,4 +22,8 @@ struct DxfImportResult {
 // Model space only; unsupported entity types are counted, not fatal.
 DxfImportResult importDxf(const QString& path);
 
+// Imports a DWG file through libdxfrw's dwg reader (R14..2015 coverage,
+// LibreCAD's reader). Same conversion pipeline as DXF.
+DxfImportResult importDwg(const QString& path);
+
 } // namespace viki

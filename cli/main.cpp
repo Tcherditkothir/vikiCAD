@@ -60,7 +60,7 @@ int printUsage(FILE* out)
         "              [--save] [--save-as OUT.vkd]\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "              [--notes] [--blocks] [--layouts]\n"
-        "  vikicad-cli import IN.dxf --save-as OUT.vkd\n"
+        "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
         "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
@@ -216,7 +216,9 @@ int cmdImport(const QStringList& args)
                                   {QStringLiteral("savedTo"), outPath}});
     }
 
-    DxfImportResult r = importDxf(inPath);
+    DxfImportResult r = inPath.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)
+                            ? importDwg(inPath)
+                            : importDxf(inPath);
     if (!r.ok)
         return emitError(QStringLiteral("E_IMPORT"), r.error);
     QString error;

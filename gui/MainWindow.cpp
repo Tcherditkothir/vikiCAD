@@ -70,7 +70,7 @@ MainWindow::MainWindow()
                         &MainWindow::saveFileAs);
     fileMenu->addSeparator();
 #ifdef VIKICAD_HAS_DXF
-    fileMenu->addAction(QStringLiteral("&Import DXF..."), this, &MainWindow::importDxfFile);
+    fileMenu->addAction(QStringLiteral("&Import DXF/DWG..."), this, &MainWindow::importDxfFile);
     fileMenu->addSeparator();
 #endif
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
@@ -351,11 +351,13 @@ void MainWindow::importDxfFile()
 {
 #ifdef VIKICAD_HAS_DXF
     const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Import DXF"), {},
-        QStringLiteral("DXF drawings (*.dxf);;All files (*)"));
+        this, QStringLiteral("Import DXF/DWG"), {},
+        QStringLiteral("CAD drawings (*.dxf *.dwg);;All files (*)"));
     if (path.isEmpty())
         return;
-    DxfImportResult r = importDxf(path);
+    DxfImportResult r = path.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)
+                            ? importDwg(path)
+                            : importDxf(path);
     if (!r.ok) {
         QMessageBox::warning(this, QStringLiteral("Import failed"), r.error);
         return;
