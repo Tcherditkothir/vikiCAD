@@ -115,3 +115,10 @@ Tag : `m4`.
 **v1.0-2D atteinte. Critère nanoCAD-désinstallé : à valider par Lex à l'usage (M6).**
 
 Tag : `m5`.
+
+## 2026-07-07 — M6 (partie automatisable) : perf + sanitizers ✅
+
+- **Fichier torture 10k entités** (4k lignes, 3k cercles, 2k rects, 1k cotes) via script .vks — leçon au passage : mon générateur avait oublié la sémantique .scr (ligne vide pour terminer LINE).
+- **Mesures (build DEBUG, CLI)** : création 10k commandes + save = 0,19 s ; load+bounds = 0,05 s ; load+JSON complet (1,7 Mo) = 0,10 s ; load+édit+save = 0,09 s ; export DXF = 0,14 s ; export PDF = 0,14 s ; réimport DXF = 0,13 s. **Porte de décision M6 : passée très largement — le scan linéaire et QPainter restent ; pas de R-tree nécessaire.**
+- **ASan/UBSan** : a attrapé un **vrai use-after-free** dans TRIM/BREAK (copyStyle lisait l'entité source APRÈS removeEntity l'ait détruite — marchait « par chance » en pratique). Corrigé en capturant calque+couleur avant la suppression. 71/71 verts sous sanitizers.
+- La partie « deux semaines d'usage réel quotidien » de M6 appartient à Lex — en cours en parallèle du développement 3D.

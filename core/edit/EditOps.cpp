@@ -186,15 +186,22 @@ OpResult trimEntity(Document& doc, EntityId target, std::vector<EntityId> cutter
             else
                 hi = std::min(hi, t);
         }
+        // Snapshot style BEFORE removeEntity destroys the source.
+        const LayerId styleLayer = line->layerId();
+        const ColorSpec styleColor = line->color();
         doc.removeEntity(target);
+        const auto applyStyle = [&](Entity& piece) {
+            piece.setLayerId(styleLayer);
+            piece.setColor(styleColor);
+        };
         if (lo > 1e-9) {
             auto piece = std::make_unique<LineEntity>(a, a + d * lo);
-            copyStyle(*line, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         if (hi < 1.0 - 1e-9) {
             auto piece = std::make_unique<LineEntity>(a + d * hi, a + d);
-            copyStyle(*line, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         return {true, {}};
@@ -249,15 +256,21 @@ OpResult trimEntity(Document& doc, EntityId target, std::vector<EntityId> cutter
         }
         const Vec2d c = arc->center();
         const double r = arc->radius(), s0 = arc->startAngle(), w = arc->sweep();
+        const LayerId styleLayer = arc->layerId();
+        const ColorSpec styleColor = arc->color();
         doc.removeEntity(target);
+        const auto applyStyle = [&](Entity& piece) {
+            piece.setLayerId(styleLayer);
+            piece.setColor(styleColor);
+        };
         if (lo > 1e-9) {
             auto piece = std::make_unique<ArcEntity>(c, r, s0, lo);
-            copyStyle(*arc, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         if (hi < w - 1e-9) {
             auto piece = std::make_unique<ArcEntity>(c, r, normalizeAngle(s0 + hi), w - hi);
-            copyStyle(*arc, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         return {true, {}};
@@ -554,15 +567,21 @@ OpResult breakEntity(Document& doc, EntityId target, const Vec2d& p1, const Vec2
         double t2 = std::clamp((p2 - a).dot(d) / lenSq, 0.0, 1.0);
         if (t1 > t2)
             std::swap(t1, t2);
+        const LayerId styleLayer = line->layerId();
+        const ColorSpec styleColor = line->color();
         doc.removeEntity(target);
+        const auto applyStyle = [&](Entity& piece) {
+            piece.setLayerId(styleLayer);
+            piece.setColor(styleColor);
+        };
         if (t1 > 1e-9) {
             auto piece = std::make_unique<LineEntity>(a, a + d * t1);
-            copyStyle(*line, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         if (t2 < 1.0 - 1e-9) {
             auto piece = std::make_unique<LineEntity>(a + d * t2, a + d);
-            copyStyle(*line, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         return {true, {}};
@@ -591,15 +610,21 @@ OpResult breakEntity(Document& doc, EntityId target, const Vec2d& p1, const Vec2
             std::swap(u1, u2);
         const Vec2d c = arc->center();
         const double r = arc->radius(), s0 = arc->startAngle(), w = arc->sweep();
+        const LayerId styleLayer = arc->layerId();
+        const ColorSpec styleColor = arc->color();
         doc.removeEntity(target);
+        const auto applyStyle = [&](Entity& piece) {
+            piece.setLayerId(styleLayer);
+            piece.setColor(styleColor);
+        };
         if (u1 > 1e-9) {
             auto piece = std::make_unique<ArcEntity>(c, r, s0, u1);
-            copyStyle(*arc, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         if (u2 < w - 1e-9) {
             auto piece = std::make_unique<ArcEntity>(c, r, normalizeAngle(s0 + u2), w - u2);
-            copyStyle(*arc, *piece);
+            applyStyle(*piece);
             doc.addEntity(std::move(piece));
         }
         return {true, {}};
