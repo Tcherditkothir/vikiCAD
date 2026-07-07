@@ -56,7 +56,10 @@ private:
     QStringList m_pendingTokens;
 };
 
-// Registers LINE/CIRCLE/ARC/ERASE/UNDO/REDO/ZOOM.
+// Registers every built-in command (drawing, editing, view).
 void registerBuiltinCommands(CommandProcessor& processor);
+// Individual groups (called by registerBuiltinCommands).
+void registerDrawCommands2(CommandProcessor& processor);
+void registerModifyCommands(CommandProcessor& processor);
 
 } // namespace viki

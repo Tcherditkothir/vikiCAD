@@ -32,7 +32,8 @@ BBox2d Document::extents() const
 {
     BBox2d box;
     for (const auto& [id, e] : m_entities)
-        box.expand(e->bounds());
+        if (!e->isInfinite())
+            box.expand(e->bounds());
     return box;
 }
 
@@ -41,6 +42,9 @@ EntityId Document::addEntity(std::unique_ptr<Entity> entity)
     assert(m_openTransaction && "addEntity requires an open transaction");
     const EntityId id = m_nextId++;
     entity->m_id = id;
+    // Commands leave the layer at 0; new entities land on the current layer.
+    if (entity->layerId() == 0 && m_currentLayer != 0)
+        entity->setLayerId(m_currentLayer);
 
     Change change;
     change.kind = Change::Kind::Added;
@@ -217,12 +221,74 @@ const Layer* Document::layer(LayerId id) const
     return nullptr;
 }
 
+Layer* Document::layerByName(const QString& name)
+{
+    for (Layer& l : m_layers)
+        if (l.name.compare(name, Qt::CaseInsensitive) == 0)
+            return &l;
+    return nullptr;
+}
+
+LayerId Document::ensureLayer(const QString& name, uint32_t rgb, bool visible, bool locked)
+{
+    if (Layer* existing = layerByName(name))
+        return existing->id;
+    Layer l;
+    l.id = m_nextLayerId++;
+    l.name = name;
+    l.rgb = rgb;
+    l.visible = visible;
+    l.locked = locked;
+    m_layers.push_back(l);
+    notifyChanged();
+    return l.id;
+}
+
+void Document::setLayerProps(LayerId id, uint32_t rgb, bool visible, bool locked)
+{
+    for (Layer& l : m_layers) {
+        if (l.id == id) {
+            l.rgb = rgb;
+            l.visible = visible;
+            l.locked = locked;
+            notifyChanged();
+            return;
+        }
+    }
+}
+
+bool Document::removeLayer(LayerId id)
+{
+    if (id == 0 || id == m_currentLayer)
+        return false;
+    for (const auto& [eid, e] : m_entities)
+        if (e->layerId() == id)
+            return false;
+    m_layers.erase(std::remove_if(m_layers.begin(), m_layers.end(),
+                                  [id](const Layer& l) { return l.id == id; }),
+                   m_layers.end());
+    notifyChanged();
+    return true;
+}
+
 uint32_t Document::resolveColor(const Entity& e) const
 {
     if (!e.color().byLayer)
         return e.color().rgb;
     const Layer* l = layer(e.layerId());
     return l ? l->rgb : 0xFFFFFF;
+}
+
+void Document::restoreLayer(const Layer& l)
+{
+    for (Layer& existing : m_layers) {
+        if (existing.id == l.id) {
+            existing = l;
+            return;
+        }
+    }
+    m_layers.push_back(l);
+    m_nextLayerId = std::max(m_nextLayerId, l.id + 1);
 }
 
 void Document::restoreEntity(std::unique_ptr<Entity> entity, EntityId id)

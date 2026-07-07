@@ -9,6 +9,9 @@
 #include "Version.h"
 #include "cmd/CommandProcessor.h"
 #include "doc/SelectionSet.h"
+#ifdef VIKICAD_HAS_DXF
+#include "io/DxfImporter.h"
+#endif
 #include "io/NativeStore.h"
 #include "script/ScriptRunner.h"
 #include "solid/OcctOps.h"
@@ -51,6 +54,7 @@ int printUsage(FILE* out)
         "  vikicad-cli open FILE.vkd [--exec \"CMD ...\"]... [--run script.vks]\n"
         "              [--save] [--save-as OUT.vkd]\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
+        "  vikicad-cli import IN.dxf --save-as OUT.vkd\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
 }
@@ -190,6 +194,41 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
     return emitOk(result);
 }
 
+int cmdImport(const QStringList& args)
+{
+#ifndef VIKICAD_HAS_DXF
+    (void)args;
+    return emitError(QStringLiteral("E_NODXF"),
+                     QStringLiteral("built without DXF support"));
+#else
+    if (args.size() < 3 || args[1] != QLatin1String("--save-as"))
+        return emitError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("usage: import IN.dxf --save-as OUT.vkd"));
+    const QString inPath = args[0];
+    const QString outPath = args[2];
+    DxfImportResult r = importDxf(inPath);
+    if (!r.ok)
+        return emitError(QStringLiteral("E_IMPORT"), r.error);
+    QString error;
+    if (!NativeStore::save(*r.document, outPath, error))
+        return emitError(QStringLiteral("E_SAVE"), error);
+
+    QJsonObject result;
+    result[QStringLiteral("imported")] = r.imported;
+    result[QStringLiteral("skipped")] = r.skipped;
+    QJsonArray skippedTypes;
+    for (const QString& t : r.skippedTypes)
+        skippedTypes.append(t);
+    result[QStringLiteral("skippedTypes")] = skippedTypes;
+    result[QStringLiteral("savedTo")] = outPath;
+    QJsonArray layers;
+    for (const Layer& l : r.document->layers())
+        layers.append(l.name);
+    result[QStringLiteral("layers")] = layers;
+    return emitOk(result);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -213,6 +252,8 @@ int main(int argc, char** argv)
         return cmdQuery(args);
     if (verb == QLatin1String("new") || verb == QLatin1String("open"))
         return cmdNewOrOpen(verb, args);
+    if (verb == QLatin1String("import"))
+        return cmdImport(args);
 
     return emitError(QStringLiteral("E_UNKNOWN_VERB"),
                      QStringLiteral("unknown verb: %1").arg(verb));

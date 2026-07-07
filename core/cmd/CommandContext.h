@@ -24,6 +24,12 @@ public:
     SelectionSet& selection() { return m_selection; }
     ViewHook* view() { return m_view; }
 
+    // mm per display unit — input parsing multiplies bare numbers by this.
+    double unitFactor() const
+    {
+        return m_doc.displayUnits() == DisplayUnits::Inches ? 25.4 : 1.0;
+    }
+
     // Base point for relative coordinates (@dx,dy) and Distance-by-point.
     Vec2d lastPoint() const { return m_lastPoint; }
     void setLastPoint(const Vec2d& p) { m_lastPoint = p; }

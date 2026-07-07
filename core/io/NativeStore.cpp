@@ -93,6 +93,7 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
             doc.displayUnits() == DisplayUnits::Inches ? QStringLiteral("in")
                                                        : QStringLiteral("mm"));
     putMeta("next_id", QString::number(doc.nextId()));
+    putMeta("current_layer", QString::number(doc.currentLayer()));
     sqlite3_finalize(stmt);
 
     sqlite3_prepare_v2(db.get(),
@@ -173,6 +174,26 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
                                                                   : DisplayUnits::Millimeters);
             else if (key == QLatin1String("next_id"))
                 doc->setNextId(value.toLongLong());
+            else if (key == QLatin1String("current_layer"))
+                doc->setCurrentLayer(value.toLongLong());
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (sqlite3_prepare_v2(db.get(),
+                           "SELECT id,name,color,visible,locked,printable FROM layers "
+                           "ORDER BY sort;",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            Layer l;
+            l.id = sqlite3_column_int64(stmt, 0);
+            l.name = QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            l.rgb = uint32_t(sqlite3_column_int64(stmt, 2));
+            l.visible = sqlite3_column_int(stmt, 3) != 0;
+            l.locked = sqlite3_column_int(stmt, 4) != 0;
+            l.printable = sqlite3_column_int(stmt, 5) != 0;
+            doc->restoreLayer(l);
         }
         sqlite3_finalize(stmt);
     }

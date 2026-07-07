@@ -1,17 +1,18 @@
 #pragma once
 
-#include <functional>
+#include <optional>
 
 #include <QPixmap>
 #include <QWidget>
 
 #include "Camera2d.h"
 #include "cmd/CommandProcessor.h"
+#include "snap/SnapEngine.h"
 
 namespace viki {
 
 // The 2D drafting viewport: static pixmap of committed entities + dynamic
-// overlay (crosshair, command preview, selection, rubber band) per frame.
+// overlay (crosshair, command preview, selection, rubber band, snap glyph).
 // Also the GUI's ViewHook (ZOOM Extents etc.).
 class CanvasWidget : public QWidget, public ViewHook {
     Q_OBJECT
@@ -25,10 +26,21 @@ public:
     // ViewHook
     void zoomExtents() override;
 
+    // Input-mode toggles (status bar buttons).
+    SnapSettings& snapSettings() { return m_snapSettings; }
+    void setOrtho(bool on) { m_ortho = on; }
+    void setPolar(bool on) { m_polar = on; }
+    void setGridSnap(bool on) { m_gridSnap = on; markDocumentDirty(); }
+    bool ortho() const { return m_ortho; }
+    bool polar() const { return m_polar; }
+    bool gridSnap() const { return m_gridSnap; }
+
 signals:
     // Emitted after any input reached the command processor or the selection
     // changed — MainWindow refreshes the prompt/history from this.
     void interaction();
+    // World-coordinates cursor position for the status readout.
+    void cursorMoved(double x, double y);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -41,10 +53,15 @@ protected:
 
 private:
     void rebuildStaticLayer();
+    void drawGrid(QPainter& painter) const;
     void drawPrimitives(QPainter& painter, const PrimitiveList& list,
                         const QColor& overrideColor = QColor()) const;
+    void drawSnapGlyph(QPainter& painter) const;
     void handleLeftClick(const Vec2d& world, Qt::KeyboardModifiers mods);
     void finishRubberBand(const QPointF& releasePos, Qt::KeyboardModifiers mods);
+    // Object snap → ortho/polar → grid, in that order.
+    Vec2d effectivePoint(const Vec2d& cursorWorld);
+    bool commandWantsPoint() const;
     double pickTolerance() const { return m_camera.pixelsToWorld(6.0); }
 
     Document* m_doc = nullptr;
@@ -54,6 +71,14 @@ private:
     Camera2d m_camera;
     QPixmap m_staticLayer;
     bool m_staticDirty = true;
+
+    SnapSettings m_snapSettings;
+    bool m_ortho = false;
+    bool m_polar = false;
+    bool m_gridSnap = false;
+    double m_gridSpacing = 10.0; // mm
+    std::optional<SnapResult> m_activeSnap;
+    Vec2d m_effectiveCursor;
 
     QPointF m_cursorPx;
     bool m_panning = false;

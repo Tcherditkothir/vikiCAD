@@ -112,22 +112,36 @@ std::optional<InputValue> CommandProcessor::parseToken(const QString& token, QSt
 {
     switch (m_currentRequest.kind) {
     case InputKind::Point: {
-        const auto p = parsePointToken(token, m_ctx.lastPoint());
-        if (!p) {
-            error = QStringLiteral("invalid point: %1").arg(token);
-            return std::nullopt;
-        }
-        return InputValue::makePoint(*p);
+        const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor());
+        if (p)
+            return InputValue::makePoint(*p);
+        // Alphabetic tokens at a point prompt are command keywords (PLINE C).
+        bool alpha = !token.isEmpty();
+        for (const QChar c : token)
+            alpha = alpha && c.isLetter();
+        if (alpha)
+            return InputValue::makeKeyword(token.toUpper());
+        error = QStringLiteral("invalid point: %1").arg(token);
+        return std::nullopt;
     }
     case InputKind::Distance: {
+        if (const auto n = parseLengthToken(token, m_ctx.unitFactor()))
+            return InputValue::makeNumber(*n);
+        const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor());
+        if (p)
+            return InputValue::makeNumber(p->distanceTo(m_ctx.lastPoint()));
+        error = QStringLiteral("invalid distance: %1").arg(token);
+        return std::nullopt;
+    }
+    case InputKind::Number: {
         bool ok = false;
         const double n = token.toDouble(&ok);
         if (ok)
             return InputValue::makeNumber(n);
-        const auto p = parsePointToken(token, m_ctx.lastPoint());
-        if (p)
-            return InputValue::makeNumber(p->distanceTo(m_ctx.lastPoint()));
-        error = QStringLiteral("invalid distance: %1").arg(token);
+        // A point is acceptable where a number is asked (angle/factor by point).
+        if (const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor()))
+            return InputValue::makePoint(*p);
+        error = QStringLiteral("invalid number: %1").arg(token);
         return std::nullopt;
     }
     case InputKind::Keyword:

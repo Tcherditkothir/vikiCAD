@@ -149,4 +149,37 @@ void ArcEntity::geomFromJson(const QJsonObject& obj)
     m_sweep = obj[QStringLiteral("sweep")].toDouble(M_PI);
 }
 
+
+// ---- snap candidates --------------------------------------------------------
+
+void LineEntity::snapPoints(std::vector<SnapPoint>& out) const
+{
+    out.push_back({m_p1, SnapKind::Endpoint});
+    out.push_back({m_p2, SnapKind::Endpoint});
+    out.push_back({(m_p1 + m_p2) * 0.5, SnapKind::Midpoint});
+}
+
+void CircleEntity::snapPoints(std::vector<SnapPoint>& out) const
+{
+    out.push_back({m_center, SnapKind::Center});
+    out.push_back({m_center + Vec2d{m_radius, 0}, SnapKind::Quadrant});
+    out.push_back({m_center + Vec2d{0, m_radius}, SnapKind::Quadrant});
+    out.push_back({m_center - Vec2d{m_radius, 0}, SnapKind::Quadrant});
+    out.push_back({m_center - Vec2d{0, m_radius}, SnapKind::Quadrant});
+}
+
+void ArcEntity::snapPoints(std::vector<SnapPoint>& out) const
+{
+    out.push_back({startPoint(), SnapKind::Endpoint});
+    out.push_back({endPoint(), SnapKind::Endpoint});
+    out.push_back({m_center + Vec2d::polar(m_radius, m_startAngle + m_sweep * 0.5),
+                   SnapKind::Midpoint});
+    out.push_back({m_center, SnapKind::Center});
+    for (int q = 0; q < 4; ++q) {
+        const double a = q * M_PI_2;
+        if (angleOnArc(a, m_startAngle, m_sweep))
+            out.push_back({m_center + Vec2d::polar(m_radius, a), SnapKind::Quadrant});
+    }
+}
+
 } // namespace viki

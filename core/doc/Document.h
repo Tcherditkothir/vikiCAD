@@ -65,6 +65,15 @@ public:
     // --- layers
     const std::vector<Layer>& layers() const { return m_layers; }
     const Layer* layer(LayerId id) const;
+    Layer* layerByName(const QString& name);
+    // Direct (non-journaled) layer creation/update — import, load, manager.
+    LayerId ensureLayer(const QString& name, uint32_t rgb = 0xFFFFFF,
+                        bool visible = true, bool locked = false);
+    void setLayerProps(LayerId id, uint32_t rgb, bool visible, bool locked);
+    // Deletes an empty, non-current layer. False if it has entities/is current/is 0.
+    bool removeLayer(LayerId id);
+    LayerId currentLayer() const { return m_currentLayer; }
+    void setCurrentLayer(LayerId id) { m_currentLayer = id; }
     uint32_t resolveColor(const Entity& e) const;
 
     // --- settings
@@ -78,6 +87,8 @@ public:
 
     // Used by NativeStore on load: insert with a known id, no transaction.
     void restoreEntity(std::unique_ptr<Entity> entity, EntityId id);
+    // Load path: restore a layer with its stored id (id 0 updates layer "0").
+    void restoreLayer(const Layer& l);
     void setNextId(EntityId next) { m_nextId = next; }
     EntityId nextId() const { return m_nextId; }
 
@@ -97,6 +108,8 @@ private:
     static constexpr size_t kMaxUndo = 100;
 
     std::vector<Layer> m_layers;
+    LayerId m_currentLayer = 0;
+    LayerId m_nextLayerId = 1;
     DisplayUnits m_displayUnits = DisplayUnits::Millimeters;
     QString m_filePath;
     std::vector<std::function<void()>> m_listeners;

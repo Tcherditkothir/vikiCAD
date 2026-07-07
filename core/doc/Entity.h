@@ -14,6 +14,22 @@ namespace viki {
 using EntityId = int64_t;
 inline constexpr EntityId kInvalidEntityId = 0;
 
+// Typed object-snap candidate emitted by entities.
+enum class SnapKind {
+    Endpoint,
+    Midpoint,
+    Center,
+    Quadrant,
+    Intersection,
+    Perpendicular,
+    Grid,
+};
+
+struct SnapPoint {
+    Vec2d p;
+    SnapKind kind;
+};
+
 // Entity color: ByLayer by default, otherwise explicit RGB.
 struct ColorSpec {
     bool byLayer = true;
@@ -31,8 +47,15 @@ public:
     virtual const char* typeName() const = 0;
     virtual std::unique_ptr<Entity> clone() const = 0;
     virtual BBox2d bounds() const = 0;
+    // True for unbounded entities (xline): excluded from extents, and their
+    // bounds() is a huge sentinel box.
+    virtual bool isInfinite() const { return false; }
     virtual void transform(const Xform2d& xf) = 0;
     virtual void buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const = 0;
+
+    // Emits the entity's static snap candidates (endpoint/midpoint/center/
+    // quadrant). Perpendicular and intersection are computed by SnapEngine.
+    virtual void snapPoints(std::vector<SnapPoint>& out) const { (void)out; }
 
     // Serializes the full state (type + common + geometry). Used by the native
     // format, CLI queries and undo deltas alike.

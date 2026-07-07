@@ -8,10 +8,15 @@
 #include "doc/Document.h"
 #include "doc/SelectionSet.h"
 
+class QLabel;
+class QToolButton;
+
 namespace viki {
 
 class CanvasWidget;
 class CommandBar;
+class LayerPanel;
+class PropertiesPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,11 +31,14 @@ private slots:
     void openFile();
     void saveFile();
     void saveFileAs();
+    void importDxfFile();
+    void toggleUnits();
 
 private:
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();
     void updateWindowTitle();
+    void updateUnitsButton();
     bool saveTo(const QString& path);
 
     std::unique_ptr<Document> m_doc;
@@ -40,6 +48,10 @@ private:
 
     CanvasWidget* m_canvas = nullptr;
     CommandBar* m_commandBar = nullptr;
+    LayerPanel* m_layerPanel = nullptr;
+    PropertiesPanel* m_propsPanel = nullptr;
+    QLabel* m_coordLabel = nullptr;
+    QToolButton* m_unitsBtn = nullptr;
 };
 
 } // namespace viki

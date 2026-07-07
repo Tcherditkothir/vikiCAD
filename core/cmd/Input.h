@@ -12,7 +12,8 @@ namespace viki {
 // What a command asks for next.
 enum class InputKind {
     Point,     // a 2D point
-    Distance,  // a number, or a point (distance from the command's base point)
+    Distance,  // a length in display units, or a point (distance from base)
+    Number,    // a raw number (angle, factor, count) — NO unit conversion
     EntitySet, // one or more entities (ends with Finish in GUI mode)
     Text,      // free text
     Keyword,   // one of the command's keywords ("E" for ZOOM Extents, ...)
@@ -69,8 +70,14 @@ struct Step {
     }
 };
 
+// Parse a length token in display units. Suffixes override the mode:
+// 2" or 2in = inches, 2mm = millimeters, bare 2 = unitFactor (mm per unit).
+std::optional<double> parseLengthToken(const QString& token, double unitFactor);
+
 // Parse a coordinate token: "x,y" absolute, "@dx,dy" relative,
-// "@dist<angle_deg" polar relative. Returns nullopt on syntax error.
-std::optional<Vec2d> parsePointToken(const QString& token, const Vec2d& lastPoint);
+// "@dist<angle_deg" polar relative. Coordinates honor unit suffixes and
+// unitFactor. Returns nullopt on syntax error.
+std::optional<Vec2d> parsePointToken(const QString& token, const Vec2d& lastPoint,
+                                     double unitFactor = 1.0);
 
 } // namespace viki

@@ -9,14 +9,22 @@ add_library(vikicore STATIC
     doc/Entities.cpp
     doc/EntityFactory.cpp
     doc/Document.cpp
+    doc/EntitiesEx.cpp
     render/HitTest.cpp
+    snap/SnapEngine.cpp
     cmd/Input.cpp
     cmd/CommandProcessor.cpp
     cmd/Commands2D.cpp
+    cmd/CommandsDraw2.cpp
+    cmd/CommandsModify.cpp
     io/NativeStore.cpp
     script/ScriptRunner.cpp
     solid/OcctOps.cpp
 )
+
+if(VIKICAD_HAS_DXF)
+    target_sources(vikicore PRIVATE io/DxfImporter.cpp)
+endif()
 
 target_include_directories(vikicore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -36,5 +44,5 @@ target_include_directories(vikicore SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 
 if(VIKICAD_HAS_DXF)
     target_link_libraries(vikicore PRIVATE dxfrw)
-    target_compile_definitions(vikicore PRIVATE VIKICAD_HAS_DXF=1)
+    target_compile_definitions(vikicore PUBLIC VIKICAD_HAS_DXF=1)
 endif()
