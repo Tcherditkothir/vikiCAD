@@ -41,7 +41,6 @@ void applyDarkTheme(QApplication& app)
     app.setStyleSheet(QStringLiteral(R"css(
 QMainWindow::separator { background: #17181a; width: 3px; height: 3px; }
 
-QDockWidget { titlebar-close-icon: none; titlebar-normal-icon: none; }
 QDockWidget::title {
     background: #26282c; padding: 5px 10px;
     border-bottom: 1px solid #17181a;

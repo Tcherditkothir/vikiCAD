@@ -9,6 +9,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QStatusBar>
@@ -44,22 +45,33 @@ MainWindow::MainWindow()
     auto* commandDock = new QDockWidget(QStringLiteral("Command"), this);
     commandDock->setObjectName(QStringLiteral("commandDock"));
     commandDock->setWidget(m_commandBar);
-    commandDock->setFeatures(QDockWidget::DockWidgetMovable);
+    commandDock->setFeatures(QDockWidget::DockWidgetMovable |
+                             QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::BottomDockWidgetArea, commandDock);
 
     m_layerPanel = new LayerPanel(this);
     auto* layerDock = new QDockWidget(QStringLiteral("Layers"), this);
     layerDock->setObjectName(QStringLiteral("layerDock"));
     layerDock->setWidget(m_layerPanel);
+    layerDock->setFeatures(QDockWidget::DockWidgetMovable |
+                           QDockWidget::DockWidgetFloatable |
+                           QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, layerDock);
 
     m_propsPanel = new PropertiesPanel(this);
     auto* propsDock = new QDockWidget(QStringLiteral("Properties"), this);
     propsDock->setObjectName(QStringLiteral("propsDock"));
     propsDock->setWidget(m_propsPanel);
+    propsDock->setFeatures(QDockWidget::DockWidgetMovable |
+                           QDockWidget::DockWidgetFloatable |
+                           QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, propsDock);
 
     // --- menus
+    auto* viewMenu0 = new QMenu(QStringLiteral("&View"), this);
+    viewMenu0->addAction(layerDock->toggleViewAction());
+    viewMenu0->addAction(propsDock->toggleViewAction());
+    viewMenu0->addAction(commandDock->toggleViewAction());
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->addAction(QStringLiteral("&New"), QKeySequence::New, this, &MainWindow::newFile);
     fileMenu->addAction(QStringLiteral("&Open..."), QKeySequence::Open, this,
@@ -74,6 +86,7 @@ MainWindow::MainWindow()
     fileMenu->addSeparator();
 #endif
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
+    menuBar()->addMenu(viewMenu0);
 
     // --- status bar: coords + mode toggles + units
     m_coordLabel = new QLabel(QStringLiteral("0.00, 0.00"), this);
