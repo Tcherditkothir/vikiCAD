@@ -35,10 +35,10 @@ MainWindow::MainWindow()
     resize(1400, 860);
 
     m_canvas = new CanvasWidget(this);
-    m_occtView = new OcctViewWidget(this);
     m_viewStack = new QStackedWidget(this);
     m_viewStack->addWidget(m_canvas);
-    m_viewStack->addWidget(m_occtView);
+    // The OCCT view (a native window) is created lazily on the first 3D
+    // toggle so no native subsurface exists during plain 2D work.
     setCentralWidget(m_viewStack);
 
     m_commandBar = new CommandBar(this);
@@ -186,6 +186,10 @@ MainWindow::MainWindow()
 void MainWindow::toggle3D(bool on)
 {
     if (on) {
+        if (!m_occtView) {
+            m_occtView = new OcctViewWidget(this);
+            m_viewStack->addWidget(m_occtView);
+        }
         m_occtView->refreshFrom(*m_doc);
         m_viewStack->setCurrentWidget(m_occtView);
         if (!m_occtView->isReady())

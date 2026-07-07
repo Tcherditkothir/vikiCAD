@@ -7,6 +7,11 @@
 
 int main(int argc, char** argv)
 {
+    // Run on X11/XWayland: the OCCT 3D view binds through Xw_Window, and
+    // Qt-Wayland dies with a wl_subsurface protocol error when docks float
+    // around native child windows. Overridable via QT_QPA_PLATFORM.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "xcb");
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("VikiCAD"));
     viki::applyDarkTheme(app);
