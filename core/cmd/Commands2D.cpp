@@ -300,6 +300,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerArrayNoteCommands(p);
     registerLayoutCommands(p);
     registerSolidCommands(p);
+    registerSolidFinishCommands(p);
 }
 
 } // namespace viki

@@ -133,3 +133,14 @@ Tag : `m5`.
 - **79/79 tests verts.** Sortie M7 : flasque construite en script (plaque + moyeu via UNION, alésage + perçage via SUBTRACT) → STEP 916 entités → réimport avec note sidecar intacte.
 
 Tag : `m7`.
+
+## 2026-07-07 — Clôture M8 : finition 3D ✅ — FIN DU PLAN INITIAL
+
+- **FILLET3D / CHAMFER3D** : BRepFilletAPI sur toutes les arêtes du solide (v1 ; le picking d'arêtes individuelles dans la vue AIS est la prochaine évolution GUI). Rayon d'abord dans la grammaire (leçon du glouton EntitySet, 3e occurrence — pattern désormais systématique : paramètres avant sélection). Échecs OCCT (rayon infaisable) attrapés proprement. Undo BREP exact testé.
+- **Plan A réussi** 🎉 : `VIKICAD_STEP_UDA=1` injecte les notes en **attributs utilisateur AP242 légaux** (PROPERTY_DEFINITION → REPRESENTATION → DESCRIPTIVE_REPRESENTATION_ITEM 'VIKI_STICKYNOTE' avec payload JSON) via `writer.WS()->Model()->AddWithRefs` après Transfer. Deux accrocs résolus : contexte de représentation null rejeté par le check du writer → réutilisation d'un contexte existant du modèle. Le sidecar `.vikinotes.json` reste TOUJOURS écrit (filet de sécurité, décision du plan de risques maintenue).
+- Notes en 3D : les ancres 2D (plan XY) suffisent en v1 ; assemblages = stretch non bloquant, reporté.
+- **80/80 tests verts.**
+
+**Le plan initial M0→M8 est intégralement livré, en une session, le jour de sa conception.** Reste ouvert : M6-usage (les deux semaines de pratique réelle de Lex), et le backlog v2 consigné au fil du DEVLOG (pick-point hatch, MLEADER, plans de travail sur face, picking d'arêtes 3D, XDATA VIKI_ARRAY, éditeur MText in-canvas, dialogue DimStyle, R-tree si jamais nécessaire).
+
+Tag : `m8`.

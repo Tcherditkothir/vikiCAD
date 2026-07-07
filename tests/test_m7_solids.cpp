@@ -178,3 +178,23 @@ TEST_CASE("STEP export/import round-trip with sidecar notes", "[m7][step]")
     REQUIRE(solid);
     REQUIRE(volumeOf(solid->shape()) == Approx(8000.0).epsilon(1e-4));
 }
+
+TEST_CASE("FILLET3D and CHAMFER3D round all edges", "[m8]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 20,20")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 20 1")));
+    const double before = volumeOf(firstSolid(rig.doc)->shape());
+    REQUIRE(rig.run(QStringLiteral("FILLET3D 2 2")));
+    const double after = volumeOf(firstSolid(rig.doc)->shape());
+    // Fillets shave material off a convex box.
+    REQUIRE(after < before);
+    REQUIRE(after > before * 0.8);
+
+    // Undo restores the sharp box exactly (BREP delta in the journal).
+    REQUIRE(rig.run(QStringLiteral("UNDO")));
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(before).epsilon(1e-9));
+
+    REQUIRE(rig.run(QStringLiteral("CHAMFER3D 1 2")));
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) < before);
+}

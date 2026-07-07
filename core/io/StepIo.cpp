@@ -10,6 +10,18 @@
 #include <Message_PrinterOStream.hxx>
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
+#include <Interface_InterfaceModel.hxx>
+#include <StepBasic_ProductDefinition.hxx>
+#include <StepRepr_CharacterizedDefinition.hxx>
+#include <StepRepr_DescriptiveRepresentationItem.hxx>
+#include <StepRepr_HArray1OfRepresentationItem.hxx>
+#include <StepRepr_PropertyDefinition.hxx>
+#include <StepRepr_PropertyDefinitionRepresentation.hxx>
+#include <StepRepr_Representation.hxx>
+#include <StepRepr_RepresentationContext.hxx>
+#include <StepRepr_RepresentedDefinition.hxx>
+#include <TCollection_HAsciiString.hxx>
+#include <XSControl_WorkSession.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -60,6 +72,53 @@ StepResult exportStep(const Document& doc, const QString& path)
         result.error = QStringLiteral("no solids to export (EXTRUDE/REVOLVE first)");
         return result;
     }
+    // Plan A (flag-gated): inject notes as AP242-style user-defined
+    // attributes (PROPERTY_DEFINITION -> DESCRIPTIVE_REPRESENTATION_ITEM on
+    // the product definition). The sidecar below remains the safety net.
+    if (qEnvironmentVariableIntValue("VIKICAD_STEP_UDA") == 1) {
+        const QJsonArray notesArr = queryjson::notesJson(doc);
+        Handle(Interface_InterfaceModel) model = writer.WS()->Model();
+        Handle(StepBasic_ProductDefinition) pd;
+        Handle(StepRepr_RepresentationContext) repCtx;
+        for (int i = 1; i <= model->NbEntities(); ++i) {
+            if (pd.IsNull())
+                pd = Handle(StepBasic_ProductDefinition)::DownCast(model->Value(i));
+            if (repCtx.IsNull())
+                repCtx =
+                    Handle(StepRepr_RepresentationContext)::DownCast(model->Value(i));
+            if (!pd.IsNull() && !repCtx.IsNull())
+                break;
+        }
+        if (!pd.IsNull() && !repCtx.IsNull()) {
+            for (const QJsonValue& nv : notesArr) {
+                const QByteArray payload =
+                    QJsonDocument(nv.toObject()).toJson(QJsonDocument::Compact);
+                Handle(StepRepr_DescriptiveRepresentationItem) item =
+                    new StepRepr_DescriptiveRepresentationItem();
+                item->Init(new TCollection_HAsciiString("VIKI_STICKYNOTE"),
+                           new TCollection_HAsciiString(payload.constData()));
+                Handle(StepRepr_HArray1OfRepresentationItem) items =
+                    new StepRepr_HArray1OfRepresentationItem(1, 1);
+                items->SetValue(1, item);
+                Handle(StepRepr_Representation) rep = new StepRepr_Representation();
+                rep->Init(new TCollection_HAsciiString("sticky note"), items, repCtx);
+                Handle(StepRepr_PropertyDefinition) prop =
+                    new StepRepr_PropertyDefinition();
+                StepRepr_CharacterizedDefinition cd;
+                cd.SetValue(pd);
+                prop->Init(new TCollection_HAsciiString("user defined attribute"),
+                           Standard_True,
+                           new TCollection_HAsciiString("VikiCAD sticky note"), cd);
+                Handle(StepRepr_PropertyDefinitionRepresentation) pdr =
+                    new StepRepr_PropertyDefinitionRepresentation();
+                StepRepr_RepresentedDefinition rd;
+                rd.SetValue(prop);
+                pdr->Init(rd, rep);
+                model->AddWithRefs(pdr);
+            }
+        }
+    }
+
     if (writer.Write(path.toUtf8().constData()) != IFSelect_RetDone) {
         result.error = QStringLiteral("cannot write %1").arg(path);
         return result;

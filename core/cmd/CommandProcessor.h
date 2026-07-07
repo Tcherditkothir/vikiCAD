@@ -67,5 +67,6 @@ void registerBlockCommands(CommandProcessor& processor);
 void registerArrayNoteCommands(CommandProcessor& processor);
 void registerLayoutCommands(CommandProcessor& processor);
 void registerSolidCommands(CommandProcessor& processor);
+void registerSolidFinishCommands(CommandProcessor& processor);
 
 } // namespace viki
