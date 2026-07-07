@@ -543,13 +543,22 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event)
         update();
         return;
     }
-    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
         if (m_processor && m_processor->hasActiveCommand()) {
             m_processor->provideInput(InputValue::makeFinish());
             emit interaction();
             update();
             return;
         }
+        emit typed(QString()); // empty = repeat-last handled upstream
+        return;
+    }
+    // Any printable character: hand off to the command bar.
+    const QString text = event->text();
+    if (!text.isEmpty() && text[0].isPrint()) {
+        emit typed(text);
+        return;
     }
     QWidget::keyPressEvent(event);
 }

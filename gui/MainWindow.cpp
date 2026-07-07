@@ -90,12 +90,26 @@ MainWindow::MainWindow()
         statusBar()->addPermanentWidget(btn);
         return btn;
     };
-    makeToggle(QStringLiteral("SNAP"), true,
+    auto* snapBtn = makeToggle(QStringLiteral("SNAP"), true,
                [this](bool on) { m_canvas->snapSettings().enabled = on; });
-    makeToggle(QStringLiteral("GRID"), false, [this](bool on) { m_canvas->setGridSnap(on); });
-    makeToggle(QStringLiteral("ORTHO"), false, [this](bool on) { m_canvas->setOrtho(on); });
-    makeToggle(QStringLiteral("POLAR"), false, [this](bool on) { m_canvas->setPolar(on); });
+    auto* gridBtn = makeToggle(QStringLiteral("GRID"), false,
+                               [this](bool on) { m_canvas->setGridSnap(on); });
+    auto* orthoBtn = makeToggle(QStringLiteral("ORTHO"), false,
+                                [this](bool on) { m_canvas->setOrtho(on); });
+    auto* polarBtn = makeToggle(QStringLiteral("POLAR"), false,
+                                [this](bool on) { m_canvas->setPolar(on); });
     makeToggle(QStringLiteral("3D"), false, [this](bool on) { toggle3D(on); });
+
+    // AutoCAD/nanoCAD function keys.
+    const auto bindToggle = [this](Qt::Key key, QToolButton* btn) {
+        auto* sc = new QShortcut(QKeySequence(key), this);
+        sc->setContext(Qt::ApplicationShortcut);
+        connect(sc, &QShortcut::activated, btn, &QToolButton::toggle);
+    };
+    bindToggle(Qt::Key_F3, snapBtn);
+    bindToggle(Qt::Key_F7, gridBtn);
+    bindToggle(Qt::Key_F8, orthoBtn);
+    bindToggle(Qt::Key_F10, polarBtn);
 
     m_unitsBtn = new QToolButton(this);
     m_unitsBtn->setText(QStringLiteral("mm"));
@@ -105,6 +119,25 @@ MainWindow::MainWindow()
     // --- wiring
     connect(m_commandBar, &CommandBar::commandEntered, this, &MainWindow::onCommandEntered);
     connect(m_canvas, &CanvasWidget::interaction, this, &MainWindow::onInteraction);
+    // Type on the canvas -> characters land in the command bar (empty text
+    // = Enter with nothing active = repeat last command).
+    connect(m_canvas, &CanvasWidget::typed, this, [this](const QString& text) {
+        if (text.isEmpty())
+            onCommandEntered(QString());
+        else
+            m_commandBar->beginTyping(text);
+    });
+    connect(m_commandBar, &CommandBar::cancelRequested, this, [this] {
+        if (m_processor->hasActiveCommand())
+            m_processor->cancelActive();
+        refreshPromptAndMessages();
+        m_canvas->update();
+    });
+    // Space = Enter, except while a command asks for free text.
+    m_commandBar->setSpaceSubmits([this] {
+        return !(m_processor && m_processor->hasActiveCommand() &&
+                 m_processor->currentRequest().kind == InputKind::Text);
+    });
     connect(m_canvas, &CanvasWidget::cursorMoved, this, [this](double x, double y) {
         const bool inches = m_doc && m_doc->displayUnits() == DisplayUnits::Inches;
         const double f = inches ? 1.0 / 25.4 : 1.0;
@@ -268,15 +301,25 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
 void MainWindow::onCommandEntered(const QString& line)
 {
     if (line.isEmpty()) {
-        if (m_processor->hasActiveCommand())
+        if (m_processor->hasActiveCommand()) {
             m_processor->provideInput(InputValue::makeFinish());
+        } else if (!m_lastCommand.isEmpty()) {
+            // AutoCAD: Enter/Space on an empty prompt repeats the last command.
+            m_commandBar->appendHistory(
+                QStringLiteral("> %1 (repeat)").arg(m_lastCommand));
+            m_processor->submit(m_lastCommand, /*strict=*/false);
+        }
         refreshPromptAndMessages();
+        m_canvas->update();
         return;
     }
     const auto r = m_processor->submit(line, /*strict=*/false);
     if (!r.ok)
         m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+    else
+        m_lastCommand = line.section(QLatin1Char(' '), 0, 0).toUpper();
     refreshPromptAndMessages();
+    m_canvas->update();
 }
 
 void MainWindow::onInteraction()

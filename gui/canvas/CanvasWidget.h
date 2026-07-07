@@ -41,6 +41,9 @@ signals:
     void interaction();
     // World-coordinates cursor position for the status readout.
     void cursorMoved(double x, double y);
+    // Printable key typed on the canvas — route to the command bar
+    // (the AutoCAD "just start typing" workflow).
+    void typed(const QString& text);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

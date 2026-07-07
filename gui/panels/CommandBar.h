@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QWidget>
 
 class QLabel;
@@ -17,15 +19,31 @@ public:
     void appendHistory(const QString& text);
     void setPrompt(const QString& prompt);
     void focusInput();
+    // AutoCAD-style: typing anywhere lands here (focus + insert the chars).
+    void beginTyping(const QString& seed);
+    // When the predicate returns true, Space submits like Enter (it stays a
+    // real space while a command is asking for free text).
+    void setSpaceSubmits(std::function<bool()> predicate)
+    {
+        m_spaceSubmits = std::move(predicate);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 signals:
     // Emitted on Enter; empty line means "Enter" (finish current command).
     void commandEntered(const QString& line);
+    // ESC pressed in the input (cancel the active command).
+    void cancelRequested();
 
 private:
+    void submitLine();
+
     QPlainTextEdit* m_history = nullptr;
     QLabel* m_prompt = nullptr;
     QLineEdit* m_input = nullptr;
+    std::function<bool()> m_spaceSubmits;
 };
 
 } // namespace viki

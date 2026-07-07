@@ -58,6 +58,7 @@ private:
     RpcServer* m_rpc = nullptr;
     OcctViewWidget* m_occtView = nullptr;
     QStackedWidget* m_viewStack = nullptr;
+    QString m_lastCommand;
 
     void toggle3D(bool on);
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);

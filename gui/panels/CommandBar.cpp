@@ -1,5 +1,6 @@
 #include "CommandBar.h"
 
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -38,13 +39,40 @@ CommandBar::CommandBar(QWidget* parent)
     layout->addWidget(m_history);
     layout->addLayout(inputRow);
 
-    connect(m_input, &QLineEdit::returnPressed, this, [this] {
-        const QString line = m_input->text().trimmed();
-        if (!line.isEmpty())
-            appendHistory(QStringLiteral("> %1").arg(line));
-        m_input->clear();
-        emit commandEntered(line);
-    });
+    connect(m_input, &QLineEdit::returnPressed, this, [this] { submitLine(); });
+    m_input->installEventFilter(this);
+}
+
+void CommandBar::submitLine()
+{
+    const QString line = m_input->text().trimmed();
+    if (!line.isEmpty())
+        appendHistory(QStringLiteral("> %1").arg(line));
+    m_input->clear();
+    emit commandEntered(line);
+}
+
+bool CommandBar::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_input && event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Space && (!m_spaceSubmits || m_spaceSubmits())) {
+            submitLine(); // AutoCAD: Space confirms like Enter
+            return true;
+        }
+        if (key->key() == Qt::Key_Escape) {
+            m_input->clear();
+            emit cancelRequested();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void CommandBar::beginTyping(const QString& seed)
+{
+    m_input->setFocus();
+    m_input->insert(seed);
 }
 
 void CommandBar::appendHistory(const QString& text)
