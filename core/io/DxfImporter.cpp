@@ -129,6 +129,9 @@ public:
 
     void addLine(const DRW_Line& data) override
     {
+        static int dbgCount = 0;
+        if (qEnvironmentVariableIsSet("VIKI_IMPORT_DEBUG") && dbgCount++ < 4)
+            fprintf(stderr, "[addLine] inBlock=%d\n", int(inBlock));
         place(std::make_unique<LineEntity>(Vec2d{data.basePoint.x, data.basePoint.y},
                                            Vec2d{data.secPoint.x, data.secPoint.y}),
               data);
@@ -441,6 +444,10 @@ public:
 
     void addInsert(const DRW_Insert& data) override
     {
+        static int dbgCount = 0;
+        if (qEnvironmentVariableIsSet("VIKI_IMPORT_DEBUG") && dbgCount++ < 8)
+            fprintf(stderr, "[addInsert] block=%s inBlock=%d\n", data.name.c_str(),
+                    int(inBlock));
         auto ins = std::make_unique<InsertEntity>();
         ins->blockName = QString::fromStdString(data.name);
         ins->position = {data.basePoint.x, data.basePoint.y};
@@ -463,6 +470,9 @@ public:
 
     void addBlock(const DRW_Block& data) override
     {
+        if (qEnvironmentVariableIsSet("VIKI_IMPORT_DEBUG"))
+            fprintf(stderr, "[addBlock] %s (inBlock was %d)\n", data.name.c_str(),
+                    int(inBlock));
         inBlock = true;
         const QString name = QString::fromStdString(data.name);
         // Skip anonymous/system blocks (*Model_Space, *Paper_Space, *D...).
@@ -476,6 +486,8 @@ public:
     void setBlock(const int) override {}
     void endBlock() override
     {
+        if (qEnvironmentVariableIsSet("VIKI_IMPORT_DEBUG"))
+            fprintf(stderr, "[endBlock]\n");
         inBlock = false;
         currentBlock = nullptr;
     }

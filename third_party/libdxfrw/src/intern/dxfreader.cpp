@@ -206,10 +206,42 @@ bool dxfReaderBinary::readBool() {
 
 bool dxfReaderAscii::readCode(int *code) {
     std::string text;
-    std::getline(*filestr, text);
-    *code = atoi(text.c_str());
-    DRW_DBG(*code); DRW_DBG("\n");
-    return (filestr->good());
+    /* VikiCAD patch 0004: some producers (LibreDWG dwg2dxf) emit string
+       values containing RAW newlines; the spill-over line then lands where
+       a group code is expected, atoi() turns it into a bogus code 0 and the
+       whole rest of the file is parsed shifted by one line. A code line
+       must be numeric: treat non-numeric lines as value continuations and
+       skip them (bounded to avoid infinite loops on binary garbage). */
+    for (int guard = 0; guard < 64; ++guard) {
+        if (!std::getline(*filestr, text))
+            return false;
+        bool numeric = false;
+        bool inDigits = false;
+        numeric = true;
+        for (const char c : text) {
+            if (c == ' ' || c == '\t' || c == '\r') {
+                if (inDigits) { /* trailing blanks ok */ }
+                continue;
+            }
+            if ((c == '-' || c == '+') && !inDigits) {
+                inDigits = true;
+                continue;
+            }
+            if (c >= '0' && c <= '9') {
+                inDigits = true;
+                continue;
+            }
+            numeric = false;
+            break;
+        }
+        if (numeric && inDigits) {
+            *code = atoi(text.c_str());
+            DRW_DBG(*code); DRW_DBG("\n");
+            return (filestr->good());
+        }
+        /* non-numeric: continuation of the previous value — skip */
+    }
+    return false;
 }
 bool dxfReaderAscii::readString(std::string *text) {
     type = STRING;

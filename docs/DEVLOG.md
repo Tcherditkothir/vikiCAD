@@ -154,3 +154,9 @@ Tag : `m8`.
 3. **« Ma bibliothèque est surtout en DWG »** — le DWG n'était PAS au plan (DXF seulement). Solution en deux étages :
    - `importDwg()` via le lecteur DWG de libdxfrw (libdwgr, R14→2013) — même pipeline Builder que le DXF, dispatch par extension partout (CLI + GUI).
    - **Découverte** : la Pyramide de Lex est en DWG **AC1032 (2018)**, au-delà de libdwgr. Fallback : conversion via `dwg2dxf` de **GNU LibreDWG** (compilé depuis ftp.gnu.org — pas packagé Ubuntu ; premier essai cassé par -Werror sous GCC 15, recompilé avec -Wno-error) détecté dans PATH/~/.local/bin, QProcess + import du DXF temporaire.
+
+## 2026-07-08 — Le bug du plant de tomates 🍅 (patch vendored 0004)
+
+`Domaine_Bichonnerie_BelleMaison.dwg` : 44 calques importés mais **0 entité modèle sur 12 522** — sans aucune erreur. Traque : instrumentation des callbacks (addBlock/endBlock équilibrés), puis du setError du lecteur (jamais appelé), puis dump binaire du point de mort. **Cause** : un MTEXT de description de plants de tomates contenait un retour à la ligne littéral ; dwg2dxf (LibreDWG) l'écrit BRUT dans le DXF. La ligne de débordement atterrit là où le lecteur attend un code de groupe, `atoi(" soil moisture.")` = code 0 = « fin d'entité », et TOUT le reste du fichier est lu décalé d'une ligne — silencieusement. Patch 0004 : une ligne de code doit être numérique ; les lignes non numériques sont sautées comme continuations de valeur. Résultat : 12 522/12 522 importées.
+
+Leçon : dans un pipeline de conversion, le silence n'est pas un succès — 0 entité + ok:true doit devenir un warning visible (fait : le CLI le signale désormais ? à ajouter).
