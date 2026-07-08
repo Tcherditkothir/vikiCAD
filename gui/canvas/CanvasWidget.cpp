@@ -478,6 +478,11 @@ void CanvasWidget::handleLeftClick(const Vec2d& world, Qt::KeyboardModifiers)
             m_processor->provideInput(InputValue::makeEntityRef(id));
         break;
     }
+    case InputKind::Keyword:
+        // Clicking at an options prompt accepts the default (like Enter),
+        // so keyword stages (HATCH pattern/scale) are mouse-passable.
+        m_processor->provideInput(InputValue::makeFinish());
+        break;
     default:
         break;
     }

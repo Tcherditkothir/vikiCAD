@@ -68,5 +68,6 @@ void registerArrayNoteCommands(CommandProcessor& processor);
 void registerLayoutCommands(CommandProcessor& processor);
 void registerSolidCommands(CommandProcessor& processor);
 void registerSolidFinishCommands(CommandProcessor& processor);
+void registerMeasureCommands(CommandProcessor& processor);
 
 } // namespace viki

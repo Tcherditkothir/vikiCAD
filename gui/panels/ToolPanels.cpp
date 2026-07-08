@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QMenu>
+#include <QMenuBar>
 #include <QToolBar>
 #include <QToolButton>
 
@@ -31,7 +32,7 @@ const Panel kPanels[] = {
       {"∿", "Spline", "SPLINE", "Spline through fit points (SPL)"},
       {"·", "Point", "POINT", "Point (PO)"},
       {"⤫", "XLine", "XLINE", "Construction line (XL)"},
-      {"▦", "Hatch", "HATCH", "Hatch closed boundaries (H)"}}},
+      {"▦", "Hatch", "HATCH", "Select closed boundaries FIRST, then click; Enter twice keeps pattern/scale defaults (H)"}}},
     {"Modify",
      {{"⇄", "Move", "MOVE", "Move (M)"},
       {"⧉", "Copy", "COPY", "Copy (CO)"},
@@ -60,6 +61,11 @@ const Panel kPanels[] = {
       {"📌", "Note", "NOTE", "Sticky note at a point"},
       {"📍", "Pin", "NOTEPIN", "Sticky note pinned to an entity"},
       {"⚙", "DimSty", "DIMSTYLE", "Dimension style settings (DST)"}}},
+    {"Measure",
+     {{"📏", "Dist", "DIST", "Distance, deltas and angle between 2 points (DI)"},
+      {"⬛", "Area", "AREA", "Area/perimeter of clicked corners, or E to pick an entity (AA)"},
+      {"⌖", "ID", "ID", "Coordinates of a point"},
+      {"ℹ", "List", "LIST", "Full info about a picked entity (LI)"}}},
     {"Blocks & 3D",
      {{"▣", "Block", "BLOCK", "Create a block from entities (B)"},
       {"⊕", "Insert", "INSERT", "Insert a block (I)"},
@@ -78,6 +84,27 @@ const Panel kPanels[] = {
 void buildToolPanels(QMainWindow* window, QMenu* viewMenu,
                      const std::function<void(const QString&)>& runCommand)
 {
+    // Full menus mirroring the toolbars: every command reachable from the
+    // menu bar, hover shows "COMMAND — description" (tooltips enabled).
+    QMenuBar* menuBar = window->menuBar();
+    for (const Panel& panel : kPanels) {
+        auto* menu = menuBar->addMenu(QLatin1String(panel.title));
+        menu->setToolTipsVisible(true);
+        for (const Tool& tool : panel.tools) {
+            auto* action = menu->addAction(
+                QStringLiteral("%1  %2").arg(QString::fromUtf8(tool.glyph),
+                                             QLatin1String(tool.label)));
+            const QString tip = QStringLiteral("%1  —  %2")
+                                    .arg(QLatin1String(tool.command),
+                                         QString::fromUtf8(tool.tip));
+            action->setToolTip(tip);
+            action->setStatusTip(tip);
+            const QString command = QLatin1String(tool.command);
+            QObject::connect(action, &QAction::triggered, window,
+                             [runCommand, command] { runCommand(command); });
+        }
+    }
+
     for (const Panel& panel : kPanels) {
         auto* bar = new QToolBar(QLatin1String(panel.title), window);
         bar->setObjectName(QLatin1String(panel.title));

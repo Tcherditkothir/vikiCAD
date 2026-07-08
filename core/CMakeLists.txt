@@ -29,6 +29,7 @@ add_library(vikicore STATIC
     cmd/CommandsLayout.cpp
     cmd/Commands3D.cpp
     cmd/Commands3DFinish.cpp
+    cmd/CommandsMeasure.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp
