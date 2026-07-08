@@ -342,7 +342,7 @@ void MainWindow::onCommandEntered(const QString& line)
     else
         m_lastCommand = line.section(QLatin1Char(' '), 0, 0).toUpper();
     refreshPromptAndMessages();
-    m_canvas->update();
+    m_canvas->markDocumentDirty(); // typed points can land mid-transaction too
 }
 
 void MainWindow::onInteraction()

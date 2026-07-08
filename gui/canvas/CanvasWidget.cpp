@@ -482,7 +482,10 @@ void CanvasWidget::handleLeftClick(const Vec2d& world, Qt::KeyboardModifiers)
         break;
     }
     emit interaction();
-    update();
+    // Repaint the static layer too: repeating commands (LINE, PLINE, POINT)
+    // add entities inside a still-open transaction, which does not fire the
+    // document-changed notification until the final Enter.
+    markDocumentDirty();
 }
 
 void CanvasWidget::finishRubberBand(const QPointF& releasePos, Qt::KeyboardModifiers mods)
@@ -548,7 +551,7 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event)
         if (m_processor && m_processor->hasActiveCommand()) {
             m_processor->provideInput(InputValue::makeFinish());
             emit interaction();
-            update();
+            markDocumentDirty();
             return;
         }
         emit typed(QString()); // empty = repeat-last handled upstream
