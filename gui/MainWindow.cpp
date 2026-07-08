@@ -29,6 +29,7 @@
 #include "io/DxfImporter.h"
 #endif
 #include "io/NativeStore.h"
+#include "io/StepIo.h"
 #include "io/QueryJson.h"
 #include "ipc/RpcServer.h"
 #include "occview/OcctViewWidget.h"
@@ -315,11 +316,10 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
     }
     if (method == QLatin1String("open")) {
         const QString path = params[QStringLiteral("path")].toString();
-        QString error;
-        auto doc = NativeStore::load(path, error);
-        if (!doc)
-            return {{QStringLiteral("error"), error}};
-        adoptDocument(std::move(doc));
+        // Same extension dispatch as File>Open: .vkd/.dxf/.dwg/.step.
+        if (!loadFile(path, /*interactive=*/false))
+            return {{QStringLiteral("error"),
+                     QStringLiteral("could not open %1").arg(path)}};
         return {{QStringLiteral("ok"), true}};
     }
     if (method == QLatin1String("save")) {
@@ -468,34 +468,65 @@ void MainWindow::toggleUnits()
                                                                : QStringLiteral("millimeters")));
 }
 
-void MainWindow::openPath(const QString& path)
+bool MainWindow::loadFile(const QString& path, bool interactive)
 {
-    QString error;
-    if (path.endsWith(QLatin1String(".vkd"), Qt::CaseInsensitive)) {
-        auto doc = NativeStore::load(path, error);
-        if (doc)
-            adoptDocument(std::move(doc));
+    const auto reportError = [&](const QString& msg) {
+        if (interactive)
+            QMessageBox::warning(this, QStringLiteral("Open failed"), msg);
         else
-            m_commandBar->appendHistory(QStringLiteral("! %1").arg(error));
-        return;
+            m_commandBar->appendHistory(QStringLiteral("! %1").arg(msg));
+        return false;
+    };
+    const auto ends = [&](const char* ext) {
+        return path.endsWith(QLatin1String(ext), Qt::CaseInsensitive);
+    };
+
+    if (ends(".vkd")) {
+        QString error;
+        auto doc = NativeStore::load(path, error);
+        if (!doc)
+            return reportError(error);
+        adoptDocument(std::move(doc));
+        return true;
     }
 #ifdef VIKICAD_HAS_DXF
-    if (path.endsWith(QLatin1String(".dxf"), Qt::CaseInsensitive) ||
-        path.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)) {
-        DxfImportResult r = path.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)
-                                ? importDwg(path)
-                                : importDxf(path);
-        if (r.ok) {
-            adoptDocument(std::move(r.document));
-            m_commandBar->appendHistory(
-                QStringLiteral("Imported %1 entities from %2").arg(r.imported).arg(path));
-        } else {
-            m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
-        }
-        return;
+    if (ends(".dxf") || ends(".dwg")) {
+        DxfImportResult r = ends(".dwg") ? importDwg(path) : importDxf(path);
+        if (!r.ok)
+            return reportError(r.error);
+        adoptDocument(std::move(r.document));
+        QString msg = QStringLiteral("Imported %1 entities from %2")
+                          .arg(r.imported)
+                          .arg(path);
+        if (r.imported == 0)
+            msg = QStringLiteral("⚠ %1 opened but 0 entities imported (%2 "
+                                 "skipped)").arg(path).arg(r.skipped);
+        else if (r.skipped > 0)
+            msg += QStringLiteral(" (%1 skipped: %2)")
+                       .arg(r.skipped)
+                       .arg(r.skippedTypes.join(QStringLiteral(", ")));
+        m_commandBar->appendHistory(msg);
+        return true;
     }
 #endif
-    m_commandBar->appendHistory(QStringLiteral("! unsupported file: %1").arg(path));
+    if (ends(".step") || ends(".stp")) {
+        std::unique_ptr<Document> doc;
+        const StepResult r = importStep(path, doc);
+        if (!r.ok || !doc)
+            return reportError(r.error.isEmpty() ? QStringLiteral("STEP import failed")
+                                                 : r.error);
+        adoptDocument(std::move(doc));
+        m_commandBar->appendHistory(
+            QStringLiteral("Imported %1 solids from %2 (%3 notes)")
+                .arg(r.solids).arg(path).arg(r.notes));
+        return true;
+    }
+    return reportError(QStringLiteral("unsupported file type: %1").arg(path));
+}
+
+void MainWindow::openPath(const QString& path)
+{
+    loadFile(path, /*interactive=*/false);
 }
 
 void MainWindow::newFile()
@@ -507,16 +538,14 @@ void MainWindow::openFile()
 {
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
-        QStringLiteral("VikiCAD drawings (*.vkd);;All files (*)"));
+        QStringLiteral("All supported (*.vkd *.dxf *.dwg *.step *.stp);;"
+                       "VikiCAD drawings (*.vkd);;"
+                       "DXF/DWG (*.dxf *.dwg);;"
+                       "STEP (*.step *.stp);;"
+                       "All files (*)"));
     if (path.isEmpty())
         return;
-    QString error;
-    auto doc = NativeStore::load(path, error);
-    if (!doc) {
-        QMessageBox::warning(this, QStringLiteral("Open failed"), error);
-        return;
-    }
-    adoptDocument(std::move(doc));
+    loadFile(path, /*interactive=*/true);
 }
 
 void MainWindow::importDxfFile()

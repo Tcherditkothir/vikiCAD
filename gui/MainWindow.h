@@ -41,6 +41,9 @@ private slots:
     void toggleUnits();
 
 private:
+    // Load any supported drawing by extension (.vkd/.dxf/.dwg/.step). On
+    // failure, shows a dialog when interactive, else logs to the command bar.
+    bool loadFile(const QString& path, bool interactive);
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();
