@@ -149,3 +149,43 @@ TEST_CASE("ARC center mode (CE)", "[m2][modes]")
     REQUIRE(a->radius() == Approx(10.0));
     REQUIRE(a->sweep() == Approx(M_PI_2).margin(1e-9));
 }
+
+// Locks the exact interactive GUI sequences for SCALE (the workflow Lex
+// uses): select first, launch, click base, type factor — and verb-noun too.
+TEST_CASE("SCALE interactive flows (pickfirst and verb-noun)", "[m2][gui-flow]")
+{
+    Rig rig;
+    REQUIRE(rig.processor.submit(QStringLiteral("CIRCLE 10,10 5"), true).ok);
+
+    SECTION("select object, SCALE, click base, type factor")
+    {
+        rig.selection.add(1);
+        auto r = rig.processor.submit(QStringLiteral("SCALE"), false);
+        REQUIRE(r.pending); // "Specify base point:"
+        r = rig.processor.provideInput(InputValue::makePoint({0, 0})); // click
+        REQUIRE(r.pending); // "Specify scale factor:"
+        // User types "2" in the bar — arrives as a new submit line.
+        r = rig.processor.submit(QStringLiteral("2"), false);
+        REQUIRE(r.ok);
+        REQUIRE_FALSE(rig.processor.hasActiveCommand());
+        const auto* c = dynamic_cast<const CircleEntity*>(rig.doc.entity(1));
+        REQUIRE(c->center().x == Approx(20.0));
+        REQUIRE(c->radius() == Approx(10.0));
+    }
+
+    SECTION("SCALE first, click the object, Enter, base, factor")
+    {
+        auto r = rig.processor.submit(QStringLiteral("SCALE"), false);
+        REQUIRE(r.pending); // "Select objects:"
+        r = rig.processor.provideInput(InputValue::makeEntityRef(1)); // click obj
+        REQUIRE(r.pending);
+        r = rig.processor.provideInput(InputValue::makeFinish()); // Enter/Space
+        REQUIRE(r.pending); // base point
+        r = rig.processor.provideInput(InputValue::makePoint({0, 0}));
+        REQUIRE(r.pending); // factor
+        r = rig.processor.submit(QStringLiteral("0.5"), false);
+        REQUIRE(r.ok);
+        const auto* c = dynamic_cast<const CircleEntity*>(rig.doc.entity(1));
+        REQUIRE(c->radius() == Approx(2.5));
+    }
+}

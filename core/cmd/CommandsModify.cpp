@@ -298,7 +298,7 @@ protected:
             m_base = v.point;
             m_hasBase = true;
             ctx.setLastPoint(v.point);
-            return Step::cont(InputKind::Number, QStringLiteral("Specify scale factor:"));
+            return Step::cont(InputKind::Number, QStringLiteral("Scale factor (type a value; a click uses its distance to base):"));
         }
         double factor = 0;
         if (v.kind == InputValue::Kind::Number)
@@ -307,10 +307,19 @@ protected:
             factor = v.point.distanceTo(m_base);
         if (factor <= kGeomTol) {
             ctx.info(QStringLiteral("scale factor must be positive"));
-            return Step::cont(InputKind::Number, QStringLiteral("Specify scale factor:"));
+            return Step::cont(InputKind::Number, QStringLiteral("Scale factor (type a value; a click uses its distance to base):"));
         }
         applyToSet(ctx, Xform2d::scaling(factor, m_base), false, QStringLiteral("SCALE"));
         return Step::done();
+    }
+
+    void previewAt(CommandContext& ctx, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        if (!m_hasBase)
+            return;
+        const double factor = cursor.distanceTo(m_base);
+        if (factor > kGeomTol && factor < 1e4)
+            previewSet(ctx, Xform2d::scaling(factor, m_base), out);
     }
 
 private:

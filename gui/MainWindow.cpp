@@ -336,10 +336,11 @@ void MainWindow::onCommandEntered(const QString& line)
         m_canvas->update();
         return;
     }
+    const bool startsCommand = !m_processor->hasActiveCommand();
     const auto r = m_processor->submit(line, /*strict=*/false);
     if (!r.ok)
         m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
-    else
+    else if (startsCommand)
         m_lastCommand = line.section(QLatin1Char(' '), 0, 0).toUpper();
     refreshPromptAndMessages();
     m_canvas->markDocumentDirty(); // typed points can land mid-transaction too
