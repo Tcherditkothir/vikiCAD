@@ -5,30 +5,46 @@ avec DEVLOG.md (historique) et LESSONS.md (pièges connus).
 
 ## État global
 
-- Plan M0→M8 livré, tags git `m0`…`m8`. **85/85 tests verts** (`scripts/build-and-test.sh`).
+- Plan M0→M8 livré, tags git `m0`…`m8`. **99 cas de tests verts / 786 assertions**.
 - Phase actuelle : **M6-usage** — Lex utilise VikiCAD sur ses vrais fichiers
   (clé USB TRANSCEND, `/dev/sda1`, monter via `udisksctl mount -b /dev/sda1`)
   et remonte les bugs un par un. C'est LA priorité : réactivité sur ses retours.
-- Dernier commit : « patch 0004 tomato bug ». Tout est commité au fil de l'eau.
+- Dernier commit : « Live preview for OFFSET, GEAR, ELLIPSE, SPLINE ».
 
-## Chantiers récents — TRAITÉS le 2026-07-08, en attente de validation Lex
+## Chantiers TRAITÉS le 2026-07-08 (2 sessions), en attente de validation Lex
 
-1. **Blocs de texte (MTEXT/TEXT)** — corrigé (commit 82d63a7) : attachment
-   point code 71 + vAlign/lineSpacing sur TextEntity, justification TEXT
-   codes 72/73/11, décodage complet des codes inline ({\f...;}, \H, \S
-   fractions, \U+XXXX, %%d/%%c/%%p), export symétrique. Reste au backlog :
-   word-wrap par largeur de colonne, dimpost (suffixe DIMSTYLE code 3).
-2. **Snaps** — le gros manque (aucun snap dans les blocs) est corrigé :
-   snapQuery récurse dans les définitions (points transformés, imbrication
-   prof. 4). Restent au backlog si Lex en redemande : snap nearest/tangent/
-   node, perpendiculaire depuis autre chose que lastPoint, aimantation
-   pendant le drag de grips, tolérance configurable.
-3. **Cotes** (découvert en validant) : DIMSTYLE importé (tailles ×DIMSCALE),
-   override code 1 avec substitution `<>`, styleScale sur Dimension/Leader
-   suivi par les transformations (cotes dans blocs échellés). Les vignettes
-   McMaster de Bichonnerie sont maintenant propres.
-4. **ZOOM W** ajouté (fenêtre par deux coins) — pratique pour les captures
-   IPC : `vikicad-cli connect exec "ZOOM W x1,y1 x2,y2"`.
+Session 1 (MTEXT + snaps + cotes) :
+1. **Blocs de texte (MTEXT/TEXT)** : attachment 71, vAlign/lineSpacing,
+   justification TEXT 72/73/11, décodage inline complet, export symétrique.
+2. **Snaps dans les blocs** : snapQuery récurse dans les définitions.
+3. **Cotes** : DIMSTYLE importé (×DIMSCALE), override 1 avec `<>`, styleScale.
+4. **ZOOM W** (fenêtre par deux coins).
+
+Session 2 (nouveau lot de retours) :
+5. **Troncature MTEXT** (`Immeuble protég`) : dwg2dxf enveloppe les valeurs à
+   254 o avec un CR/LF brut ; le lecteur re-colle maintenant la continuation
+   (patch 0004 révisé). Texte complet.
+6. **Menu snaps par type** : clic droit sur le bouton SNAP.
+7. **Répéter la commande** : clic droit canvas (à vide) / Enter (en cours).
+8. **Objets mal orientés** : (a) `EllipseEntity::transform` refait en affine
+   correct (demi-diamètres conjugués) ; (b) ellipses à extrusion Z<0 → params
+   réfléchis à l'import.
+9. **Édition texte** : double-clic → dialogue ; commande `TEXTEDIT` (ED/DDEDIT).
+10. **Panneau Layers** : colonnes triables + docks flottants agrandissables.
+11. **Outil ENGRENAGES** 🎉 : `GEAR`/`SPURGEAR` — profil à développante +
+    sticky note de conception (cotes + accouplement + raisonnement). Géométrie
+    dans `core/geom/GearGeometry`.
+12. **Aperçus live** ajoutés : OFFSET, GEAR, ELLIPSE, SPLINE.
+
+## Backlog encore ouvert (suite)
+- Aperçus FILLET/CHAMFER/TRIM/EXTEND (survol/sélection).
+- MTEXT word-wrap par largeur de colonne ; dimpost (suffixe DIMSTYLE code 3).
+- Snap nearest/tangent/node ; tolérance de snap configurable.
+- **#39 à re-confirmer avec Lex** : la capture « objets mal orientés » montrait
+  deux hexagones à ellipses — le fichier exact n'est pas confirmé (les ellipses
+  de Bichonnerie sont en model-space, pas dans des blocs). Les deux correctifs
+  ellipse couvrent le miroir/affine ET l'extrusion Z<0 ; à valider visuellement
+  quand Lex indique le fichier/zone précis.
 
 ## Comment travailler (opérationnel)
 
