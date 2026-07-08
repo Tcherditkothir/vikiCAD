@@ -9,6 +9,7 @@
 class QComboBox;
 class QLabel;
 class QPushButton;
+class QTableWidget;
 
 namespace viki {
 
@@ -30,6 +31,8 @@ private:
     void colorClicked();
     void byLayerClicked();
     void applyToSelection(const std::function<void(Entity&)>& fn, const QString& txName);
+    void rebuildGeometryTable();
+    void geometryCellChanged(int row, int column);
 
     Document* m_doc = nullptr;
     SelectionSet* m_selection = nullptr;
@@ -37,6 +40,7 @@ private:
     QComboBox* m_layerCombo = nullptr;
     QPushButton* m_colorBtn = nullptr;
     QPushButton* m_byLayerBtn = nullptr;
+    QTableWidget* m_geomTable = nullptr;
     bool m_refreshing = false;
 };
 

@@ -189,3 +189,20 @@ TEST_CASE("SCALE interactive flows (pickfirst and verb-noun)", "[m2][gui-flow]")
         REQUIRE(c->radius() == Approx(2.5));
     }
 }
+
+TEST_CASE("direct distance entry: number at a point prompt follows the pointer",
+          "[m2][gui-flow]")
+{
+    Rig rig;
+    auto r = rig.processor.submit(QStringLiteral("LINE 10,10"), false);
+    REQUIRE(r.pending);
+    // Pointer to the right of the last point (ORTHO-like direction).
+    rig.ctx.setPointerHint({200.0, 10.0});
+    r = rig.processor.submit(QStringLiteral("50"), false);
+    REQUIRE(r.ok);
+    rig.processor.provideInput(InputValue::makeFinish());
+    const auto* l = dynamic_cast<const LineEntity*>(rig.doc.entity(1));
+    REQUIRE(l);
+    REQUIRE(l->p2().x == Approx(60.0));
+    REQUIRE(l->p2().y == Approx(10.0));
+}

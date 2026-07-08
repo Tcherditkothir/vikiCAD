@@ -432,6 +432,8 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event)
         m_staticDirty = true;
     }
     m_effectiveCursor = effectivePoint(m_camera.screenToWorld(m_cursorPx));
+    if (m_processor)
+        m_processor->ctx().setPointerHint(m_effectiveCursor);
     emit cursorMoved(m_effectiveCursor.x, m_effectiveCursor.y);
     update();
 }

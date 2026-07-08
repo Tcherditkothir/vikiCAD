@@ -124,6 +124,13 @@ std::optional<InputValue> CommandProcessor::parseToken(const QString& token, QSt
         const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor());
         if (p)
             return InputValue::makePoint(*p);
+        // Direct distance entry: a bare number goes that far from lastPoint
+        // toward the pointer (GUI supplies the direction hint).
+        if (const auto len = parseLengthToken(token, m_ctx.unitFactor())) {
+            Vec2d dir;
+            if (m_ctx.pointerDirection(dir))
+                return InputValue::makePoint(m_ctx.lastPoint() + dir * *len);
+        }
         // Keyword tokens at a point prompt (PLINE C, CIRCLE 2P, ARC CE):
         // letters and digits with at least one letter.
         bool keyword = !token.isEmpty();

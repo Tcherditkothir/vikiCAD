@@ -34,6 +34,21 @@ public:
     Vec2d lastPoint() const { return m_lastPoint; }
     void setLastPoint(const Vec2d& p) { m_lastPoint = p; }
 
+    // Live cursor position (GUI): enables AutoCAD-style direct distance
+    // entry — a bare number at a Point prompt lands that far from lastPoint
+    // toward the pointer.
+    void setPointerHint(const Vec2d& p) { m_pointerHint = p; m_hasPointerHint = true; }
+    bool pointerDirection(Vec2d& dirOut) const
+    {
+        if (!m_hasPointerHint)
+            return false;
+        const Vec2d d = m_pointerHint - m_lastPoint;
+        if (d.lengthSq() < kGeomTol)
+            return false;
+        dirOut = d.normalized();
+        return true;
+    }
+
     // World tolerance for point-driven entity picks (TRIM target, etc.).
     // The GUI sets it from the zoom; headless falls back to a size-relative one.
     void setPickTolerance(double tol) { m_pickTolerance = tol; }
@@ -57,6 +72,8 @@ private:
     SelectionSet& m_selection;
     ViewHook* m_view;
     Vec2d m_lastPoint;
+    Vec2d m_pointerHint;
+    bool m_hasPointerHint = false;
     double m_pickTolerance = 0.0;
     std::vector<QString> m_messages;
 };
