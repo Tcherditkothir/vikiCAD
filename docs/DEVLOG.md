@@ -160,3 +160,16 @@ Tag : `m8`.
 `Domaine_Bichonnerie_BelleMaison.dwg` : 44 calques importés mais **0 entité modèle sur 12 522** — sans aucune erreur. Traque : instrumentation des callbacks (addBlock/endBlock équilibrés), puis du setError du lecteur (jamais appelé), puis dump binaire du point de mort. **Cause** : un MTEXT de description de plants de tomates contenait un retour à la ligne littéral ; dwg2dxf (LibreDWG) l'écrit BRUT dans le DXF. La ligne de débordement atterrit là où le lecteur attend un code de groupe, `atoi(" soil moisture.")` = code 0 = « fin d'entité », et TOUT le reste du fichier est lu décalé d'une ligne — silencieusement. Patch 0004 : une ligne de code doit être numérique ; les lignes non numériques sont sautées comme continuations de valeur. Résultat : 12 522/12 522 importées.
 
 Leçon : dans un pipeline de conversion, le silence n'est pas un succès — 0 entité + ok:true doit devenir un warning visible (fait : le CLI le signale désormais ? à ajouter).
+## 2026-07-08 — M6-usage : snap dans les blocs, MTEXT/TEXT alignés, cotes à l'échelle
+
+Reprise post-compaction sur les deux chantiers ouverts (retours de Lex : « beaucoup de travail sur les snaps », « encore un peu d'erreurs sur les blocs de texte »).
+
+1. **Snap dans les blocs** (le gros manque identifié) : `snapQuery` récurse désormais dans les définitions de blocs — les points de snap des sous-entités sont transformés par la matrice d'insertion (pas de clonage d'entités : les points se transforment exactement, µs par requête même sur les gros blocs). Blocs imbriqués jusqu'à profondeur 4. Le point d'insertion reste snappable. Tests : bloc tourné/échellé, bloc imbriqué.
+2. **MTEXT/TEXT** : `TextEntity` gagne `vAlign` (Baseline/Top/Middle/Bottom) et `lineSpacing` par entité. Import : attachment point MTEXT (code 71), interligne (code 44, ×5/3), justification TEXT (codes 72/73 → ancre au point d'alignement code 11), et **décodage complet des codes inline** (`{\f...;}`, `\H...x;`, `\S` fractions → « a/b », `\U+XXXX`, `%%d/%%c/%%p`) — l'ancien cleanMtext ne traitait que `\P`. Export symétrique (TEXT justifié, MTEXT attachment+interligne ; Baseline → Top avec ancre relevée d'une hauteur de capitale pour un round-trip géométrique exact).
+3. **Cotes** (découvert en validant sur Bichonnerie : chiffres géants sur les vignettes McMaster) :
+   - la table **DIMSTYLE** est maintenant importée (dimtxt/dimasz/dimexo/dimexe/dimgap ×DIMSCALE, dimdec) et chaque cote garde sa référence de style ;
+   - l'override de texte (code 1) est importé, `<>` substitué par la valeur mesurée au rendu, override blanc = texte supprimé ;
+   - `DimensionEntity`/`LeaderEntity` gagnent `styleScale` multiplié par les transformations → les cotes dans des blocs échellés gardent leurs proportions.
+4. **ZOOM W** (fenêtre, deux coins ou W explicite) — nécessaire pour valider par capture d'écran via IPC, et utile au quotidien.
+
+Validation : Domaine_Bichonnerie 12 522 entités réimporté, vignettes de quincaillerie McMaster maintenant lisibles avec cotes proportionnées. **90/90 tests verts, passe ASan ciblée propre.** Commit `82d63a7`.

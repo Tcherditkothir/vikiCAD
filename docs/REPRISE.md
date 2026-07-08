@@ -11,27 +11,24 @@ avec DEVLOG.md (historique) et LESSONS.md (pièges connus).
   et remonte les bugs un par un. C'est LA priorité : réactivité sur ses retours.
 - Dernier commit : « patch 0004 tomato bug ». Tout est commité au fil de l'eau.
 
-## Chantiers OUVERTS (retours Lex non résolus)
+## Chantiers récents — TRAITÉS le 2026-07-08, en attente de validation Lex
 
-1. **« Encore un peu d'erreurs sur les blocs de texte »** (MTEXT) — pas encore
-   diagnostiqué. Pistes déjà traitées (ne pas refaire) : hauteur écrasée par la
-   section Embedded Object (patch 0003), rotation par vecteur code 11, heuristique
-   radians/degrés code 50. Pistes restantes probables : alignement/attachment
-   MTEXT (code 71, 1=TopLeft… mon TextEntity ancre en baseline-left, AutoCAD
-   ancre selon 71 → décalages), largeur de colonne (word-wrap non implémenté),
-   interligne (code 44), formats inline `{\\f...;}` `\\H` non nettoyés (cleanMtext
-   ne traite que \\P). DEMANDER à Lex un exemple précis (quel texte, quel écart).
-2. **« Beaucoup de travail sur les snaps »** — pas de détail. Points faibles
-   connus de snapQuery (core/snap/SnapEngine.cpp) : perpendiculaire seulement
-   depuis lastPoint ; pas de snap tangent/nearest/node ; l'intersection n'est
-   calculée qu'entre candidats dont la BBOX contient le curseur (rate les
-   intersections dont un des deux objets a une grosse bbox ? non — contient le
-   curseur = ok, mais VÉRIFIER) ; tolérance fixe 10 px ; pas d'aimantation
-   visuelle du curseur pendant le drag de grips ; pas de snap DANS les inserts
-   (les sous-entités de blocs n'émettent pas leurs snapPoints via InsertEntity !
-   → InsertEntity::snapPoints ne donne QUE le point d'insertion — gros manque
-   probable). Interroger Lex sur les cas exacts, mais le snap-dans-les-blocs
-   est quasi certainement le gros morceau.
+1. **Blocs de texte (MTEXT/TEXT)** — corrigé (commit 82d63a7) : attachment
+   point code 71 + vAlign/lineSpacing sur TextEntity, justification TEXT
+   codes 72/73/11, décodage complet des codes inline ({\f...;}, \H, \S
+   fractions, \U+XXXX, %%d/%%c/%%p), export symétrique. Reste au backlog :
+   word-wrap par largeur de colonne, dimpost (suffixe DIMSTYLE code 3).
+2. **Snaps** — le gros manque (aucun snap dans les blocs) est corrigé :
+   snapQuery récurse dans les définitions (points transformés, imbrication
+   prof. 4). Restent au backlog si Lex en redemande : snap nearest/tangent/
+   node, perpendiculaire depuis autre chose que lastPoint, aimantation
+   pendant le drag de grips, tolérance configurable.
+3. **Cotes** (découvert en validant) : DIMSTYLE importé (tailles ×DIMSCALE),
+   override code 1 avec substitution `<>`, styleScale sur Dimension/Leader
+   suivi par les transformations (cotes dans blocs échellés). Les vignettes
+   McMaster de Bichonnerie sont maintenant propres.
+4. **ZOOM W** ajouté (fenêtre par deux coins) — pratique pour les captures
+   IPC : `vikicad-cli connect exec "ZOOM W x1,y1 x2,y2"`.
 
 ## Comment travailler (opérationnel)
 
