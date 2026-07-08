@@ -282,7 +282,7 @@ private:
                 out.basePoint = {txt->position().x, txt->position().y, 0};
                 out.secPoint = out.basePoint;
                 out.height = txt->height();
-                out.angle = txt->rotation() * 180.0 / M_PI;
+                out.angle = txt->rotation(); // MTEXT code 50 is radians (spec)
                 QString content = txt->text();
                 content.replace(QLatin1Char('\n'), QLatin1String("\\P"));
                 out.text = content.toStdString();
@@ -321,9 +321,10 @@ private:
             applyCommon(e, out);
             out.name = ins->blockName.toStdString();
             out.basePoint = {ins->position.x, ins->position.y, 0};
-            out.xscale = out.yscale = ins->scale;
+            out.xscale = ins->scale;
+            out.yscale = ins->effScaleY();
             out.zscale = 1.0;
-            out.angle = ins->rotation * 180.0 / M_PI;
+            out.angle = ins->rotation; // radians; writeInsert emits degrees
             m_rw.writeInsert(&out);
         } else if (const auto* arr = dynamic_cast<const ArrayEntity*>(&e)) {
             // Arrays export flattened (associativity is native-format only).

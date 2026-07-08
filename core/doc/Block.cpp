@@ -42,9 +42,18 @@ BBox2d InsertEntity::bounds() const
 void InsertEntity::transform(const Xform2d& xf)
 {
     position = xf.apply(position);
-    scale *= xf.uniformScale();
+    const double s = xf.uniformScale();
+    scale *= s;
+    if (scaleY != 0.0)
+        scaleY *= s;
     const double rot = std::atan2(xf.b, xf.a);
-    rotation = xf.det() >= 0 ? rotation + rot : rot - rotation;
+    if (xf.det() >= 0) {
+        rotation = rotation + rot;
+    } else {
+        // Mirror: flip the Y scale and reflect the rotation.
+        scaleY = -effScaleY();
+        rotation = rot - rotation;
+    }
 }
 
 void InsertEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
@@ -73,7 +82,7 @@ void InsertEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out)
                 continue;
             TextPrimitive t;
             t.pos = xf.apply(attdef->position());
-            t.height = attdef->height() * scale;
+            t.height = attdef->height() * std::fabs(scale);
             t.rotation = rotation;
             t.text = value;
             t.rgb = ctx.resolvedColor;
@@ -99,6 +108,8 @@ void InsertEntity::geomToJson(QJsonObject& obj) const
     obj[QStringLiteral("pos")] = pointToJson(position);
     obj[QStringLiteral("rotation")] = rotation;
     obj[QStringLiteral("scale")] = scale;
+    if (scaleY != 0.0)
+        obj[QStringLiteral("scale_y")] = scaleY;
     if (!attributes.isEmpty())
         obj[QStringLiteral("attrs")] = attributes;
 }
@@ -109,6 +120,7 @@ void InsertEntity::geomFromJson(const QJsonObject& obj)
     position = pointFromJson(obj[QStringLiteral("pos")]);
     rotation = obj[QStringLiteral("rotation")].toDouble(0.0);
     scale = obj[QStringLiteral("scale")].toDouble(1.0);
+    scaleY = obj[QStringLiteral("scale_y")].toDouble(0.0);
     attributes = obj[QStringLiteral("attrs")].toObject();
 }
 

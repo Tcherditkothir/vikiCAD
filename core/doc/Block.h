@@ -81,15 +81,21 @@ public:
     QString blockName;
     Vec2d position;
     double rotation = 0.0; // radians
-    double scale = 1.0;    // uniform
+    double scale = 1.0;    // X scale (may be negative = mirrored)
+    double scaleY = 0.0;   // Y scale; 0 = same as scale (uniform)
     QJsonObject attributes; // tag -> value
+
+    double effScaleY() const { return scaleY == 0.0 ? scale : scaleY; }
 
     Xform2d insertXform(const Vec2d& basePoint) const
     {
-        // T(position) * R * S * T(-base)
+        // T(position) * R * S(sx, sy) * T(-base)
+        Xform2d s;
+        s.a = scale;
+        s.d = effScaleY();
         return Xform2d::translation(position)
             .compose(Xform2d::rotation(rotation))
-            .compose(Xform2d::scaling(scale))
+            .compose(s)
             .compose(Xform2d::translation(basePoint * -1.0));
     }
 

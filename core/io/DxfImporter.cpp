@@ -251,9 +251,9 @@ public:
 
     void addMText(const DRW_MText& data) override
     {
+        // Per the DXF spec, MTEXT code 50 is radians (unlike TEXT's degrees).
         auto t = std::make_unique<TextEntity>(
-            Vec2d{data.basePoint.x, data.basePoint.y}, data.height,
-            data.angle * M_PI / 180.0,
+            Vec2d{data.basePoint.x, data.basePoint.y}, data.height, data.angle,
             cleanMtext(QString::fromStdString(data.text)));
         place(std::move(t), data);
     }
@@ -392,8 +392,11 @@ public:
         auto ins = std::make_unique<InsertEntity>();
         ins->blockName = QString::fromStdString(data.name);
         ins->position = {data.basePoint.x, data.basePoint.y};
+        // libdxfrw normalizes INSERT rotation to radians at parse time.
+        ins->rotation = data.angle;
         ins->scale = data.xscale;
-        ins->rotation = data.angle * M_PI / 180.0;
+        if (!nearEqual(data.yscale, data.xscale))
+            ins->scaleY = data.yscale;
         place(std::move(ins), data);
     }
     void addDimAngular(const DRW_DimAngular*) override { skip("dimension-2line"); }

@@ -276,3 +276,46 @@ TEST_CASE("DXF round-trip: blocks, inserts and sticky notes via XDATA", "[m5][dx
     REQUIRE(!notes[0].toObject()[QStringLiteral("author")].toString().isEmpty());
 }
 #endif
+
+#ifdef VIKICAD_HAS_DXF
+TEST_CASE("DXF insert rotation/scale conventions survive a round trip",
+          "[m5][dxf][angles]")
+{
+    QTemporaryDir dir;
+    const QString dxf = dir.filePath(QStringLiteral("rot.dxf"));
+
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("LINE 0,0 10,0")));
+    REQUIRE(rig.run(QStringLiteral("BLOCK BAR 0,0 1")));
+    // 90° rotation, mirrored in Y, scaled 2x.
+    {
+        auto ins = std::make_unique<InsertEntity>();
+        ins->blockName = QStringLiteral("BAR");
+        ins->position = {100, 0};
+        ins->rotation = M_PI / 2;
+        ins->scale = 2.0;
+        ins->scaleY = -2.0;
+        rig.doc.beginTransaction(QStringLiteral("t"));
+        rig.doc.addEntity(std::move(ins));
+        rig.doc.commitTransaction();
+    }
+    REQUIRE(exportDxf(rig.doc, dxf).ok);
+    const DxfImportResult im = importDxf(dxf);
+    REQUIRE(im.ok);
+    bool checked = false;
+    for (const EntityId id : im.document->drawOrder()) {
+        const auto* ins = dynamic_cast<const InsertEntity*>(im.document->entity(id));
+        if (!ins || ins->position.distanceTo({100, 0}) > 1e-6)
+            continue;
+        checked = true;
+        REQUIRE(ins->rotation == Approx(M_PI / 2).margin(1e-6));
+        REQUIRE(ins->scale == Approx(2.0));
+        REQUIRE(ins->effScaleY() == Approx(-2.0));
+        // The transformed line end lands where the math says: base (0,0),
+        // p2 (10,0) → rot 90° scale(2,-2) → (0,20) + insert (100,0).
+        const BBox2d b = im.document->entityBounds(*ins);
+        REQUIRE(b.max.y == Approx(20.0).margin(1e-6));
+    }
+    REQUIRE(checked);
+}
+#endif
