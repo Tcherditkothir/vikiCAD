@@ -58,11 +58,8 @@ public:
 
     void place(std::unique_ptr<Entity> e, const DRW_Entity& src)
     {
-        if (inBlock) {
-            if (currentBlock)
-                currentBlock->entities.push_back(std::move(e));
-            return;
-        }
+        // Layer/color resolution applies to block content too — otherwise
+        // everything inside a block lands on layer 0 in white.
         const LayerId layer =
             doc->ensureLayer(QString::fromStdString(src.layer), 0xFFFFFF);
         e->setLayerId(layer);
@@ -75,6 +72,11 @@ public:
             color.rgb = aciToRgb(src.color);
         }
         e->setColor(color);
+        if (inBlock) {
+            if (currentBlock)
+                currentBlock->entities.push_back(std::move(e));
+            return;
+        }
         doc->restoreEntity(std::move(e), doc->nextId());
         doc->setNextId(doc->nextId() + 1);
         ++imported;
@@ -251,9 +253,20 @@ public:
 
     void addMText(const DRW_MText& data) override
     {
-        // Per the DXF spec, MTEXT code 50 is radians (unlike TEXT's degrees).
+        double rotation = 0.0;
+        const Vec2d dirVec{data.secPoint.x, data.secPoint.y};
+        if (dirVec.lengthSq() > 1e-12) {
+            // Code 11: X-axis direction vector — the reliable source.
+            rotation = dirVec.angle();
+        } else {
+            // Code 50: the spec says radians but plenty of producers write
+            // degrees. |v| > 2*pi cannot be a sane radian rotation.
+            rotation = std::fabs(data.angle) > 2.0 * M_PI + 0.01
+                           ? data.angle * M_PI / 180.0
+                           : data.angle;
+        }
         auto t = std::make_unique<TextEntity>(
-            Vec2d{data.basePoint.x, data.basePoint.y}, data.height, data.angle,
+            Vec2d{data.basePoint.x, data.basePoint.y}, data.height, rotation,
             cleanMtext(QString::fromStdString(data.text)));
         place(std::move(t), data);
     }
@@ -268,6 +281,7 @@ public:
         hatch->angle = data->angle * M_PI / 180.0;
         for (const auto& loop : data->looplist) {
             std::vector<Vec2d> ring;
+            std::vector<std::vector<Vec2d>> edges; // unchained boundary pieces
             for (const auto& obj : loop->objlist) {
                 if (const auto* pl =
                         dynamic_cast<const DRW_LWPolyline*>(obj.get())) {
@@ -298,15 +312,53 @@ public:
                         ring.push_back({v->x, v->y});
                     }
                 } else if (const auto* ln = dynamic_cast<const DRW_Line*>(obj.get())) {
-                    ring.push_back({ln->basePoint.x, ln->basePoint.y});
+                    edges.push_back({{ln->basePoint.x, ln->basePoint.y},
+                                     {ln->secPoint.x, ln->secPoint.y}});
                 } else if (const auto* arc = dynamic_cast<const DRW_Arc*>(obj.get())) {
                     std::vector<Vec2d> pts;
+                    double sweep = ccwSweep(arc->staangle, arc->endangle);
+                    double start = arc->staangle;
+                    if (!arc->isccw) { // clockwise edge: reverse traversal
+                        start = arc->endangle;
+                    }
                     flattenArc({arc->basePoint.x, arc->basePoint.y}, arc->radious,
-                               arc->staangle, ccwSweep(arc->staangle, arc->endangle),
-                               0.05, pts);
-                    pts.pop_back();
-                    ring.insert(ring.end(), pts.begin(), pts.end());
+                               start, sweep, 0.05, pts);
+                    if (!arc->isccw)
+                        std::reverse(pts.begin(), pts.end());
+                    if (pts.size() >= 2)
+                        edges.push_back(std::move(pts));
                 }
+            }
+            // Edge loops arrive unordered/reversed in the wild: chain them
+            // by endpoint proximity instead of trusting file order.
+            if (!edges.empty()) {
+                std::vector<Vec2d> chained;
+                std::vector<bool> used(edges.size(), false);
+                chained.insert(chained.end(), edges[0].begin(), edges[0].end());
+                used[0] = true;
+                bool grew = true;
+                const double tol = 1e-6;
+                while (grew) {
+                    grew = false;
+                    for (size_t ei = 0; ei < edges.size(); ++ei) {
+                        if (used[ei])
+                            continue;
+                        auto piece = edges[ei];
+                        if (nearEqual(chained.back(), piece.front(), tol)) {
+                            chained.insert(chained.end(), piece.begin() + 1, piece.end());
+                        } else if (nearEqual(chained.back(), piece.back(), tol)) {
+                            std::reverse(piece.begin(), piece.end());
+                            chained.insert(chained.end(), piece.begin() + 1, piece.end());
+                        } else {
+                            continue;
+                        }
+                        used[ei] = true;
+                        grew = true;
+                    }
+                }
+                if (chained.size() >= 2 && nearEqual(chained.front(), chained.back(), tol))
+                    chained.pop_back();
+                ring = std::move(chained);
             }
             if (ring.size() >= 3)
                 hatch->rings.push_back(std::move(ring));

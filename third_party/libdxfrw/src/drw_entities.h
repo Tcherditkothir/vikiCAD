@@ -673,6 +673,7 @@ protected:
 
 public:
     double interlin;     /*!< width factor, code 44 */
+    bool inEmbeddedObject{false}; /*!< VikiCAD patch 0003: past code 101 */
 private:
     bool hasXAxisVec; /* renamed by djm for better description */
 };

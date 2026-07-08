@@ -1421,6 +1421,16 @@ bool DRW_Text::parseDwg(DRW::Version version, dwgBuffer *buf, duint32 bs){
 }
 
 bool DRW_MText::parseCode(int code, dxfReader *reader){
+    /* VikiCAD patch 0003: AutoCAD 2018+ MTEXT carries an "Embedded Object"
+       section (code 101) whose inner codes reuse 10/40/41/... with entirely
+       different meanings. Parsing them as normal codes corrupts height,
+       insertion point and rotation. Ignore everything after code 101. */
+    if (code == 101) {
+        inEmbeddedObject = true;
+        return true;
+    }
+    if (inEmbeddedObject)
+        return true;
     switch (code) {
     case 1:
         text += reader->getString();
