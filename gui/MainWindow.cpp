@@ -191,6 +191,9 @@ MainWindow::MainWindow()
         else
             m_commandBar->beginTyping(text);
     });
+    // Right-click on empty space repeats the last command (AutoCAD gesture).
+    connect(m_canvas, &CanvasWidget::repeatLastRequested, this,
+            [this] { onCommandEntered(QString()); });
     connect(m_commandBar, &CommandBar::cancelRequested, this, [this] {
         if (m_processor->hasActiveCommand())
             m_processor->cancelActive();

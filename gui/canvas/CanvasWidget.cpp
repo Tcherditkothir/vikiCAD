@@ -405,10 +405,23 @@ void CanvasWidget::drawGrips(QPainter& p) const
 
 void CanvasWidget::mousePressEvent(QMouseEvent* event)
 {
+    setFocus(); // so Enter/Space repeat-last works right after a click
     if (event->button() == Qt::MiddleButton) {
         m_panning = true;
         m_panLast = event->position();
         setCursor(Qt::ClosedHandCursor);
+        return;
+    }
+    if (event->button() == Qt::RightButton) {
+        // AutoCAD/nanoCAD: right-click = Enter. Mid-command it accepts the
+        // default / finishes the step; idle it repeats the last command.
+        if (m_processor && m_processor->hasActiveCommand()) {
+            m_processor->provideInput(InputValue::makeFinish());
+            emit interaction();
+            markDocumentDirty();
+        } else {
+            emit repeatLastRequested();
+        }
         return;
     }
     if (event->button() == Qt::LeftButton) {

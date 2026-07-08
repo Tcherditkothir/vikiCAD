@@ -42,6 +42,8 @@ signals:
     void interaction();
     // World-coordinates cursor position for the status readout.
     void cursorMoved(double x, double y);
+    // Right-click on empty space (no active command) — repeat last command.
+    void repeatLastRequested();
     // Printable key typed on the canvas — route to the command bar
     // (the AutoCAD "just start typing" workflow).
     void typed(const QString& text);

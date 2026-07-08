@@ -434,3 +434,42 @@ TEST_CASE("DXF reader leaves normal short values untouched", "[dxf][reader]")
     CHECK(t->position().y == Approx(2.0));
     CHECK(t->height() == Approx(3.5));
 }
+
+TEST_CASE("DXF import: ellipse with negative extrusion sweeps the correct half",
+          "[dxf][ellipse]")
+{
+    // Half ellipse, params [pi, 2pi], horizontal major, extrusion (0,0,-1).
+    // The OCS minor axis points -Y, so the correct WCS arc is the TOP half
+    // (y > center). Without the extrusion fix we'd draw the bottom half.
+    QByteArray dxf;
+    auto add = [&](const QByteArray& s) { dxf += s; dxf += "\r\n"; };
+    add("0"); add("SECTION");
+    add("2"); add("ENTITIES");
+    add("0"); add("ELLIPSE");
+    add("8"); add("0");
+    add("10"); add("0.0");
+    add("20"); add("0.0");
+    add("11"); add("10.0");
+    add("21"); add("0.0");
+    add("40"); add("0.5");
+    add("41"); add("3.141592653589793");
+    add("42"); add("6.283185307179586");
+    add("210"); add("0.0");
+    add("220"); add("0.0");
+    add("230"); add("-1.0");
+    add("0"); add("ENDSEC");
+    add("0"); add("EOF");
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("ell.dxf"));
+    { QFile f(path); REQUIRE(f.open(QIODevice::WriteOnly)); f.write(dxf); }
+
+    const DxfImportResult r = importDxf(path);
+    REQUIRE(r.ok);
+    REQUIRE(r.imported == 1);
+    const auto* e =
+        dynamic_cast<const EllipseEntity*>(r.document->entity(r.document->drawOrder()[0]));
+    REQUIRE(e);
+    const double mid = 0.5 * (e->startParam() + e->endParam());
+    CHECK(e->pointAt(mid).y > 0.0); // top half
+}

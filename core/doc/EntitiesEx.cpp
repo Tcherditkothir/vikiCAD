@@ -154,17 +154,55 @@ BBox2d EllipseEntity::bounds() const
 
 void EllipseEntity::transform(const Xform2d& xf)
 {
+    // General affine transform of an ellipse. The major-axis vector and the
+    // minor-axis vector form a pair of conjugate semi-diameters; their images
+    // under the linear map are again conjugate semi-diameters of the image
+    // ellipse (not necessarily its axes). Recover the principal axes from
+    // them. Correct for rotation, uniform/non-uniform scale AND mirror — the
+    // old code only handled uniform similarity and stored a negative ratio,
+    // which mis-oriented mirrored inserts and corrupted DXF re-export.
+    const bool full = isFull();
+    const Vec2d relStart = pointAt(m_startParam) - m_center; // pre-transform
+    const Vec2d relEnd = pointAt(m_endParam) - m_center;
+
+    const Vec2d u = xf.applyVector(m_major);
+    const Vec2d v = xf.applyVector(m_major.perp() * m_ratio);
     m_center = xf.apply(m_center);
-    m_major = xf.applyVector(m_major);
-    if (xf.det() < 0) {
-        // Mirror flips the traversal direction; keep params meaningful.
-        std::swap(m_startParam, m_endParam);
-        m_startParam = -m_startParam;
-        m_endParam = -m_endParam;
-        m_ratio = -m_ratio; // minor axis flips relative to major.perp()
+
+    // Extremes of |u cos t + v sin t| are the axes; they occur at t0 where
+    // tan(2 t0) = 2 (u·v) / (|u|^2 - |v|^2).
+    const double t0 =
+        0.5 * std::atan2(2.0 * u.dot(v), u.lengthSq() - v.lengthSq());
+    Vec2d ax1 = u * std::cos(t0) + v * std::sin(t0);
+    Vec2d ax2 = u * std::cos(t0 + M_PI_2) + v * std::sin(t0 + M_PI_2);
+    if (ax1.lengthSq() < ax2.lengthSq())
+        std::swap(ax1, ax2);
+    const double majLen = ax1.length();
+    const double minLen = ax2.length();
+    m_major = ax1;
+    m_ratio = majLen > kGeomTol ? std::clamp(minLen / majLen, 1e-6, 1.0) : 1.0;
+
+    if (full) {
+        m_startParam = 0.0;
+        m_endParam = 2.0 * M_PI;
+        return;
     }
-    if (m_endParam <= m_startParam)
-        m_endParam += 2.0 * M_PI;
+    // Remap the arc endpoints onto the new orthogonal axis frame.
+    const double minAxis = std::max(majLen * m_ratio, kGeomTol);
+    const Vec2d majHat = m_major.normalized();
+    const Vec2d minHat = m_major.perp().normalized();
+    const auto paramOf = [&](const Vec2d& relBefore) {
+        const Vec2d q = xf.applyVector(relBefore);
+        return std::atan2(q.dot(minHat) / minAxis, q.dot(majHat) / majLen);
+    };
+    double s = paramOf(relStart);
+    double e = paramOf(relEnd);
+    if (xf.det() < 0)
+        std::swap(s, e); // mirror reverses the sweep direction
+    while (e <= s + 1e-9)
+        e += 2.0 * M_PI;
+    m_startParam = s;
+    m_endParam = e;
 }
 
 void EllipseEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const

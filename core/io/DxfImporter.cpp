@@ -272,6 +272,17 @@ public:
     {
         double sta = data.staparam;
         double end = data.endparam;
+        // Extrusion (0,0,-1): the ellipse plane normal points into the screen,
+        // so its CCW parametric sweep runs backwards in our WCS +Z convention.
+        // Center and major axis are WCS for ELLIPSE, so only the sweep flips —
+        // reflect the params about 0. Without this the wrong half of a partial
+        // ellipse is drawn (the "objets mal orientés" from DWG imports).
+        if (data.extPoint.z < 0.0) {
+            const double s = -end;
+            const double e = -sta;
+            sta = s;
+            end = e;
+        }
         if (nearEqual(sta, end) || (nearZero(sta) && nearEqual(end, 2.0 * M_PI)))
             sta = 0, end = 2.0 * M_PI;
         else if (end < sta)
