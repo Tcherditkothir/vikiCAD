@@ -6,6 +6,7 @@ add_executable(vikicad
     panels/CommandBar.cpp
     panels/LayerPanel.cpp
     panels/PropertiesPanel.cpp
+    panels/ToolPanels.cpp
     ipc/RpcServer.cpp
     occview/OcctViewWidget.cpp
 )

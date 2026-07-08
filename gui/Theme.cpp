@@ -97,6 +97,20 @@ QScrollBar::handle:horizontal {
 }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 
+QToolBar {
+    background: #202225; border: none; border-bottom: 1px solid #17181a;
+    spacing: 1px; padding: 2px 4px;
+}
+QToolBar QToolButton {
+    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    padding: 3px 7px; font-size: 8pt; color: #b7bcc2; min-width: 44px;
+}
+QToolBar QToolButton:hover {
+    background: #2d3035; border-color: #3a3e44; color: #ffffff;
+}
+QToolBar QToolButton:pressed { background: #2d4f79; }
+QToolBar::separator { background: #33363b; width: 1px; margin: 4px 3px; }
+
 QToolTip {
     background: #26282c; color: #dee0e3; border: 1px solid #4084d6;
     padding: 4px 6px;

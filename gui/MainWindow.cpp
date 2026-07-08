@@ -27,6 +27,7 @@
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
+#include "panels/ToolPanels.h"
 
 namespace viki {
 
@@ -87,6 +88,11 @@ MainWindow::MainWindow()
 #endif
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     menuBar()->addMenu(viewMenu0);
+
+    // Grouped command toolbars (each button = the same command as typing it).
+    viewMenu0->addSeparator();
+    buildToolPanels(this, viewMenu0,
+                    [this](const QString& command) { onCommandEntered(command); });
 
     // --- status bar: coords + mode toggles + units
     m_coordLabel = new QLabel(QStringLiteral("0.00, 0.00"), this);
