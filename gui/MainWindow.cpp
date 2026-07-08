@@ -270,6 +270,8 @@ void MainWindow::toggle3D(bool on)
     if (on) {
         if (!m_occtView) {
             m_occtView = new OcctViewWidget(this);
+            connect(m_occtView, &OcctViewWidget::picked, this,
+                    [this](const QString& info) { m_commandBar->appendHistory(info); });
             m_viewStack->addWidget(m_occtView);
         }
         m_occtView->refreshFrom(*m_doc);

@@ -24,6 +24,10 @@ public:
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
     bool dumpToFile(const QString& path);
 
+signals:
+    // Emitted on pick: a short human-readable description of what's selected.
+    void picked(const QString& info);
+
 protected:
     QPaintEngine* paintEngine() const override { return nullptr; }
     void paintEvent(QPaintEvent* event) override;
@@ -31,6 +35,7 @@ protected:
     void showEvent(QShowEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
 
 private:
@@ -40,6 +45,7 @@ private:
     Handle(V3d_View) m_view;
     Handle(AIS_InteractiveContext) m_context;
     QPoint m_lastPos;
+    QPoint m_pressPos;
     bool m_initFailed = false;
 };
 

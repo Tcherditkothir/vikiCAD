@@ -1,12 +1,16 @@
 #include "OcctViewWidget.h"
 
 #include <QMouseEvent>
+#include <QStringList>
 #include <QWheelEvent>
 
 #include <AIS_Shape.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Quantity_Color.hxx>
+#include <StdSelect_BRepOwner.hxx>
+#include <TopAbs.hxx>
+#include <TopoDS_Shape.hxx>
 #include <Xw_Window.hxx>
 
 #include "solid/SolidEntity.h"
@@ -66,6 +70,10 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         Handle(AIS_Shape) ais = new AIS_Shape(solid->shape());
         ais->SetColor(Quantity_Color(0.72, 0.75, 0.78, Quantity_TOC_RGB));
         m_context->Display(ais, AIS_Shaded, 0, false);
+        // Selectable/highlightable on hover: whole solid, faces and edges.
+        m_context->Activate(ais, 0); // whole shape
+        m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
+        m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_EDGE));
         ++shown;
     }
     if (shown > 0)
@@ -102,6 +110,7 @@ void OcctViewWidget::showEvent(QShowEvent*)
 void OcctViewWidget::mousePressEvent(QMouseEvent* event)
 {
     m_lastPos = event->pos();
+    m_pressPos = event->pos();
     if (!m_view.IsNull() && event->button() == Qt::LeftButton)
         m_view->StartRotation(event->pos().x(), event->pos().y());
 }
@@ -115,8 +124,47 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
     } else if (event->buttons() & Qt::MiddleButton) {
         m_view->Pan(event->pos().x() - m_lastPos.x(),
                     m_lastPos.y() - event->pos().y());
+    } else if (!m_context.IsNull()) {
+        // No button: dynamic hover highlight of the face/edge under the cursor.
+        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
     }
     m_lastPos = event->pos();
+}
+
+void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_view.IsNull() || m_context.IsNull() || event->button() != Qt::LeftButton)
+        return;
+    // A click (no meaningful drag) selects; a drag was an orbit.
+    if ((event->pos() - m_pressPos).manhattanLength() >= 4)
+        return;
+    m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_False);
+    m_context->SelectDetected();
+
+    int solids = 0, faces = 0, edges = 0, verts = 0;
+    for (m_context->InitSelected(); m_context->MoreSelected(); m_context->NextSelected()) {
+        Handle(StdSelect_BRepOwner) owner =
+            Handle(StdSelect_BRepOwner)::DownCast(m_context->SelectedOwner());
+        if (owner.IsNull() || !owner->HasShape()) {
+            ++solids;
+            continue;
+        }
+        switch (owner->Shape().ShapeType()) {
+        case TopAbs_FACE: ++faces; break;
+        case TopAbs_EDGE: ++edges; break;
+        case TopAbs_VERTEX: ++verts; break;
+        default: ++solids; break;
+        }
+    }
+    QStringList parts;
+    if (solids) parts << QStringLiteral("%1 solid").arg(solids);
+    if (faces) parts << QStringLiteral("%1 face").arg(faces);
+    if (edges) parts << QStringLiteral("%1 edge").arg(edges);
+    if (verts) parts << QStringLiteral("%1 vertex").arg(verts);
+    emit picked(parts.isEmpty() ? QStringLiteral("3D: nothing under cursor")
+                                : QStringLiteral("3D selected: %1")
+                                      .arg(parts.join(QStringLiteral(", "))));
+    m_view->Redraw();
 }
 
 void OcctViewWidget::wheelEvent(QWheelEvent* event)
