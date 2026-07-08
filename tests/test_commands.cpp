@@ -106,8 +106,8 @@ TEST_CASE("unknown command and bad point are errors", "[commands]")
 {
     Rig rig;
     REQUIRE_FALSE(rig.processor.submit(QStringLiteral("FROBNICATE"), true).ok);
-    // Mixed alphanumeric garbage is neither a point nor a keyword.
-    REQUIRE_FALSE(rig.processor.submit(QStringLiteral("LINE 0,0 12banana"), true).ok);
+    // A malformed coordinate is a hard error.
+    REQUIRE_FALSE(rig.processor.submit(QStringLiteral("LINE 0,0 12,banana"), true).ok);
     REQUIRE_FALSE(rig.processor.hasActiveCommand()); // failed command cleaned up
     REQUIRE_FALSE(rig.doc.inTransaction());          // no leaked transaction
 }

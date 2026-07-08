@@ -61,6 +61,8 @@ private:
 };
 
 // ---- CIRCLE ------------------------------------------------------------------
+// Modes: center+radius (default), D (center+diameter value), 2P (diameter
+// endpoints), 3P (three points on the circle).
 
 class CircleCommand : public Command {
 public:
@@ -68,7 +70,8 @@ public:
 
     Step start(CommandContext&) override
     {
-        return Step::cont(InputKind::Point, QStringLiteral("Specify center point:"));
+        return Step::cont(InputKind::Point,
+                          QStringLiteral("Specify center point or [2P/3P]:"));
     }
 
     Step onInput(CommandContext& ctx, const InputValue& v) override
@@ -76,46 +79,154 @@ public:
         if (v.kind == InputValue::Kind::Cancel || v.kind == InputValue::Kind::Finish)
             return Step::cancelled();
 
-        if (!m_hasCenter) {
-            if (v.kind != InputValue::Kind::Point)
-                return Step::cont(InputKind::Point, QStringLiteral("Specify center point:"));
-            m_center = v.point;
-            m_hasCenter = true;
-            ctx.setLastPoint(v.point);
-            return Step::cont(InputKind::Distance, QStringLiteral("Specify radius:"));
+        if (v.kind == InputValue::Kind::Keyword) {
+            if (v.text == QLatin1String("2P") && m_points.empty()) {
+                m_mode = Mode::TwoPoint;
+                return Step::cont(InputKind::Point,
+                                  QStringLiteral("First diameter endpoint:"));
+            }
+            if (v.text == QLatin1String("3P") && m_points.empty()) {
+                m_mode = Mode::ThreePoint;
+                return Step::cont(InputKind::Point, QStringLiteral("First point:"));
+            }
+            if (v.text == QLatin1String("D") && m_mode == Mode::Center &&
+                m_points.size() == 1) {
+                m_diameter = true;
+                return Step::cont(InputKind::Distance, QStringLiteral("Specify diameter:"));
+            }
+            return currentPrompt();
         }
 
-        double radius = 0;
-        if (v.kind == InputValue::Kind::Number)
-            radius = v.number;
-        else if (v.kind == InputValue::Kind::Point)
-            radius = v.point.distanceTo(m_center);
-        if (radius <= kGeomTol) {
-            ctx.info(QStringLiteral("radius must be positive"));
-            return Step::cont(InputKind::Distance, QStringLiteral("Specify radius:"));
+        switch (m_mode) {
+        case Mode::Center: {
+            if (m_points.empty()) {
+                if (v.kind != InputValue::Kind::Point)
+                    return currentPrompt();
+                m_points.push_back(v.point);
+                ctx.setLastPoint(v.point);
+                return Step::cont(InputKind::Distance,
+                                  QStringLiteral("Specify radius or [D]:"));
+            }
+            double radius = 0;
+            if (v.kind == InputValue::Kind::Number)
+                radius = m_diameter ? v.number / 2.0 : v.number;
+            else if (v.kind == InputValue::Kind::Point)
+                radius = v.point.distanceTo(m_points[0]);
+            return commit(ctx, m_points[0], radius);
         }
-        ctx.doc().beginTransaction(QStringLiteral("CIRCLE"));
-        ctx.doc().addEntity(std::make_unique<CircleEntity>(m_center, radius));
-        ctx.doc().commitTransaction();
-        return Step::done();
+        case Mode::TwoPoint: {
+            if (v.kind != InputValue::Kind::Point)
+                return currentPrompt();
+            m_points.push_back(v.point);
+            ctx.setLastPoint(v.point);
+            if (m_points.size() < 2)
+                return Step::cont(InputKind::Point,
+                                  QStringLiteral("Second diameter endpoint:"));
+            return commit(ctx, (m_points[0] + m_points[1]) * 0.5,
+                          m_points[0].distanceTo(m_points[1]) / 2.0);
+        }
+        case Mode::ThreePoint: {
+            if (v.kind != InputValue::Kind::Point)
+                return currentPrompt();
+            m_points.push_back(v.point);
+            ctx.setLastPoint(v.point);
+            if (m_points.size() < 3)
+                return Step::cont(InputKind::Point,
+                                  m_points.size() == 1
+                                      ? QStringLiteral("Second point:")
+                                      : QStringLiteral("Third point:"));
+            const auto c = circleFrom3Points(m_points[0], m_points[1], m_points[2]);
+            if (!c) {
+                ctx.info(QStringLiteral("points are collinear"));
+                return Step::cancelled();
+            }
+            return commit(ctx, c->center, c->radius);
+        }
+        }
+        return Step::cancelled();
     }
 
     void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
     {
-        if (!m_hasCenter)
-            return;
-        StrokePrimitive s;
-        s.closed = true;
-        flattenArc(m_center, m_center.distanceTo(cursor), 0, 2 * M_PI, 0.0, s.points);
-        out.strokes.push_back(std::move(s));
+        std::optional<std::pair<Vec2d, double>> circle;
+        std::vector<Vec2d> construction; // rubber lines to placed points
+        switch (m_mode) {
+        case Mode::Center:
+            if (!m_points.empty() && !m_diameter) {
+                circle = {{m_points[0], m_points[0].distanceTo(cursor)}};
+                construction = {m_points[0], cursor};
+            }
+            break;
+        case Mode::TwoPoint:
+            if (m_points.size() == 1) {
+                circle = {{(m_points[0] + cursor) * 0.5,
+                           m_points[0].distanceTo(cursor) / 2.0}};
+                construction = {m_points[0], cursor};
+            }
+            break;
+        case Mode::ThreePoint:
+            if (m_points.size() == 1) {
+                construction = {m_points[0], cursor};
+            } else if (m_points.size() == 2) {
+                if (const auto c = circleFrom3Points(m_points[0], m_points[1], cursor))
+                    circle = {{c->center, c->radius}};
+                construction = {m_points[0], m_points[1], m_points[1], cursor};
+            }
+            break;
+        }
+        if (!construction.empty()) {
+            for (size_t i = 0; i + 1 < construction.size(); i += 2) {
+                StrokePrimitive line;
+                line.points = {construction[i], construction[i + 1]};
+                out.strokes.push_back(std::move(line));
+            }
+        }
+        if (circle && circle->second > kGeomTol) {
+            StrokePrimitive s;
+            s.closed = true;
+            flattenArc(circle->first, circle->second, 0, 2 * M_PI, 0.0, s.points);
+            out.strokes.push_back(std::move(s));
+        }
     }
 
 private:
-    Vec2d m_center;
-    bool m_hasCenter = false;
+    enum class Mode { Center, TwoPoint, ThreePoint };
+
+    Step currentPrompt() const
+    {
+        switch (m_mode) {
+        case Mode::Center:
+            return Step::cont(InputKind::Point,
+                              m_points.empty()
+                                  ? QStringLiteral("Specify center point or [2P/3P]:")
+                                  : QStringLiteral("Specify radius or [D]:"));
+        case Mode::TwoPoint:
+            return Step::cont(InputKind::Point, QStringLiteral("Diameter endpoint:"));
+        case Mode::ThreePoint:
+            return Step::cont(InputKind::Point, QStringLiteral("Point on circle:"));
+        }
+        return Step::cancelled();
+    }
+
+    Step commit(CommandContext& ctx, const Vec2d& center, double radius)
+    {
+        if (radius <= kGeomTol) {
+            ctx.info(QStringLiteral("radius must be positive"));
+            return currentPrompt();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("CIRCLE"));
+        ctx.doc().addEntity(std::make_unique<CircleEntity>(center, radius));
+        ctx.doc().commitTransaction();
+        return Step::done();
+    }
+
+    Mode m_mode = Mode::Center;
+    std::vector<Vec2d> m_points;
+    bool m_diameter = false;
 };
 
-// ---- ARC (3 points) ---------------------------------------------------------
+// ---- ARC ---------------------------------------------------------------------
+// Modes: 3 points (default) or CE (center, start point, end direction).
 
 class ArcCommand : public Command {
 public:
@@ -123,13 +234,21 @@ public:
 
     Step start(CommandContext&) override
     {
-        return Step::cont(InputKind::Point, QStringLiteral("Specify start point of arc:"));
+        return Step::cont(InputKind::Point,
+                          QStringLiteral("Specify start point of arc or [CE]:"));
     }
 
     Step onInput(CommandContext& ctx, const InputValue& v) override
     {
         if (v.kind == InputValue::Kind::Cancel || v.kind == InputValue::Kind::Finish)
             return Step::cancelled();
+        if (v.kind == InputValue::Kind::Keyword) {
+            if (v.text == QLatin1String("CE") && m_count == 0) {
+                m_centerMode = true;
+                return Step::cont(InputKind::Point, QStringLiteral("Specify center:"));
+            }
+            return Step::cont(InputKind::Point, prompt());
+        }
         if (v.kind != InputValue::Kind::Point)
             return Step::cont(InputKind::Point, prompt());
 
@@ -137,6 +256,23 @@ public:
         ctx.setLastPoint(v.point);
         if (m_count < 3)
             return Step::cont(InputKind::Point, prompt());
+
+        if (m_centerMode) {
+            // center, start, end-direction: CCW from start toward the end ray.
+            const Vec2d center = m_points[0];
+            const double radius = center.distanceTo(m_points[1]);
+            if (radius <= kGeomTol) {
+                ctx.info(QStringLiteral("degenerate arc"));
+                return Step::cancelled();
+            }
+            const double start = (m_points[1] - center).angle();
+            const double end = (m_points[2] - center).angle();
+            ctx.doc().beginTransaction(QStringLiteral("ARC"));
+            ctx.doc().addEntity(std::make_unique<ArcEntity>(center, radius, start,
+                                                            ccwSweep(start, end)));
+            ctx.doc().commitTransaction();
+            return Step::done();
+        }
 
         const auto circle = circleFrom3Points(m_points[0], m_points[1], m_points[2]);
         if (!circle) {
@@ -146,8 +282,6 @@ public:
         const double a1 = (m_points[0] - circle->center).angle();
         const double a2 = (m_points[1] - circle->center).angle();
         const double a3 = (m_points[2] - circle->center).angle();
-        // CCW arc from a1 to a3 if it passes through a2, else the CCW arc
-        // from a3 to a1 (same geometry as CW from a1).
         double start = a1, sweep = ccwSweep(a1, a3);
         if (!angleOnArc(a2, a1, sweep)) {
             start = a3;
@@ -160,17 +294,72 @@ public:
         return Step::done();
     }
 
+    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        const auto pushLine = [&](const Vec2d& a, const Vec2d& b) {
+            StrokePrimitive s;
+            s.points = {a, b};
+            out.strokes.push_back(std::move(s));
+        };
+        const auto pushArc = [&](const Vec2d& c, double r, double a0, double sweep) {
+            if (r <= kGeomTol || sweep <= kGeomTol)
+                return;
+            StrokePrimitive s;
+            flattenArc(c, r, a0, sweep, 0.0, s.points);
+            out.strokes.push_back(std::move(s));
+        };
+
+        if (m_centerMode) {
+            if (m_count == 1) { // center placed: radius rubber line
+                pushLine(m_points[0], cursor);
+            } else if (m_count == 2) { // start placed: live arc to cursor ray
+                const Vec2d center = m_points[0];
+                const double radius = center.distanceTo(m_points[1]);
+                const double start = (m_points[1] - center).angle();
+                const double end = (cursor - center).angle();
+                pushLine(center, m_points[1]);
+                pushLine(center, cursor);
+                pushArc(center, radius, start, ccwSweep(start, end));
+            }
+            return;
+        }
+        if (m_count == 1) { // rubber chord
+            pushLine(m_points[0], cursor);
+        } else if (m_count == 2) { // live 3-point arc through the cursor
+            pushLine(m_points[0], m_points[1]);
+            if (const auto c = circleFrom3Points(m_points[0], m_points[1], cursor)) {
+                const double a1 = (m_points[0] - c->center).angle();
+                const double a2 = (m_points[1] - c->center).angle();
+                const double a3 = (cursor - c->center).angle();
+                double start = a1, sweep = ccwSweep(a1, a3);
+                if (!angleOnArc(a2, a1, sweep)) {
+                    start = a3;
+                    sweep = ccwSweep(a3, a1);
+                }
+                pushArc(c->center, c->radius, start, sweep);
+            }
+        }
+    }
+
 private:
     QString prompt() const
     {
+        if (m_centerMode) {
+            switch (m_count) {
+            case 0: return QStringLiteral("Specify center:");
+            case 1: return QStringLiteral("Specify start point:");
+            default: return QStringLiteral("Specify end point (CCW):");
+            }
+        }
         switch (m_count) {
-        case 0: return QStringLiteral("Specify start point of arc:");
+        case 0: return QStringLiteral("Specify start point of arc or [CE]:");
         case 1: return QStringLiteral("Specify second point on arc:");
         default: return QStringLiteral("Specify end point of arc:");
         }
     }
     Vec2d m_points[3];
     int m_count = 0;
+    bool m_centerMode = false;
 };
 
 // ---- ERASE -------------------------------------------------------------------

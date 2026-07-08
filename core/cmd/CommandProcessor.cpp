@@ -124,11 +124,15 @@ std::optional<InputValue> CommandProcessor::parseToken(const QString& token, QSt
         const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor());
         if (p)
             return InputValue::makePoint(*p);
-        // Alphabetic tokens at a point prompt are command keywords (PLINE C).
-        bool alpha = !token.isEmpty();
-        for (const QChar c : token)
-            alpha = alpha && c.isLetter();
-        if (alpha)
+        // Keyword tokens at a point prompt (PLINE C, CIRCLE 2P, ARC CE):
+        // letters and digits with at least one letter.
+        bool keyword = !token.isEmpty();
+        bool hasLetter = false;
+        for (const QChar c : token) {
+            keyword = keyword && c.isLetterOrNumber();
+            hasLetter = hasLetter || c.isLetter();
+        }
+        if (keyword && hasLetter)
             return InputValue::makeKeyword(token.toUpper());
         error = QStringLiteral("invalid point: %1").arg(token);
         return std::nullopt;
@@ -139,6 +143,12 @@ std::optional<InputValue> CommandProcessor::parseToken(const QString& token, QSt
         const auto p = parsePointToken(token, m_ctx.lastPoint(), m_ctx.unitFactor());
         if (p)
             return InputValue::makeNumber(p->distanceTo(m_ctx.lastPoint()));
+        // Option keywords are valid at a distance prompt (CIRCLE ... D).
+        bool letters = !token.isEmpty();
+        for (const QChar c : token)
+            letters = letters && c.isLetter();
+        if (letters)
+            return InputValue::makeKeyword(token.toUpper());
         error = QStringLiteral("invalid distance: %1").arg(token);
         return std::nullopt;
     }

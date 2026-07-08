@@ -121,3 +121,31 @@ TEST_CASE("entities land on the current layer", "[m2][layers]")
     REQUIRE(rig.doc.entity(1)->layerId() == walls);
     REQUIRE(rig.doc.resolveColor(*rig.doc.entity(1)) == 0xFF0000);
 }
+
+TEST_CASE("CIRCLE construction modes: 2P, 3P, diameter", "[m2][modes]")
+{
+    Rig rig;
+    REQUIRE(rig.processor.submit(QStringLiteral("CIRCLE 2P 0,0 20,0"), true).ok);
+    const auto* c1 = dynamic_cast<const CircleEntity*>(rig.doc.entity(1));
+    REQUIRE(c1->center().x == Approx(10.0));
+    REQUIRE(c1->radius() == Approx(10.0));
+
+    REQUIRE(rig.processor.submit(QStringLiteral("CIRCLE 3P 1,0 0,1 -1,0"), true).ok);
+    const auto* c2 = dynamic_cast<const CircleEntity*>(rig.doc.entity(2));
+    REQUIRE(c2->radius() == Approx(1.0));
+
+    REQUIRE(rig.processor.submit(QStringLiteral("CIRCLE 50,50 D 30"), true).ok);
+    const auto* c3 = dynamic_cast<const CircleEntity*>(rig.doc.entity(3));
+    REQUIRE(c3->radius() == Approx(15.0));
+}
+
+TEST_CASE("ARC center mode (CE)", "[m2][modes]")
+{
+    Rig rig;
+    // Center 0,0, start at (10,0), end toward (0,10): quarter arc CCW.
+    REQUIRE(rig.processor.submit(QStringLiteral("ARC CE 0,0 10,0 0,10"), true).ok);
+    const auto* a = dynamic_cast<const ArcEntity*>(rig.doc.entity(1));
+    REQUIRE(a);
+    REQUIRE(a->radius() == Approx(10.0));
+    REQUIRE(a->sweep() == Approx(M_PI_2).margin(1e-9));
+}
