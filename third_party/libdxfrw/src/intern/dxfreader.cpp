@@ -204,60 +204,110 @@ bool dxfReaderBinary::readBool() {
     return (filestr->good());
 }
 
+namespace {
+/* A DXF group-code line is (blanks)(optional sign)(digits)(blanks). Anything
+   else — the hallmark of a dwg2dxf raw-newline value spill — is not a code. */
+bool looksLikeGroupCode(const std::string &s) {
+    bool hasDigit = false, started = false;
+    for (const char c : s) {
+        if (c == ' ' || c == '\t' || c == '\r')
+            continue;
+        if ((c == '-' || c == '+') && !started) { started = true; continue; }
+        if (c >= '0' && c <= '9') { hasDigit = true; started = true; continue; }
+        return false;
+    }
+    return hasDigit;
+}
+/* dwg2dxf (LibreDWG) wraps long string values at this many bytes, inserting a
+   raw CR/LF mid-value; the spill-over line carries no group code. Measured
+   constant across real files (a handful land at 255 when a 2-byte UTF-8 char
+   straddles the boundary). Only segments at/over this width can be wrapped. */
+const std::string::size_type kDwgWrapWidth = 254;
+} // namespace
+
+/* VikiCAD patch 0004 (revised). The original release SKIPPED non-numeric
+   spill lines to stop a one-line parse shift from corrupting the whole file
+   ("tomato bug"), but that DROPPED the spilled text — truncating MTEXT such as
+   "Immeuble protégé …" to "Immeuble protég". This version re-joins the
+   continuation byte-for-byte (the inserted newline removed) so no text is
+   lost, gated on the wrap width so well-formed DXF is never touched: a value
+   is only extended when its segment is at the wrap width AND the next line is
+   not a group code (in valid DXF a value is always followed by a numeric
+   code, so the join never triggers there). */
+
+bool dxfReaderAscii::nextRawLine(std::string &out) {
+    if (m_hasPending) {
+        out.swap(m_pending);
+        m_pending.clear();
+        m_hasPending = false;
+        return true;
+    }
+    if (!std::getline(*filestr, out))
+        return false;
+    if (!out.empty() && out.back() == '\r')
+        out.pop_back();
+    return true;
+}
+
+void dxfReaderAscii::pushRawLine(std::string &s) {
+    m_pending.swap(s);
+    m_hasPending = true;
+}
+
 bool dxfReaderAscii::readCode(int *code) {
     std::string text;
-    /* VikiCAD patch 0004: some producers (LibreDWG dwg2dxf) emit string
-       values containing RAW newlines; the spill-over line then lands where
-       a group code is expected, atoi() turns it into a bogus code 0 and the
-       whole rest of the file is parsed shifted by one line. A code line
-       must be numeric: treat non-numeric lines as value continuations and
-       skip them (bounded to avoid infinite loops on binary garbage). */
+    /* With readString absorbing continuations this should rarely fire, but a
+       spill after a value shorter than the wrap width could still land here;
+       skip non-numeric lines as a bounded backstop. */
     for (int guard = 0; guard < 64; ++guard) {
-        if (!std::getline(*filestr, text))
+        if (!nextRawLine(text))
             return false;
-        bool numeric = false;
-        bool inDigits = false;
-        numeric = true;
-        for (const char c : text) {
-            if (c == ' ' || c == '\t' || c == '\r') {
-                if (inDigits) { /* trailing blanks ok */ }
-                continue;
-            }
-            if ((c == '-' || c == '+') && !inDigits) {
-                inDigits = true;
-                continue;
-            }
-            if (c >= '0' && c <= '9') {
-                inDigits = true;
-                continue;
-            }
-            numeric = false;
-            break;
-        }
-        if (numeric && inDigits) {
+        if (looksLikeGroupCode(text)) {
             *code = atoi(text.c_str());
             DRW_DBG(*code); DRW_DBG("\n");
-            return (filestr->good());
+            return true;
         }
-        /* non-numeric: continuation of the previous value — skip */
     }
     return false;
 }
+
 bool dxfReaderAscii::readString(std::string *text) {
     type = STRING;
-    std::getline(*filestr, *text);
-    if (!text->empty() && text->at(text->size()-1) == '\r')
-        text->erase(text->size()-1);
-    return (filestr->good());
+    if (!nextRawLine(*text))
+        return false;
+    std::string::size_type seg = text->size();
+    while (seg >= kDwgWrapWidth) {
+        std::string peek;
+        if (!nextRawLine(peek))
+            break; // EOF: keep what we have
+        if (looksLikeGroupCode(peek)) {
+            pushRawLine(peek);
+            break;
+        }
+        *text += peek;     // undo the wrap: append with no separator
+        seg = peek.size();  // a full segment may itself be wrapped again
+    }
+    return true;
 }
 
 bool dxfReaderAscii::readString() {
     type = STRING;
-    std::getline(*filestr, strData);
-    if (!strData.empty() && strData.at(strData.size()-1) == '\r')
-        strData.erase(strData.size()-1);
+    if (!nextRawLine(strData))
+        return false;
+    std::string::size_type seg = strData.size();
+    while (seg >= kDwgWrapWidth) {
+        std::string peek;
+        if (!nextRawLine(peek))
+            break;
+        if (looksLikeGroupCode(peek)) {
+            pushRawLine(peek);
+            break;
+        }
+        strData += peek;
+        seg = peek.size();
+    }
     DRW_DBG(strData); DRW_DBG("\n");
-    return (filestr->good());
+    return true;
 }
 
 bool dxfReaderAscii::readBinary() {

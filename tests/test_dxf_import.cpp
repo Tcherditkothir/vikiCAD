@@ -350,3 +350,87 @@ TEST_CASE("DXF import: text justification and MTEXT attachment", "[dxf][mtext]")
     CHECK(tx->hAlign == TextHAlign::Center);
     CHECK(tx->vAlign == TextVAlign::Top);
 }
+
+TEST_CASE("DXF reader rejoins dwg2dxf raw-newline value spills", "[dxf][mtext][reader]")
+{
+    // Reproduce exactly what LibreDWG's dwg2dxf does: it wraps a long MTEXT
+    // value at 254 bytes by inserting a raw CR/LF *mid-value*; the spill-over
+    // physical line then carries no group code. The reader must rejoin it
+    // byte-for-byte (dropping the inserted newline), not drop it.
+    QByteArray dxf;
+    auto add = [&](const QByteArray& s) { dxf += s; dxf += "\r\n"; };
+    add("0"); add("SECTION");
+    add("2"); add("ENTITIES");
+    add("0"); add("MTEXT");
+    add("8"); add("0");
+    add("10"); add("0.0");
+    add("20"); add("0.0");
+    add("40"); add("2.5");
+    add("1");
+    // 254-byte first segment, then a raw-newline spill (no code) ending in an
+    // accented char + more text — the "protégé" truncation shape.
+    QByteArray seg(254, 'A');
+    dxf += seg;
+    dxf += "\r\n";                       // the wrap dwg2dxf injects mid-value
+    dxf += QByteArray::fromStdString("prot\xc3\xa9g\xc3\xa9 tail"); // "protégé tail"
+    dxf += "\r\n";
+    add("7"); add("Standard");           // next real group code resumes parsing
+    add("0"); add("ENDSEC");
+    add("0"); add("EOF");
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("spill.dxf"));
+    {
+        QFile f(path);
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(dxf);
+    }
+
+    const DxfImportResult r = importDxf(path);
+    REQUIRE(r.ok);
+    REQUIRE(r.imported == 1);
+    const auto* t =
+        dynamic_cast<const TextEntity*>(r.document->entity(r.document->drawOrder()[0]));
+    REQUIRE(t);
+    // The value is the two physical lines joined with no separator.
+    const QString expected =
+        QString(254, QLatin1Char('A')) + QStringLiteral("protégé tail");
+    CHECK(t->text() == expected);
+    CHECK(t->text().endsWith(QStringLiteral("protégé tail")));
+}
+
+TEST_CASE("DXF reader leaves normal short values untouched", "[dxf][reader]")
+{
+    // A value shorter than the wrap width must never absorb the following
+    // group-code line — guards against regressions on well-formed DXF.
+    QByteArray dxf;
+    auto add = [&](const QByteArray& s) { dxf += s; dxf += "\r\n"; };
+    add("0"); add("SECTION");
+    add("2"); add("ENTITIES");
+    add("0"); add("TEXT");
+    add("8"); add("0");
+    add("10"); add("1.0");
+    add("20"); add("2.0");
+    add("40"); add("3.5");
+    add("1"); add("short");
+    add("0"); add("ENDSEC");
+    add("0"); add("EOF");
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("short.dxf"));
+    {
+        QFile f(path);
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(dxf);
+    }
+    const DxfImportResult r = importDxf(path);
+    REQUIRE(r.ok);
+    REQUIRE(r.imported == 1);
+    const auto* t =
+        dynamic_cast<const TextEntity*>(r.document->entity(r.document->drawOrder()[0]));
+    REQUIRE(t);
+    CHECK(t->text() == QStringLiteral("short"));
+    CHECK(t->position().x == Approx(1.0));
+    CHECK(t->position().y == Approx(2.0));
+    CHECK(t->height() == Approx(3.5));
+}

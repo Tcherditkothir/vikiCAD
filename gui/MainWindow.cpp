@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QToolButton>
+#include <QAction>
 
 #include "Version.h"
 #include "canvas/CanvasWidget.h"
@@ -111,6 +112,50 @@ MainWindow::MainWindow()
     };
     auto* snapBtn = makeToggle(QStringLiteral("SNAP"), true,
                [this](bool on) { m_canvas->snapSettings().enabled = on; });
+    // Right-click the SNAP button -> per-type object-snap picker (AutoCAD/
+    // nanoCAD "Osnap settings"). Each entry toggles one field of the shared
+    // SnapSettings the canvas reads on every cursor move.
+    snapBtn->setToolTip(
+        QStringLiteral("Object snap (F3) — right-click to choose snap types"));
+    snapBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(snapBtn, &QToolButton::customContextMenuRequested, this,
+            [this, snapBtn](const QPoint& pos) {
+                struct Item { const char* label; bool SnapSettings::* field; };
+                static const Item kItems[] = {
+                    {"Endpoint", &SnapSettings::endpoint},
+                    {"Midpoint", &SnapSettings::midpoint},
+                    {"Center", &SnapSettings::center},
+                    {"Quadrant", &SnapSettings::quadrant},
+                    {"Intersection", &SnapSettings::intersection},
+                    {"Perpendicular", &SnapSettings::perpendicular},
+                };
+                QMenu menu(this);
+                auto* header = menu.addAction(QStringLiteral("Object snaps"));
+                header->setEnabled(false);
+                menu.addSeparator();
+                for (const Item& it : kItems) {
+                    auto* a = menu.addAction(QString::fromLatin1(it.label));
+                    a->setCheckable(true);
+                    a->setChecked(m_canvas->snapSettings().*(it.field));
+                    auto* canvas = m_canvas;
+                    const auto field = it.field;
+                    connect(a, &QAction::toggled, this,
+                            [canvas, field](bool on) {
+                                canvas->snapSettings().*field = on;
+                            });
+                }
+                menu.addSeparator();
+                const auto setAll = [this](bool on) {
+                    SnapSettings& s = m_canvas->snapSettings();
+                    s.endpoint = s.midpoint = s.center = s.quadrant =
+                        s.intersection = s.perpendicular = on;
+                };
+                connect(menu.addAction(QStringLiteral("Select all")),
+                        &QAction::triggered, this, [setAll] { setAll(true); });
+                connect(menu.addAction(QStringLiteral("Clear all")),
+                        &QAction::triggered, this, [setAll] { setAll(false); });
+                menu.exec(snapBtn->mapToGlobal(pos));
+            });
     auto* gridBtn = makeToggle(QStringLiteral("GRID"), false,
                                [this](bool on) { m_canvas->setGridSnap(on); });
     auto* orthoBtn = makeToggle(QStringLiteral("ORTHO"), false,

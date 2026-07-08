@@ -99,6 +99,13 @@ public:
     virtual bool readInt32();
     virtual bool readInt64();
     virtual bool readBool();
+private:
+    /* VikiCAD patch 0004: single-line lookahead so string values can absorb
+       dwg2dxf raw-newline continuations without re-reading the stream. */
+    bool nextRawLine(std::string &out);
+    void pushRawLine(std::string &s);
+    std::string m_pending;
+    bool m_hasPending = false;
 };
 
 #endif // DXFREADER_H
