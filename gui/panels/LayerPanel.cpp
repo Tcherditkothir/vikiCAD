@@ -27,6 +27,11 @@ LayerPanel::LayerPanel(QWidget* parent)
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    // Click a header to sort (by name, color, On/Lock state). Row->layer
+    // lookups go through the item's stored id, so sorting is safe.
+    m_table->setSortingEnabled(true);
+    m_table->horizontalHeader()->setSectionsClickable(true);
+    m_table->sortByColumn(ColName, Qt::AscendingOrder);
 
     auto* addBtn = new QPushButton(QStringLiteral("+"), this);
     auto* delBtn = new QPushButton(QStringLiteral("−"), this);
@@ -60,6 +65,8 @@ void LayerPanel::refresh()
     if (!m_doc)
         return;
     m_refreshing = true;
+    const bool wasSorted = m_table->isSortingEnabled();
+    m_table->setSortingEnabled(false); // populate by index, then re-sort
     const auto& layers = m_doc->layers();
     m_table->setRowCount(int(layers.size()));
     for (int row = 0; row < int(layers.size()); ++row) {
@@ -92,6 +99,7 @@ void LayerPanel::refresh()
         locked->setCheckState(l.locked ? Qt::Checked : Qt::Unchecked);
         m_table->setItem(row, ColLocked, locked);
     }
+    m_table->setSortingEnabled(wasSorted);
     m_refreshing = false;
 }
 

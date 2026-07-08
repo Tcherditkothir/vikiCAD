@@ -76,6 +76,23 @@ MainWindow::MainWindow()
                            QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, propsDock);
 
+    // When a panel is torn off (floating) give it real window chrome so it can
+    // be maximized / full-screened, not just a frameless floating box.
+    const auto makeFloatMaximizable = [](QDockWidget* dock) {
+        connect(dock, &QDockWidget::topLevelChanged, dock, [dock](bool floating) {
+            if (floating) {
+                dock->setWindowFlags(Qt::Window | Qt::CustomizeWindowHint |
+                                     Qt::WindowTitleHint |
+                                     Qt::WindowMinimizeButtonHint |
+                                     Qt::WindowMaximizeButtonHint |
+                                     Qt::WindowCloseButtonHint);
+                dock->show();
+            }
+        });
+    };
+    makeFloatMaximizable(layerDock);
+    makeFloatMaximizable(propsDock);
+
     // --- menus
     auto* viewMenu0 = new QMenu(QStringLiteral("&View"), this);
     viewMenu0->addAction(layerDock->toggleViewAction());
