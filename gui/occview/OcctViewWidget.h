@@ -40,6 +40,8 @@ protected:
 
 private:
     void initViewer();
+    // Logical (Qt) -> physical (OCCT) pixel mapping for HiDPI displays.
+    QPoint devicePos(const QPoint& logical) const;
 
     Handle(V3d_Viewer) m_viewer;
     Handle(V3d_View) m_view;

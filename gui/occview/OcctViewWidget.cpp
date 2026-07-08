@@ -5,6 +5,7 @@
 #include <QWheelEvent>
 
 #include <AIS_Shape.hxx>
+#include <Aspect_Window.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Quantity_Color.hxx>
@@ -107,26 +108,47 @@ void OcctViewWidget::showEvent(QShowEvent*)
     initViewer();
 }
 
+// OCCT renders into the native window at PHYSICAL pixels; Qt reports mouse
+// events at LOGICAL pixels. On a scaled (HiDPI) display the two differ, so
+// picking must convert or MoveTo looks in the wrong place ("nothing under
+// cursor" even over a solid). Derive the true ratio from OCCT's own window
+// size vs the widget's logical size — robust to however Qt reports the DPR.
+QPoint OcctViewWidget::devicePos(const QPoint& logical) const
+{
+    if (m_view.IsNull() || m_view->Window().IsNull() || width() <= 0 ||
+        height() <= 0)
+        return logical;
+    Standard_Integer pw = 0, ph = 0;
+    m_view->Window()->Size(pw, ph);
+    if (pw <= 0 || ph <= 0)
+        return logical;
+    return QPoint(int(logical.x() * double(pw) / double(width())),
+                  int(logical.y() * double(ph) / double(height())));
+}
+
 void OcctViewWidget::mousePressEvent(QMouseEvent* event)
 {
     m_lastPos = event->pos();
     m_pressPos = event->pos();
-    if (!m_view.IsNull() && event->button() == Qt::LeftButton)
-        m_view->StartRotation(event->pos().x(), event->pos().y());
+    if (!m_view.IsNull() && event->button() == Qt::LeftButton) {
+        const QPoint p = devicePos(event->pos());
+        m_view->StartRotation(p.x(), p.y());
+    }
 }
 
 void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_view.IsNull())
         return;
+    const QPoint p = devicePos(event->pos());
     if (event->buttons() & Qt::LeftButton) {
-        m_view->Rotation(event->pos().x(), event->pos().y());
+        m_view->Rotation(p.x(), p.y());
     } else if (event->buttons() & Qt::MiddleButton) {
-        m_view->Pan(event->pos().x() - m_lastPos.x(),
-                    m_lastPos.y() - event->pos().y());
+        const QPoint last = devicePos(m_lastPos);
+        m_view->Pan(p.x() - last.x(), last.y() - p.y());
     } else if (!m_context.IsNull()) {
         // No button: dynamic hover highlight of the face/edge under the cursor.
-        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
+        m_context->MoveTo(p.x(), p.y(), m_view, Standard_True);
     }
     m_lastPos = event->pos();
 }
@@ -138,7 +160,8 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
     // A click (no meaningful drag) selects; a drag was an orbit.
     if ((event->pos() - m_pressPos).manhattanLength() >= 4)
         return;
-    m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_False);
+    const QPoint p = devicePos(event->pos());
+    m_context->MoveTo(p.x(), p.y(), m_view, Standard_False);
     m_context->SelectDetected();
 
     int solids = 0, faces = 0, edges = 0, verts = 0;
