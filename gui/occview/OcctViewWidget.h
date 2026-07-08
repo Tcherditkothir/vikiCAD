@@ -20,6 +20,9 @@ public:
     // (Re)display every solid in the document and fit the view.
     void refreshFrom(const Document& doc);
     bool isReady() const { return !m_view.IsNull(); }
+    // Dump the 3D framebuffer to an image file (QWidget::grab can't capture
+    // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
+    bool dumpToFile(const QString& path);
 
 protected:
     QPaintEngine* paintEngine() const override { return nullptr; }

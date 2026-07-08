@@ -187,7 +187,7 @@ MainWindow::MainWindow()
                                 [this](bool on) { m_canvas->setOrtho(on); });
     auto* polarBtn = makeToggle(QStringLiteral("POLAR"), false,
                                 [this](bool on) { m_canvas->setPolar(on); });
-    makeToggle(QStringLiteral("3D"), false, [this](bool on) { toggle3D(on); });
+    m_3dButton = makeToggle(QStringLiteral("3D"), false, [this](bool on) { toggle3D(on); });
 
     // AutoCAD/nanoCAD function keys.
     const auto bindToggle = [this](Qt::Key key, QToolButton* btn) {
@@ -283,6 +283,31 @@ void MainWindow::toggle3D(bool on)
     }
 }
 
+void MainWindow::setView3D(bool on)
+{
+    if (m_3dButton && m_3dButton->isChecked() != on)
+        m_3dButton->setChecked(on); // fires toggled -> toggle3D
+    else
+        toggle3D(on);
+}
+
+bool MainWindow::documentIsSolidsOnly() const
+{
+    if (!m_doc)
+        return false;
+    int solids = 0, flat = 0;
+    for (const EntityId id : m_doc->drawOrder()) {
+        const Entity* e = m_doc->entity(id);
+        if (!e)
+            continue;
+        if (QLatin1String(e->typeName()) == QLatin1String("solid"))
+            ++solids;
+        else if (QLatin1String(e->typeName()) != QLatin1String("sticky_note"))
+            ++flat;
+    }
+    return solids > 0 && flat == 0;
+}
+
 QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& params)
 {
     if (method == QLatin1String("ping"))
@@ -335,10 +360,27 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         updateWindowTitle();
         return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
     }
+    if (method == QLatin1String("view3d")) {
+        const bool on = params[QStringLiteral("on")].toBool(true);
+        setView3D(on);
+        return {{QStringLiteral("ok"), true},
+                {QStringLiteral("is3d"),
+                 m_3dButton ? m_3dButton->isChecked() : false}};
+    }
     if (method == QLatin1String("screenshot")) {
         const QString path = params[QStringLiteral("path")].toString();
         if (path.isEmpty())
             return {{QStringLiteral("error"), QStringLiteral("path required")}};
+        // In 3D, dump the OCCT framebuffer (QWidget::grab can't capture a
+        // native GL window). Otherwise grab the 2D canvas.
+        const bool in3d = m_occtView && m_viewStack &&
+                          m_viewStack->currentWidget() == m_occtView;
+        if (in3d) {
+            if (!m_occtView->dumpToFile(path))
+                return {{QStringLiteral("error"),
+                         QStringLiteral("3D dump failed")}};
+            return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+        }
         const QPixmap shot = m_canvas->grab();
         if (!shot.save(path))
             return {{QStringLiteral("error"), QStringLiteral("cannot write %1").arg(path)}};
@@ -394,6 +436,17 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     updateWindowTitle();
     updateUnitsButton();
     refreshPromptAndMessages();
+
+    // A solids-only drawing (e.g. an imported STEP) is meaningless in the 2D
+    // view — it shows only footprint placeholders. Jump straight to 3D.
+    if (documentIsSolidsOnly()) {
+        setView3D(true);
+        m_commandBar->appendHistory(
+            QStringLiteral("3D model — orbit: drag; pan: middle-drag; zoom: "
+                           "wheel. Toggle the 3D button for the 2D view."));
+    } else if (m_3dButton && m_3dButton->isChecked()) {
+        setView3D(false); // returning to a 2D drawing
+    }
 }
 
 void MainWindow::onCommandEntered(const QString& line)

@@ -73,6 +73,14 @@ void OcctViewWidget::refreshFrom(const Document& doc)
     m_view->Redraw();
 }
 
+bool OcctViewWidget::dumpToFile(const QString& path)
+{
+    if (m_view.IsNull())
+        return false;
+    m_view->Redraw();
+    return m_view->Dump(path.toUtf8().constData()) == Standard_True;
+}
+
 void OcctViewWidget::paintEvent(QPaintEvent*)
 {
     initViewer();

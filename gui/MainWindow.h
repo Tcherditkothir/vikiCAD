@@ -62,12 +62,15 @@ private:
     PropertiesPanel* m_propsPanel = nullptr;
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
+    QToolButton* m_3dButton = nullptr;
     RpcServer* m_rpc = nullptr;
     OcctViewWidget* m_occtView = nullptr;
     QStackedWidget* m_viewStack = nullptr;
     QString m_lastCommand;
 
     void toggle3D(bool on);
+    void setView3D(bool on);  // programmatic switch (keeps the button in sync)
+    bool documentIsSolidsOnly() const;
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);
     void loadShortcuts();
 };
