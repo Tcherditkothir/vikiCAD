@@ -487,6 +487,20 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event)
     }
 }
 
+void CanvasWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    // Double-click an entity with no command running -> request an editor.
+    if (event->button() != Qt::LeftButton || !m_doc ||
+        (m_processor && m_processor->hasActiveCommand())) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    const Vec2d world = m_camera.screenToWorld(event->position());
+    const EntityId id = hittest::pick(*m_doc, world, pickTolerance());
+    if (id != kInvalidEntityId)
+        emit editEntityRequested(id);
+}
+
 void CanvasWidget::handleLeftClick(const Vec2d& world, Qt::KeyboardModifiers)
 {
     switch (m_processor->currentRequest().kind) {

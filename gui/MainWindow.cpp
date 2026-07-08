@@ -15,6 +15,13 @@
 #include <QStatusBar>
 #include <QToolButton>
 #include <QAction>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QPlainTextEdit>
+#include <QVBoxLayout>
 
 #include "Version.h"
 #include "canvas/CanvasWidget.h"
@@ -194,6 +201,9 @@ MainWindow::MainWindow()
     // Right-click on empty space repeats the last command (AutoCAD gesture).
     connect(m_canvas, &CanvasWidget::repeatLastRequested, this,
             [this] { onCommandEntered(QString()); });
+    // Double-click an entity -> inline editor (text for now).
+    connect(m_canvas, &CanvasWidget::editEntityRequested, this,
+            &MainWindow::editEntity);
     connect(m_commandBar, &CommandBar::cancelRequested, this, [this] {
         if (m_processor->hasActiveCommand())
             m_processor->cancelActive();
@@ -549,6 +559,70 @@ void MainWindow::saveFileAs()
     if (!path.endsWith(QLatin1String(".vkd")))
         path += QLatin1String(".vkd");
     saveTo(path);
+}
+
+void MainWindow::editEntity(EntityId id)
+{
+    if (!m_doc)
+        return;
+    Entity* probe = m_doc->entity(id);
+    if (!probe)
+        return;
+    // Only text has a bespoke editor; other types fall back to the panel.
+    QJsonObject full = probe->toJson();
+    if (full[QStringLiteral("type")].toString() != QLatin1String("text")) {
+        m_selection.clear();
+        m_selection.toggle(id);
+        onInteraction();
+        return;
+    }
+    QJsonObject geom = full[QStringLiteral("geom")].toObject();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Edit text"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* editor = new QPlainTextEdit(geom[QStringLiteral("text")].toString(), &dlg);
+    editor->setMinimumSize(360, 160);
+    lay->addWidget(editor);
+    auto* form = new QFormLayout;
+    auto* height = new QDoubleSpinBox(&dlg);
+    height->setRange(0.001, 1e7);
+    height->setDecimals(3);
+    height->setValue(geom[QStringLiteral("height")].toDouble(3.5));
+    auto* hAlign = new QComboBox(&dlg);
+    hAlign->addItems({QStringLiteral("Left"), QStringLiteral("Center"),
+                      QStringLiteral("Right")});
+    hAlign->setCurrentIndex(geom[QStringLiteral("halign")].toInt(0));
+    auto* vAlign = new QComboBox(&dlg);
+    vAlign->addItems({QStringLiteral("Baseline"), QStringLiteral("Top"),
+                      QStringLiteral("Middle"), QStringLiteral("Bottom")});
+    vAlign->setCurrentIndex(geom[QStringLiteral("valign")].toInt(0));
+    form->addRow(QStringLiteral("Height"), height);
+    form->addRow(QStringLiteral("H align"), hAlign);
+    form->addRow(QStringLiteral("V align"), vAlign);
+    lay->addLayout(form);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    lay->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    editor->setFocus();
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    geom[QStringLiteral("text")] = editor->toPlainText();
+    geom[QStringLiteral("height")] = height->value();
+    geom[QStringLiteral("halign")] = hAlign->currentIndex();
+    geom[QStringLiteral("valign")] = vAlign->currentIndex();
+    full[QStringLiteral("geom")] = geom;
+
+    m_doc->beginTransaction(QStringLiteral("TEXTEDIT"));
+    if (Entity* e = m_doc->beginModify(id)) {
+        e->fromJson(full);
+        m_doc->endModify(id);
+    }
+    m_doc->commitTransaction();
+    onInteraction();
 }
 
 } // namespace viki

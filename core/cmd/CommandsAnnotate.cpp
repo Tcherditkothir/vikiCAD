@@ -73,6 +73,58 @@ private:
     double m_rotation = 0.0;
 };
 
+// TEXTEDIT: pick a text entity, replace its content. Text gulps rest of line.
+class TextEditCommand : public Command {
+public:
+    const char* name() const override { return "TEXTEDIT"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::EntitySet, QStringLiteral("Select text to edit:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (m_stage == 0) {
+            EntityId id = kInvalidEntityId;
+            if (v.kind == InputValue::Kind::EntityRef)
+                id = v.entityRef;
+            else if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                id = v.entitySet.front();
+            else if (v.kind == InputValue::Kind::Point)
+                id = hittest::pick(ctx.doc(), v.point, ctx.pickTolerance());
+            const auto* t = dynamic_cast<const TextEntity*>(ctx.doc().entity(id));
+            if (!t) {
+                ctx.info(QStringLiteral("not a text entity"));
+                return Step::cancelled();
+            }
+            m_id = id;
+            m_stage = 1;
+            return Step::cont(InputKind::Text,
+                              QStringLiteral("Enter new text <%1>:")
+                                  .arg(QString(t->text()).replace(QLatin1Char('\n'),
+                                                                  QLatin1String("\\n"))));
+        }
+        if (v.kind != InputValue::Kind::Text || v.text.trimmed().isEmpty())
+            return Step::cancelled();
+        QString content = v.text;
+        content.replace(QLatin1String("\\n"), QLatin1String("\n"));
+        ctx.doc().beginTransaction(QStringLiteral("TEXTEDIT"));
+        if (auto* e = dynamic_cast<TextEntity*>(ctx.doc().beginModify(m_id))) {
+            e->setText(content);
+            ctx.doc().endModify(m_id);
+        }
+        ctx.doc().commitTransaction();
+        return Step::done();
+    }
+
+private:
+    int m_stage = 0;
+    EntityId m_id = kInvalidEntityId;
+};
+
 // Linear/aligned dimensions: two def points + dimension line position.
 class DimLinearCommand : public Command {
 public:
@@ -500,6 +552,7 @@ std::unique_ptr<Command> make()
 void registerAnnotateCommands(CommandProcessor& p)
 {
     p.registerCommand(&make<TextCommand>, {QStringLiteral("MTEXT"), QStringLiteral("T")});
+    p.registerCommand(&make<TextEditCommand>, {QStringLiteral("ED"), QStringLiteral("DDEDIT")});
     p.registerCommand(&makeDimLinear, {QStringLiteral("DIMLIN"), QStringLiteral("DLI")});
     p.registerCommand(&makeDimAligned, {QStringLiteral("DAL")});
     p.registerCommand(&make<DimAngularCommand>, {QStringLiteral("DAN")});

@@ -44,6 +44,8 @@ signals:
     void cursorMoved(double x, double y);
     // Right-click on empty space (no active command) — repeat last command.
     void repeatLastRequested();
+    // Double-click on an entity — request an inline editor (text edit dialog).
+    void editEntityRequested(EntityId id);
     // Printable key typed on the canvas — route to the command bar
     // (the AutoCAD "just start typing" workflow).
     void typed(const QString& text);
@@ -54,6 +56,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 

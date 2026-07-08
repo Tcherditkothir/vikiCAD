@@ -41,6 +41,7 @@ private slots:
     void toggleUnits();
 
 private:
+    void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();
     void updateWindowTitle();
