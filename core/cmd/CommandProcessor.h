@@ -69,5 +69,6 @@ void registerLayoutCommands(CommandProcessor& processor);
 void registerSolidCommands(CommandProcessor& processor);
 void registerSolidFinishCommands(CommandProcessor& processor);
 void registerMeasureCommands(CommandProcessor& processor);
+void registerGearCommands(CommandProcessor& processor);
 
 } // namespace viki

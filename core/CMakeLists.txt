@@ -6,6 +6,7 @@ add_library(vikicore STATIC
     geom/Xform2d.cpp
     geom/GeomUtil.cpp
     geom/Intersect.cpp
+    geom/GearGeometry.cpp
     doc/Entity.cpp
     doc/Entities.cpp
     doc/EntityFactory.cpp
@@ -30,6 +31,7 @@ add_library(vikicore STATIC
     cmd/Commands3D.cpp
     cmd/Commands3DFinish.cpp
     cmd/CommandsMeasure.cpp
+    cmd/CommandsGear.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp

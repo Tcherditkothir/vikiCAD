@@ -9,6 +9,7 @@ add_executable(vikicad-tests
     test_commands.cpp
     test_store.cpp
     test_entities2.cpp
+    test_gear.cpp
     test_m2_commands.cpp
     test_snap.cpp
     test_editops.cpp
