@@ -4,6 +4,7 @@
 #include <QTemporaryDir>
 
 #include "cmd/CommandProcessor.h"
+#include "doc/Annotations.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "io/DxfExporter.h"
@@ -95,4 +96,70 @@ TEST_CASE("DXF export -> reimport preserves geometry semantically", "[dxf][golde
             REQUIRE(findFirst("xline"));
         }
     }
+}
+
+TEST_CASE("DXF text alignment round trip", "[dxf][golden][mtext]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("t"));
+    {
+        // Multiline, middle-center: exports as MTEXT attachment 5.
+        auto t = std::make_unique<TextEntity>(
+            Vec2d{100, 50}, 2.5, 0.3, QStringLiteral("first\nsecond"));
+        t->hAlign = TextHAlign::Center;
+        t->vAlign = TextVAlign::Middle;
+        t->lineSpacing = 2.0;
+        doc.addEntity(std::move(t));
+    }
+    {
+        // Multiline, baseline-left: MTEXT has no baseline attachment, so the
+        // exporter lifts the anchor one cap height and writes a Top row.
+        doc.addEntity(std::make_unique<TextEntity>(
+            Vec2d{0, 0}, 5.0, 0.0, QStringLiteral("base\nline")));
+    }
+    {
+        // Single line, right-aligned: exports as TEXT with codes 72/11.
+        auto t = std::make_unique<TextEntity>(
+            Vec2d{20, -30}, 3.5, 0.0, QStringLiteral("right"));
+        t->hAlign = TextHAlign::Right;
+        doc.addEntity(std::move(t));
+    }
+    doc.commitTransaction();
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("text-rt.dxf"));
+    REQUIRE(exportDxf(doc, path).ok);
+    const DxfImportResult im = importDxf(path);
+    REQUIRE(im.ok);
+    REQUIRE(im.imported == 3);
+    Document& d2 = *im.document;
+
+    std::vector<const TextEntity*> texts;
+    for (const EntityId id : d2.drawOrder())
+        if (const auto* t = dynamic_cast<const TextEntity*>(d2.entity(id)))
+            texts.push_back(t);
+    REQUIRE(texts.size() == 3);
+
+    const TextEntity* mid = texts[0];
+    CHECK(mid->text() == QStringLiteral("first\nsecond"));
+    CHECK(mid->position().x == Approx(100.0));
+    CHECK(mid->position().y == Approx(50.0));
+    CHECK(mid->hAlign == TextHAlign::Center);
+    CHECK(mid->vAlign == TextVAlign::Middle);
+    CHECK(mid->lineSpacing == Approx(2.0));
+    CHECK(mid->rotation() == Approx(0.3));
+
+    // Baseline case: semantics become Top but the RENDERED first baseline
+    // must land where the original one was (y = 0).
+    const TextEntity* base = texts[1];
+    CHECK(base->text() == QStringLiteral("base\nline"));
+    CHECK(base->vAlign == TextVAlign::Top);
+    const double y0 = TextEntity::firstBaselineY(
+        base->vAlign, base->height(), base->lineSpacing, 2);
+    CHECK(base->position().y + y0 == Approx(0.0).margin(1e-9));
+
+    const TextEntity* right = texts[2];
+    CHECK(right->hAlign == TextHAlign::Right);
+    CHECK(right->position().x == Approx(20.0));
+    CHECK(right->position().y == Approx(-30.0));
 }

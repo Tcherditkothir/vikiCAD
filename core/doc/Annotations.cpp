@@ -48,6 +48,20 @@ std::unique_ptr<Entity> TextEntity::clone() const
     return std::make_unique<TextEntity>(*this);
 }
 
+double TextEntity::firstBaselineY(TextVAlign v, double h, double ls, int lines)
+{
+    switch (v) {
+    case TextVAlign::Baseline: return 0.0;
+    case TextVAlign::Top: return -h; // caps top at the anchor
+    case TextVAlign::Middle: {
+        const double blockH = h + (lines - 1) * ls * h;
+        return blockH / 2.0 - h;
+    }
+    case TextVAlign::Bottom: return (lines - 1) * ls * h;
+    }
+    return 0.0;
+}
+
 BBox2d TextEntity::bounds() const
 {
     const QStringList lines = m_text.split(QLatin1Char('\n'));
@@ -55,15 +69,16 @@ BBox2d TextEntity::bounds() const
     for (const QString& l : lines)
         maxLen = std::max(maxLen, double(l.size()));
     const double w = maxLen * kCharAspect * m_height;
-    const double h = lines.size() * kLineSpacing * m_height;
-    // Corners of the unrotated box (baseline at pos, lines go down).
+    const double h = lines.size() * lineSpacing * m_height;
+    // Corners of the unrotated box (first baseline at y0, lines go down).
+    const double y0 = firstBaselineY(vAlign, m_height, lineSpacing, lines.size());
     double x0 = 0;
     if (hAlign == TextHAlign::Center)
         x0 = -w / 2;
     else if (hAlign == TextHAlign::Right)
         x0 = -w;
-    const Vec2d corners[4] = {{x0, m_height}, {x0 + w, m_height},
-                              {x0, m_height - h}, {x0 + w, m_height - h}};
+    const Vec2d corners[4] = {{x0, y0 + m_height}, {x0 + w, y0 + m_height},
+                              {x0, y0 + m_height - h}, {x0 + w, y0 + m_height - h}};
     BBox2d box;
     for (const Vec2d& corner : corners)
         box.expand(m_pos + corner.rotated(m_rotation));
@@ -81,10 +96,12 @@ void TextEntity::transform(const Xform2d& xf)
 void TextEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
 {
     const QStringList lines = m_text.split(QLatin1Char('\n'));
-    const Vec2d down = Vec2d{0, -kLineSpacing * m_height}.rotated(m_rotation);
+    const double y0 = firstBaselineY(vAlign, m_height, lineSpacing, lines.size());
+    const Vec2d base = m_pos + Vec2d{0, y0}.rotated(m_rotation);
+    const Vec2d down = Vec2d{0, -lineSpacing * m_height}.rotated(m_rotation);
     for (int i = 0; i < lines.size(); ++i) {
         TextPrimitive t;
-        t.pos = m_pos + down * double(i);
+        t.pos = base + down * double(i);
         t.height = m_height;
         t.rotation = m_rotation;
         t.text = lines[i];
@@ -115,6 +132,10 @@ void TextEntity::geomToJson(QJsonObject& obj) const
     obj[QStringLiteral("rotation")] = m_rotation;
     obj[QStringLiteral("text")] = m_text;
     obj[QStringLiteral("halign")] = int(hAlign);
+    if (vAlign != TextVAlign::Baseline)
+        obj[QStringLiteral("valign")] = int(vAlign);
+    if (lineSpacing != kLineSpacing)
+        obj[QStringLiteral("lspace")] = lineSpacing;
 }
 
 void TextEntity::geomFromJson(const QJsonObject& obj)
@@ -124,6 +145,8 @@ void TextEntity::geomFromJson(const QJsonObject& obj)
     m_rotation = obj[QStringLiteral("rotation")].toDouble(0.0);
     m_text = obj[QStringLiteral("text")].toString();
     hAlign = TextHAlign(obj[QStringLiteral("halign")].toInt(0));
+    vAlign = TextVAlign(obj[QStringLiteral("valign")].toInt(0));
+    lineSpacing = obj[QStringLiteral("lspace")].toDouble(kLineSpacing);
 }
 
 // ---- DimensionEntity ------------------------------------------------------------
@@ -163,7 +186,7 @@ BBox2d DimensionEntity::bounds() const
     box.expand(pos);
     if (kind == Kind::Angular)
         box.expand(c);
-    return box.inflated(5.0); // arrows/text margin
+    return box.inflated(5.0 * styleScale); // arrows/text margin
 }
 
 void DimensionEntity::transform(const Xform2d& xf)
@@ -172,13 +195,21 @@ void DimensionEntity::transform(const Xform2d& xf)
     b = xf.apply(b);
     c = xf.apply(c);
     pos = xf.apply(pos);
+    styleScale *= xf.uniformScale();
     if (kind == Kind::Linear)
         axis = xf.applyVector(axis).normalized();
 }
 
 void DimensionEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
 {
-    const DimStyle& st = styleFor(ctx, style);
+    DimStyle st = styleFor(ctx, style);
+    if (styleScale != 1.0) {
+        st.textHeight *= styleScale;
+        st.arrowSize *= styleScale;
+        st.extOffset *= styleScale;
+        st.extBeyond *= styleScale;
+        st.textGap *= styleScale;
+    }
     const uint32_t rgb = ctx.resolvedColor;
 
     const auto pushLine = [&](const Vec2d& p, const Vec2d& q) {
@@ -188,6 +219,8 @@ void DimensionEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& o
         out.strokes.push_back(std::move(s));
     };
     const auto pushText = [&](const Vec2d& at, double rot, const QString& str) {
+        if (str.isEmpty())
+            return;
         TextPrimitive t;
         t.pos = at;
         t.height = st.textHeight;
@@ -201,15 +234,22 @@ void DimensionEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& o
         t.hAlign = TextHAlign::Center;
         out.texts.push_back(std::move(t));
     };
-    const QString label =
-        !textOverride.isEmpty()
-            ? textOverride
-            : (kind == Kind::Angular
-                   ? QString::number(measurement() * 180.0 / M_PI, 'f', 1) +
-                         QStringLiteral("°")
-                   : (kind == Kind::Radius ? QStringLiteral("R") :
-                      kind == Kind::Diameter ? QStringLiteral("Ø") : QString()) +
-                         formatLength(measurement(), ctx, st));
+    const QString measured =
+        kind == Kind::Angular
+            ? QString::number(measurement() * 180.0 / M_PI, 'f', 1) +
+                  QStringLiteral("°")
+            : (kind == Kind::Radius ? QStringLiteral("R") :
+               kind == Kind::Diameter ? QStringLiteral("Ø") : QString()) +
+                  formatLength(measurement(), ctx, st);
+    QString label = measured;
+    if (!textOverride.isEmpty()) {
+        // AutoCAD semantics: "<>" = measured value; a blank override
+        // suppresses the text entirely.
+        label = textOverride;
+        label.replace(QLatin1String("<>"), measured);
+        if (label.trimmed().isEmpty())
+            label.clear();
+    }
 
     switch (kind) {
     case Kind::Linear:
@@ -269,6 +309,8 @@ void DimensionEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& o
         const Vec2d onCurve = a + dir * r;
         pushLine(onCurve, pos);
         emitArrow(onCurve, (onCurve - pos).normalized(), st.arrowSize, rgb, out);
+        if (label.isEmpty())
+            break;
         TextPrimitive t;
         t.pos = pos + dir * st.textGap;
         t.height = st.textHeight;
@@ -301,6 +343,8 @@ void DimensionEntity::geomToJson(QJsonObject& obj) const
     obj[QStringLiteral("dimstyle")] = style;
     if (!textOverride.isEmpty())
         obj[QStringLiteral("text_override")] = textOverride;
+    if (styleScale != 1.0)
+        obj[QStringLiteral("style_scale")] = styleScale;
 }
 
 void DimensionEntity::geomFromJson(const QJsonObject& obj)
@@ -315,6 +359,7 @@ void DimensionEntity::geomFromJson(const QJsonObject& obj)
         axis = {1, 0};
     style = obj[QStringLiteral("dimstyle")].toString(QStringLiteral("Standard"));
     textOverride = obj[QStringLiteral("text_override")].toString();
+    styleScale = obj[QStringLiteral("style_scale")].toDouble(1.0);
 }
 
 // ---- LeaderEntity ---------------------------------------------------------------
@@ -329,20 +374,26 @@ BBox2d LeaderEntity::bounds() const
     BBox2d box;
     for (const Vec2d& p : points)
         box.expand(p);
-    return box.inflated(3.0);
+    return box.inflated(3.0 * styleScale);
 }
 
 void LeaderEntity::transform(const Xform2d& xf)
 {
     for (Vec2d& p : points)
         p = xf.apply(p);
+    styleScale *= xf.uniformScale();
 }
 
 void LeaderEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
 {
     if (points.size() < 2)
         return;
-    const DimStyle& st = styleFor(ctx, style);
+    DimStyle st = styleFor(ctx, style);
+    if (styleScale != 1.0) {
+        st.textHeight *= styleScale;
+        st.arrowSize *= styleScale;
+        st.textGap *= styleScale;
+    }
     StrokePrimitive s;
     s.rgb = ctx.resolvedColor;
     s.points = points;
@@ -375,6 +426,8 @@ void LeaderEntity::geomToJson(QJsonObject& obj) const
     obj[QStringLiteral("points")] = pts;
     obj[QStringLiteral("text")] = text;
     obj[QStringLiteral("dimstyle")] = style;
+    if (styleScale != 1.0)
+        obj[QStringLiteral("style_scale")] = styleScale;
 }
 
 void LeaderEntity::geomFromJson(const QJsonObject& obj)
@@ -384,6 +437,7 @@ void LeaderEntity::geomFromJson(const QJsonObject& obj)
         points.push_back(pointFromJson(v));
     text = obj[QStringLiteral("text")].toString();
     style = obj[QStringLiteral("dimstyle")].toString(QStringLiteral("Standard"));
+    styleScale = obj[QStringLiteral("style_scale")].toDouble(1.0);
 }
 
 // ---- HatchEntity ----------------------------------------------------------------

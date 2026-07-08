@@ -262,28 +262,61 @@ private:
             const QStringList lines = txt->text().split(QLatin1Char('\n'));
             if (lines.size() == 1 || m_r12) {
                 // TEXT records (one per line in R12, which has no MTEXT).
+                // The vertical alignment is baked into per-line baseline
+                // anchors; the horizontal one maps to codes 72/11.
+                const double y0 = TextEntity::firstBaselineY(
+                    txt->vAlign, txt->height(), txt->lineSpacing, lines.size());
+                const Vec2d base =
+                    txt->position() + Vec2d{0, y0}.rotated(txt->rotation());
                 const Vec2d down =
-                    Vec2d{0, -TextEntity::kLineSpacing * txt->height()}.rotated(
+                    Vec2d{0, -txt->lineSpacing * txt->height()}.rotated(
                         txt->rotation());
                 for (int i = 0; i < lines.size(); ++i) {
                     DRW_Text out;
                     applyCommon(e, out);
-                    const Vec2d p = txt->position() + down * double(i);
+                    const Vec2d p = base + down * double(i);
                     out.basePoint = {p.x, p.y, 0};
                     out.secPoint = out.basePoint;
                     out.height = txt->height();
                     out.angle = txt->rotation() * 180.0 / M_PI;
+                    if (txt->hAlign == TextHAlign::Center)
+                        out.alignH = DRW_Text::HCenter;
+                    else if (txt->hAlign == TextHAlign::Right)
+                        out.alignH = DRW_Text::HRight;
                     out.text = lines[i].toStdString();
                     m_rw.writeText(&out);
                 }
             } else {
                 DRW_MText out;
                 applyCommon(e, out);
-                out.basePoint = {txt->position().x, txt->position().y, 0};
+                // MTEXT has no baseline attachment: Baseline exports as a
+                // Top row with the anchor lifted one cap height so the
+                // geometry survives the round trip exactly.
+                Vec2d anchor = txt->position();
+                int row = 0; // Top
+                switch (txt->vAlign) {
+                case TextVAlign::Baseline:
+                    anchor = anchor + Vec2d{0, txt->height()}.rotated(txt->rotation());
+                    break;
+                case TextVAlign::Top: break;
+                case TextVAlign::Middle: row = 1; break;
+                case TextVAlign::Bottom: row = 2; break;
+                }
+                int col = 0; // Left
+                if (txt->hAlign == TextHAlign::Center)
+                    col = 1;
+                else if (txt->hAlign == TextHAlign::Right)
+                    col = 2;
+                out.textgen = row * 3 + col + 1; // attachment point, code 71
+                out.interlin = txt->lineSpacing * 3.0 / 5.0; // code 44
+                out.basePoint = {anchor.x, anchor.y, 0};
                 out.secPoint = out.basePoint;
                 out.height = txt->height();
                 out.angle = txt->rotation(); // MTEXT code 50 is radians (spec)
                 QString content = txt->text();
+                content.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+                content.replace(QLatin1Char('{'), QLatin1String("\\{"));
+                content.replace(QLatin1Char('}'), QLatin1String("\\}"));
                 content.replace(QLatin1Char('\n'), QLatin1String("\\P"));
                 out.text = content.toStdString();
                 m_rw.writeMText(&out);

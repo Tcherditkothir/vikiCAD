@@ -1,5 +1,7 @@
 #include "DxfImporter.h"
 
+#include <algorithm>
+
 #include <QDir>
 #include <QProcess>
 #include <QStandardPaths>
@@ -19,6 +21,104 @@
 #include "geom/GeomUtil.h"
 
 namespace viki {
+
+QString decodeTextSymbols(const QString& raw)
+{
+    QString out;
+    out.reserve(raw.size());
+    const int n = raw.size();
+    for (int i = 0; i < n; ++i) {
+        if (raw.at(i) == QLatin1Char('%') && i + 2 < n &&
+            raw.at(i + 1) == QLatin1Char('%')) {
+            const QChar code = raw.at(i + 2).toLower();
+            i += 2;
+            if (code == QLatin1Char('d'))
+                out += QChar(0x00B0); // degree
+            else if (code == QLatin1Char('c'))
+                out += QChar(0x00D8); // diameter
+            else if (code == QLatin1Char('p'))
+                out += QChar(0x00B1); // plus/minus
+            else if (code == QLatin1Char('u') || code == QLatin1Char('o'))
+                ; // underline/overline toggles: no plain-text equivalent
+            else if (code == QLatin1Char('%'))
+                out += QLatin1Char('%');
+            else {
+                out += QLatin1String("%%");
+                out += raw.at(i);
+            }
+        } else {
+            out += raw.at(i);
+        }
+    }
+    return out;
+}
+
+QString decodeMtextContent(const QString& raw)
+{
+    QString out;
+    out.reserve(raw.size());
+    const int n = raw.size();
+    for (int i = 0; i < n; ++i) {
+        const QChar c = raw.at(i);
+        if (c == QLatin1Char('{') || c == QLatin1Char('}'))
+            continue; // formatting group braces
+        if (c != QLatin1Char('\\')) {
+            out += c;
+            continue;
+        }
+        if (i + 1 >= n)
+            break;
+        const QChar k = raw.at(++i);
+        switch (k.unicode()) {
+        case '\\': case '{': case '}':
+            out += k; // escaped literal
+            break;
+        case 'P': case 'N': case 'X':
+            out += QLatin1Char('\n'); // paragraph / column / dim split
+            break;
+        case '~':
+            out += QLatin1Char(' '); // non-breaking space
+            break;
+        case 'L': case 'l': case 'O': case 'o': case 'K': case 'k':
+            break; // underline/overline/strike toggles
+        case 'S': { // stacked fraction \S upper ^|/|# lower ;
+            QString frac;
+            while (i + 1 < n && raw.at(i + 1) != QLatin1Char(';'))
+                frac += raw.at(++i);
+            if (i + 1 < n)
+                ++i; // consume ';'
+            frac.replace(QLatin1Char('^'), QLatin1Char('/'));
+            frac.replace(QLatin1Char('#'), QLatin1Char('/'));
+            out += frac.trimmed();
+            break;
+        }
+        case 'U': { // \U+XXXX
+            if (i + 5 < n && raw.at(i + 1) == QLatin1Char('+')) {
+                bool ok = false;
+                const int cp = raw.mid(i + 2, 4).toInt(&ok, 16);
+                if (ok) {
+                    out += QChar(cp);
+                    i += 5;
+                    break;
+                }
+            }
+            out += k;
+            break;
+        }
+        // Property runs consumed up to the terminating ';':
+        case 'A': case 'C': case 'c': case 'F': case 'f': case 'H':
+        case 'W': case 'T': case 'Q': case 'p':
+            while (i < n && raw.at(i) != QLatin1Char(';'))
+                ++i;
+            break;
+        default:
+            out += k; // unknown code: keep the character
+            break;
+        }
+    }
+    return decodeTextSymbols(out);
+}
+
 namespace {
 
 // ACI (AutoCAD Color Index) -> RGB using libdxfrw's own table.
@@ -240,17 +340,42 @@ public:
 
     // ---- annotations ---------------------------------------------------------
 
-    static QString cleanMtext(QString t)
-    {
-        t.replace(QLatin1String("\\P"), QLatin1String("\n"));
-        return t;
-    }
-
     void addText(const DRW_Text& data) override
     {
+        Vec2d pos{data.basePoint.x, data.basePoint.y};
+        TextHAlign h = TextHAlign::Left;
+        TextVAlign v = TextVAlign::Baseline;
+        const Vec2d align{data.secPoint.x, data.secPoint.y};
+        if (data.alignH == DRW_Text::HAligned || data.alignH == DRW_Text::HFit) {
+            // Stretched between the two points; approximate: centered between.
+            pos = (pos + align) * 0.5;
+            h = TextHAlign::Center;
+        } else if (data.alignH != DRW_Text::HLeft ||
+                   data.alignV != DRW_Text::VBaseLine) {
+            // Justified TEXT anchors at the alignment point (code 11), not
+            // at the insertion point (code 10).
+            pos = align;
+            switch (data.alignH) {
+            case DRW_Text::HCenter: h = TextHAlign::Center; break;
+            case DRW_Text::HRight: h = TextHAlign::Right; break;
+            case DRW_Text::HMiddle:
+                h = TextHAlign::Center;
+                v = TextVAlign::Middle;
+                break;
+            default: break;
+            }
+            switch (data.alignV) {
+            case DRW_Text::VBottom: v = TextVAlign::Bottom; break;
+            case DRW_Text::VMiddle: v = TextVAlign::Middle; break;
+            case DRW_Text::VTop: v = TextVAlign::Top; break;
+            default: break;
+            }
+        }
         auto t = std::make_unique<TextEntity>(
-            Vec2d{data.basePoint.x, data.basePoint.y}, data.height,
-            data.angle * M_PI / 180.0, QString::fromStdString(data.text));
+            pos, data.height, data.angle * M_PI / 180.0,
+            decodeTextSymbols(QString::fromStdString(data.text)));
+        t->hAlign = h;
+        t->vAlign = v;
         place(std::move(t), data);
     }
 
@@ -270,7 +395,21 @@ public:
         }
         auto t = std::make_unique<TextEntity>(
             Vec2d{data.basePoint.x, data.basePoint.y}, data.height, rotation,
-            cleanMtext(QString::fromStdString(data.text)));
+            decodeMtextContent(QString::fromStdString(data.text)));
+        // Attachment point (code 71): 1..9 = (Top|Middle|Bottom)x(L|C|R).
+        const int attach = std::clamp(data.textgen, 1, 9);
+        switch ((attach - 1) % 3) {
+        case 0: t->hAlign = TextHAlign::Left; break;
+        case 1: t->hAlign = TextHAlign::Center; break;
+        case 2: t->hAlign = TextHAlign::Right; break;
+        }
+        switch ((attach - 1) / 3) {
+        case 0: t->vAlign = TextVAlign::Top; break;
+        case 1: t->vAlign = TextVAlign::Middle; break;
+        case 2: t->vAlign = TextVAlign::Bottom; break;
+        }
+        // Line spacing factor (code 44): AutoCAD "single" = 5/3 of height.
+        t->lineSpacing = (data.interlin > 0 ? data.interlin : 1.0) * (5.0 / 3.0);
         place(std::move(t), data);
     }
 
@@ -373,10 +512,24 @@ public:
         place(std::move(hatch), *data);
     }
 
+    // Style reference + explicit dimension text (code 1). Empty or "<>" =
+    // regenerate from the measurement; anything else is a user override
+    // (may carry MTEXT codes; "<>" inside is substituted at render time).
+    static void applyDimText(DimensionEntity& dim, const DRW_Dimension& d)
+    {
+        const QString styleName = QString::fromStdString(d.getStyle());
+        if (!styleName.isEmpty())
+            dim.style = styleName;
+        const QString t = QString::fromStdString(d.getText());
+        if (!t.isEmpty() && t != QLatin1String("<>"))
+            dim.textOverride = decodeMtextContent(t);
+    }
+
     void addDimLinear(const DRW_DimLinear* data) override
     {
         auto dim = std::make_unique<DimensionEntity>();
         dim->kind = DimensionEntity::Kind::Linear;
+        applyDimText(*dim, *data);
         dim->a = {data->getDef1Point().x, data->getDef1Point().y};
         dim->b = {data->getDef2Point().x, data->getDef2Point().y};
         dim->pos = {data->getDimPoint().x, data->getDimPoint().y};
@@ -389,6 +542,7 @@ public:
     {
         auto dim = std::make_unique<DimensionEntity>();
         dim->kind = DimensionEntity::Kind::Aligned;
+        applyDimText(*dim, *data);
         dim->a = {data->getDef1Point().x, data->getDef1Point().y};
         dim->b = {data->getDef2Point().x, data->getDef2Point().y};
         dim->pos = {data->getDimPoint().x, data->getDimPoint().y};
@@ -399,6 +553,7 @@ public:
     {
         auto dim = std::make_unique<DimensionEntity>();
         dim->kind = DimensionEntity::Kind::Radius;
+        applyDimText(*dim, *data);
         dim->a = {data->getCenterPoint().x, data->getCenterPoint().y};
         dim->b = {data->getDiameterPoint().x, data->getDiameterPoint().y};
         dim->pos = {data->getTextPoint().x, data->getTextPoint().y};
@@ -409,6 +564,7 @@ public:
     {
         auto dim = std::make_unique<DimensionEntity>();
         dim->kind = DimensionEntity::Kind::Diameter;
+        applyDimText(*dim, *data);
         const Vec2d p1{data->getDiameter1Point().x, data->getDiameter1Point().y};
         const Vec2d p2{data->getDiameter2Point().x, data->getDiameter2Point().y};
         dim->a = (p1 + p2) * 0.5;
@@ -421,6 +577,7 @@ public:
     {
         auto dim = std::make_unique<DimensionEntity>();
         dim->kind = DimensionEntity::Kind::Angular;
+        applyDimText(*dim, *data);
         dim->a = {data->getVertexPoint().x, data->getVertexPoint().y};
         dim->b = {data->getFirstLine().x, data->getFirstLine().y};
         dim->c = {data->getSecondLine().x, data->getSecondLine().y};
@@ -505,7 +662,25 @@ public:
         }
     }
     void addLType(const DRW_LType&) override {}
-    void addDimStyle(const DRW_Dimstyle&) override {}
+    void addDimStyle(const DRW_Dimstyle& data) override
+    {
+        // Bring over the sizes that drive regeneration; DIMSCALE is baked in
+        // (we render absolute sizes, not a global scale variable).
+        DimStyle s;
+        s.name = QString::fromStdString(data.name);
+        if (s.name.isEmpty())
+            return;
+        const double k = data.dimscale > 0 ? data.dimscale : 1.0;
+        if (data.dimtxt > 0)
+            s.textHeight = data.dimtxt * k;
+        if (data.dimasz > 0)
+            s.arrowSize = data.dimasz * k;
+        s.extOffset = data.dimexo * k;
+        s.extBeyond = data.dimexe * k;
+        s.textGap = std::fabs(data.dimgap) * k;
+        s.decimals = std::clamp(data.dimdec, 0, 8);
+        doc->upsertDimStyle(s);
+    }
     void addVport(const DRW_Vport&) override {}
     void addTextStyle(const DRW_Textstyle&) override {}
     void addAppId(const DRW_AppId&) override {}

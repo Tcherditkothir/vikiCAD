@@ -29,9 +29,16 @@ public:
     QString text() const { return m_text; }
     void setText(const QString& t) { m_text = t; }
     TextHAlign hAlign = TextHAlign::Left;
+    TextVAlign vAlign = TextVAlign::Baseline;
+    double lineSpacing = kLineSpacing; // multiples of height (MTEXT code 44)
 
     static constexpr double kLineSpacing = 1.6; // multiples of height
     static constexpr double kCharAspect = 0.62; // approx width/height
+
+    // Local-Y of the FIRST line's baseline relative to the anchor point,
+    // given the vertical alignment. Shared with the DXF exporter.
+    static double firstBaselineY(TextVAlign v, double height, double lineSpacing,
+                                 int lineCount);
 
 protected:
     void geomToJson(QJsonObject& obj) const override;
@@ -69,6 +76,10 @@ public:
     Vec2d axis{1, 0};  // Linear only: measurement axis (unit x or y)
     QString style = QStringLiteral("Standard");
     QString textOverride;
+    // Multiplier applied to the style's absolute sizes (text height, arrows,
+    // offsets). Follows the entity through transforms, so dimensions inside
+    // scaled block inserts keep proportions instead of using raw mm sizes.
+    double styleScale = 1.0;
 
     // The measurement value in mm (angle in radians for Angular).
     double measurement() const;
@@ -99,6 +110,7 @@ public:
     std::vector<Vec2d> points;
     QString text;
     QString style = QStringLiteral("Standard"); // arrow/text sizes
+    double styleScale = 1.0; // see DimensionEntity::styleScale
 
 protected:
     void geomToJson(QJsonObject& obj) const override;

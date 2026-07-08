@@ -25,6 +25,7 @@ public:
 
     // ViewHook
     void zoomExtents() override;
+    void zoomWindow(const BBox2d& box) override;
 
     // Input-mode toggles (status bar buttons).
     SnapSettings& snapSettings() { return m_snapSettings; }

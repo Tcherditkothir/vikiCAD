@@ -12,6 +12,7 @@ class ViewHook {
 public:
     virtual ~ViewHook() = default;
     virtual void zoomExtents() = 0;
+    virtual void zoomWindow(const BBox2d& box) { (void)box; }
 };
 
 // Everything a command needs to run, front-end agnostic.

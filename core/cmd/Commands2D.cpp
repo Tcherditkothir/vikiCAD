@@ -447,21 +447,61 @@ public:
     const char* name() const override { return "ZOOM"; }
     Step start(CommandContext&) override
     {
-        return Step::cont(InputKind::Keyword, QStringLiteral("Enter option [Extents]:"));
+        return Step::cont(InputKind::Keyword,
+                          QStringLiteral("Enter option [Extents/Window] or first corner:"));
     }
     Step onInput(CommandContext& ctx, const InputValue& v) override
     {
-        if (v.kind == InputValue::Kind::Keyword &&
-            (v.text == QLatin1String("E") || v.text == QLatin1String("EXTENTS"))) {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        switch (m_st) {
+        case St::Option:
+            if (v.kind == InputValue::Kind::Keyword &&
+                (v.text == QLatin1String("E") || v.text == QLatin1String("EXTENTS"))) {
+                if (ctx.view())
+                    ctx.view()->zoomExtents();
+                return Step::done();
+            }
+            if (v.kind == InputValue::Kind::Keyword &&
+                (v.text == QLatin1String("W") || v.text == QLatin1String("WINDOW"))) {
+                m_st = St::Corner1;
+                return Step::cont(InputKind::Point, QStringLiteral("First corner:"));
+            }
+            if (v.kind == InputValue::Kind::Point) {
+                // Picking a corner right away implies Window.
+                m_a = v.point;
+                m_st = St::Corner2;
+                return Step::cont(InputKind::Point, QStringLiteral("Opposite corner:"));
+            }
+            if (v.kind == InputValue::Kind::Finish)
+                return Step::cancelled();
+            ctx.info(QStringLiteral("unknown zoom option"));
+            return Step::cont(InputKind::Keyword,
+                              QStringLiteral("Enter option [Extents/Window] or first corner:"));
+        case St::Corner1:
+            if (v.kind != InputValue::Kind::Point)
+                return Step::cancelled();
+            m_a = v.point;
+            m_st = St::Corner2;
+            return Step::cont(InputKind::Point, QStringLiteral("Opposite corner:"));
+        case St::Corner2: {
+            if (v.kind != InputValue::Kind::Point)
+                return Step::cancelled();
+            BBox2d box;
+            box.expand(m_a);
+            box.expand(v.point);
             if (ctx.view())
-                ctx.view()->zoomExtents();
+                ctx.view()->zoomWindow(box);
             return Step::done();
         }
-        if (v.kind == InputValue::Kind::Cancel || v.kind == InputValue::Kind::Finish)
-            return Step::cancelled();
-        ctx.info(QStringLiteral("unknown zoom option"));
-        return Step::cont(InputKind::Keyword, QStringLiteral("Enter option [Extents]:"));
+        }
+        return Step::cancelled();
     }
+
+private:
+    enum class St { Option, Corner1, Corner2 };
+    St m_st = St::Option;
+    Vec2d m_a;
 };
 
 template <typename T>

@@ -59,6 +59,15 @@ void CanvasWidget::zoomExtents()
     markDocumentDirty();
 }
 
+void CanvasWidget::zoomWindow(const BBox2d& box)
+{
+    if (!box.isValid())
+        return;
+    m_camera.setViewport(size());
+    m_camera.zoomExtents(box); // same fit math, caller-provided box
+    markDocumentDirty();
+}
+
 void CanvasWidget::drawGrid(QPainter& painter) const
 {
     const double pxPerMinor = m_gridSpacing * m_camera.scale();

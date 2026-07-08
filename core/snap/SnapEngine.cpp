@@ -1,5 +1,6 @@
 #include "SnapEngine.h"
 
+#include "doc/Block.h"
 #include "geom/GeomUtil.h"
 
 namespace viki {
@@ -73,6 +74,31 @@ std::optional<Vec2d> segmentIntersection(const Vec2d& a1, const Vec2d& a2,
     return a1 + r * t;
 }
 
+// Typed snap points of an entity. Inserts recurse into their block definition
+// so endpoints/midpoints/centers INSIDE blocks are snappable; sub-entity points
+// are mapped through the insert transform (points transform exactly — no need
+// to clone whole entities per query).
+void collectSnapPoints(const Document& doc, const Entity& e,
+                       std::vector<SnapPoint>& out, int depth = 0)
+{
+    const auto* ins = dynamic_cast<const InsertEntity*>(&e);
+    if (!ins) {
+        e.snapPoints(out);
+        return;
+    }
+    out.push_back({ins->position, SnapKind::Endpoint});
+    const BlockDef* def = depth < 4 ? doc.blockByName(ins->blockName) : nullptr;
+    if (!def)
+        return;
+    const Xform2d xf = ins->insertXform(def->basePoint);
+    std::vector<SnapPoint> sub;
+    for (const auto& child : def->entities)
+        collectSnapPoints(doc, *child, sub, depth + 1);
+    out.reserve(out.size() + sub.size());
+    for (const SnapPoint& sp : sub)
+        out.push_back({xf.apply(sp.p), sp.kind});
+}
+
 Vec2d closestOnSegments(const std::vector<std::pair<Vec2d, Vec2d>>& segs, const Vec2d& p)
 {
     Vec2d best = p;
@@ -132,11 +158,12 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
             best = SnapResult{p, kind, id};
     };
 
-    // Typed candidates from the entities themselves.
+    // Typed candidates from the entities themselves (inserts recurse into
+    // their block definitions — see collectSnapPoints).
     std::vector<SnapPoint> pts;
     for (const Cand& c : cands) {
         pts.clear();
-        c.e->snapPoints(pts);
+        collectSnapPoints(doc, *c.e, pts);
         for (const SnapPoint& sp : pts)
             consider(sp.p, sp.kind, c.e->id());
     }

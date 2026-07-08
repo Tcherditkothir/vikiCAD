@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include "doc/Annotations.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "io/DxfImporter.h"
@@ -170,4 +171,182 @@ TEST_CASE("DXF import: missing file fails cleanly", "[dxf]")
     const DxfImportResult r = importDxf(QStringLiteral("/nonexistent/nope.dxf"));
     REQUIRE_FALSE(r.ok);
     REQUIRE_FALSE(r.error.isEmpty());
+}
+
+TEST_CASE("MTEXT inline formatting decodes to plain text", "[dxf][mtext]")
+{
+    using namespace viki;
+    CHECK(decodeMtextContent(QStringLiteral("ABC\\PDEF")) ==
+          QStringLiteral("ABC\nDEF"));
+    CHECK(decodeMtextContent(
+              QStringLiteral("{\\fArial|b0|i0|c0|p34;Hello} World")) ==
+          QStringLiteral("Hello World"));
+    CHECK(decodeMtextContent(QStringLiteral("\\H2.5x;Big\\~text")) ==
+          QStringLiteral("Big text"));
+    CHECK(decodeMtextContent(QStringLiteral("\\S1^2;")) == QStringLiteral("1/2"));
+    CHECK(decodeMtextContent(QStringLiteral("\\\\lit \\{b\\}")) ==
+          QStringLiteral("\\lit {b}"));
+    CHECK(decodeMtextContent(QStringLiteral("\\A1;\\C3;red middle")) ==
+          QStringLiteral("red middle"));
+    CHECK(decodeMtextContent(QStringLiteral("\\U+00E9t\\U+00E9")) ==
+          QStringLiteral("été"));
+    CHECK(decodeTextSymbols(QStringLiteral("50%%d %%c10 %%p0.1 100%%%")) ==
+          QStringLiteral("50° Ø10 ±0.1 100%"));
+}
+
+namespace {
+
+const char* kTextFixture = R"(0
+SECTION
+2
+ENTITIES
+0
+MTEXT
+8
+0
+10
+100.0
+20
+50.0
+40
+2.5
+71
+5
+44
+1.2
+1
+{\fArial|b0;Hello \H3.2x;world}\Pline 2
+0
+TEXT
+8
+0
+10
+0.0
+20
+0.0
+40
+3.5
+1
+50%%d and %%c10
+50
+0.0
+72
+1
+11
+30.0
+21
+40.0
+73
+3
+0
+ENDSEC
+0
+
+TEST_CASE("MTEXT inline formatting decodes to plain text", "[dxf][mtext]")
+{
+    using namespace viki;
+    CHECK(decodeMtextContent(QStringLiteral("ABC\\PDEF")) ==
+          QStringLiteral("ABC\nDEF"));
+    CHECK(decodeMtextContent(
+              QStringLiteral("{\\fArial|b0|i0|c0|p34;Hello} World")) ==
+          QStringLiteral("Hello World"));
+    CHECK(decodeMtextContent(QStringLiteral("\\H2.5x;Big\\~text")) ==
+          QStringLiteral("Big text"));
+    CHECK(decodeMtextContent(QStringLiteral("\\S1^2;")) == QStringLiteral("1/2"));
+    CHECK(decodeMtextContent(QStringLiteral("\\\\lit \\{b\\}")) ==
+          QStringLiteral("\\lit {b}"));
+    CHECK(decodeMtextContent(QStringLiteral("\\A1;\\C3;red middle")) ==
+          QStringLiteral("red middle"));
+    CHECK(decodeMtextContent(QStringLiteral("\\U+00E9t\\U+00E9")) ==
+          QStringLiteral("été"));
+    CHECK(decodeTextSymbols(QStringLiteral("50%%d %%c10 %%p0.1 100%%%")) ==
+          QStringLiteral("50° Ø10 ±0.1 100%"));
+}
+
+namespace {
+
+const char* kTextFixture = R"(0
+SECTION
+2
+ENTITIES
+0
+MTEXT
+8
+0
+10
+100.0
+20
+50.0
+40
+2.5
+71
+5
+44
+1.2
+1
+{\fArial|b0;Hello \H3.2x;world}\Pline 2
+0
+TEXT
+8
+0
+10
+0.0
+20
+0.0
+40
+3.5
+1
+50%%d and %%c10
+50
+0.0
+72
+1
+11
+30.0
+21
+40.0
+73
+3
+0
+ENDSEC
+0
+EOF
+)";
+
+} // namespace
+
+TEST_CASE("DXF import: text justification and MTEXT attachment", "[dxf][mtext]")
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("text.dxf"));
+    {
+        QFile f(path);
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(kTextFixture);
+    }
+
+    const DxfImportResult r = importDxf(path);
+    REQUIRE(r.ok);
+    REQUIRE(r.imported == 2);
+    Document& doc = *r.document;
+
+    const auto* mt =
+        dynamic_cast<const TextEntity*>(doc.entity(doc.drawOrder()[0]));
+    REQUIRE(mt);
+    CHECK(mt->text() == QStringLiteral("Hello world\nline 2"));
+    CHECK(mt->position().x == Approx(100.0));
+    CHECK(mt->height() == Approx(2.5));
+    CHECK(mt->hAlign == TextHAlign::Center);   // attachment 5 = MiddleCenter
+    CHECK(mt->vAlign == TextVAlign::Middle);
+    CHECK(mt->lineSpacing == Approx(2.0));     // 1.2 * 5/3
+
+    const auto* tx =
+        dynamic_cast<const TextEntity*>(doc.entity(doc.drawOrder()[1]));
+    REQUIRE(tx);
+    CHECK(tx->text() == QStringLiteral("50° and Ø10"));
+    // Justified TEXT anchors at the alignment point (code 11).
+    CHECK(tx->position().x == Approx(30.0));
+    CHECK(tx->position().y == Approx(40.0));
+    CHECK(tx->hAlign == TextHAlign::Center);
+    CHECK(tx->vAlign == TextVAlign::Top);
 }

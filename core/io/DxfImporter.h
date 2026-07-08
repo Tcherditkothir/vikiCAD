@@ -26,4 +26,13 @@ DxfImportResult importDxf(const QString& path);
 // LibreCAD's reader). Same conversion pipeline as DXF.
 DxfImportResult importDwg(const QString& path);
 
+// Decodes MTEXT inline formatting to plain text: \P -> newline, group braces
+// and {\f...;}/\H/\W/\C/... runs stripped, \S stacks -> "a/b", \U+XXXX and
+// %%-symbols resolved. Exposed for tests.
+QString decodeMtextContent(const QString& raw);
+
+// Decodes TEXT %%-symbols: %%d -> degree, %%c -> diameter, %%p -> plus/minus,
+// %%u/%%o style toggles dropped, %%% -> '%'.
+QString decodeTextSymbols(const QString& raw);
+
 } // namespace viki

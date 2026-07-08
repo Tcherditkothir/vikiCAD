@@ -20,6 +20,9 @@ struct StrokePrimitive {
 };
 
 enum class TextHAlign { Left, Center, Right };
+// Vertical anchor of a text ENTITY (primitives stay baseline-anchored; the
+// entity offsets its baselines). Baseline = legacy TEXT default.
+enum class TextVAlign { Baseline, Top, Middle, Bottom };
 
 struct TextPrimitive {
     Vec2d pos;                   // baseline-left anchor (world)
