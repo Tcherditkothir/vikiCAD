@@ -158,6 +158,18 @@ public:
         }
     }
 
+    void previewAt(CommandContext& ctx, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        if (m_stage != 2 || m_source == kInvalidEntityId)
+            return;
+        auto ghost = editops::offsetGeometry(ctx.doc(), m_source, m_distance, cursor);
+        if (!ghost)
+            return;
+        RenderContext rc;
+        rc.chordTolerance = 0.5;
+        ghost->buildPrimitives(rc, out);
+    }
+
 private:
     int m_stage = 0;
     double m_distance = 1.0;

@@ -35,6 +35,13 @@ OpResult extendEntity(Document& doc, EntityId target, std::vector<EntityId> boun
 OpResult offsetEntity(Document& doc, EntityId source, double distance,
                       const Vec2d& sidePick);
 
+// The offset geometry alone (no style, not added to the document) — shared by
+// offsetEntity and the OFFSET command's live preview. Null on failure; if
+// `err` is non-null it receives the reason.
+std::unique_ptr<Entity> offsetGeometry(const Document& doc, EntityId source,
+                                       double distance, const Vec2d& sidePick,
+                                       QString* err = nullptr);
+
 // Fillet (radius >= 0) between two lines; radius 0 = sharp corner.
 // pick points choose which portions are kept.
 OpResult filletLines(Document& doc, EntityId line1, const Vec2d& pick1, EntityId line2,

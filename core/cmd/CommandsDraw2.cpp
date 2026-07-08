@@ -177,6 +177,22 @@ public:
         return Step::cont(InputKind::Point, QStringLiteral("Specify point:"));
     }
 
+    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        if (m_stage == 1) {
+            StrokePrimitive s; // rubber major axis
+            s.points = {m_center * 2.0 - cursor, cursor};
+            out.strokes.push_back(std::move(s));
+        } else if (m_stage == 2) {
+            const double major = m_major.length();
+            const double minorLen =
+                std::clamp(cursor.distanceTo(m_center), kGeomTol, major);
+            RenderContext rc;
+            rc.chordTolerance = 0.5;
+            EllipseEntity(m_center, m_major, minorLen / major).buildPrimitives(rc, out);
+        }
+    }
+
 private:
     int m_stage = 0;
     Vec2d m_center, m_major;
@@ -292,6 +308,18 @@ public:
         default:
             return Step::cancelled();
         }
+    }
+
+    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        if (m_fit.empty())
+            return;
+        SplineEntity s;
+        s.fitPoints = m_fit;
+        s.fitPoints.push_back(cursor);
+        RenderContext rc;
+        rc.chordTolerance = 0.5;
+        s.buildPrimitives(rc, out);
     }
 
 private:

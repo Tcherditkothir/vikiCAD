@@ -176,6 +176,29 @@ public:
         }
     }
 
+    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        if (m_stage != 4) // preview only once the parameters are set
+            return;
+        const std::vector<Vec2d> pts = gear::profile(m_p, cursor, 0.1);
+        if (pts.size() < 4)
+            return;
+        StrokePrimitive s;
+        s.points = pts;
+        s.closed = true;
+        out.strokes.push_back(std::move(s));
+        if (m_p.boreDiameter > 0.0) {
+            StrokePrimitive b;
+            const double r = m_p.boreDiameter / 2.0;
+            for (int i = 0; i <= 48; ++i) {
+                const double a = 2.0 * M_PI * i / 48.0;
+                b.points.push_back(cursor + Vec2d{r * std::cos(a), r * std::sin(a)});
+            }
+            b.closed = true;
+            out.strokes.push_back(std::move(b));
+        }
+    }
+
 private:
     int m_stage = 0;
     gear::GearParams m_p;

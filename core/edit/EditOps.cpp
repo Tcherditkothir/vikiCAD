@@ -358,13 +358,20 @@ OpResult extendEntity(Document& doc, EntityId target, std::vector<EntityId> boun
 
 // ---- OFFSET -------------------------------------------------------------------
 
-OpResult offsetEntity(Document& doc, EntityId source, double distance, const Vec2d& sidePick)
+std::unique_ptr<Entity> offsetGeometry(const Document& doc, EntityId source,
+                                       double distance, const Vec2d& sidePick,
+                                       QString* err)
 {
+    const auto fail = [&](const QString& m) -> std::unique_ptr<Entity> {
+        if (err)
+            *err = m;
+        return nullptr;
+    };
     const Entity* e = doc.entity(source);
     if (!e)
-        return {false, QStringLiteral("no such entity")};
+        return fail(QStringLiteral("no such entity"));
     if (distance <= kGeomTol)
-        return {false, QStringLiteral("offset distance must be positive")};
+        return fail(QStringLiteral("offset distance must be positive"));
 
     std::unique_ptr<Entity> made;
 
@@ -381,23 +388,22 @@ OpResult offsetEntity(Document& doc, EntityId source, double distance, const Vec
         const bool outside = sidePick.distanceTo(c->center()) > c->radius();
         const double r = c->radius() + (outside ? distance : -distance);
         if (r <= kGeomTol)
-            return {false, QStringLiteral("offset collapses the circle")};
+            return fail(QStringLiteral("offset collapses the circle"));
         made = std::make_unique<CircleEntity>(c->center(), r);
     } else if (const auto* arc = dynamic_cast<const ArcEntity*>(e)) {
         const bool outside = sidePick.distanceTo(arc->center()) > arc->radius();
         const double r = arc->radius() + (outside ? distance : -distance);
         if (r <= kGeomTol)
-            return {false, QStringLiteral("offset collapses the arc")};
+            return fail(QStringLiteral("offset collapses the arc"));
         made = std::make_unique<ArcEntity>(arc->center(), r, arc->startAngle(), arc->sweep());
     } else if (const auto* pl = dynamic_cast<const PolylineEntity*>(e)) {
         for (const PolyVertex& v : pl->vertices())
             if (!nearZero(v.bulge))
-                return {false,
-                        QStringLiteral("OFFSET of arc-segment polylines is not supported "
-                                       "yet — EXPLODE first")};
+                return fail(QStringLiteral("OFFSET of arc-segment polylines is not supported "
+                                   "yet — EXPLODE first"));
         const auto& vs = pl->vertices();
         if (vs.size() < 2)
-            return {false, QStringLiteral("degenerate polyline")};
+            return fail(QStringLiteral("degenerate polyline"));
         // Side: sign against the nearest segment.
         double bestDist = std::numeric_limits<double>::max();
         double side = 1.0;
@@ -436,10 +442,20 @@ OpResult offsetEntity(Document& doc, EntityId source, double distance, const Vec
         }
         made = std::make_unique<PolylineEntity>(std::move(out), pl->isClosed());
     } else {
-        return {false, QStringLiteral("OFFSET does not support this entity type yet")};
+        return fail(QStringLiteral("OFFSET does not support this entity type yet"));
     }
 
-    copyStyle(*e, *made);
+    return made;
+}
+
+OpResult offsetEntity(Document& doc, EntityId source, double distance, const Vec2d& sidePick)
+{
+    QString err;
+    auto made = offsetGeometry(doc, source, distance, sidePick, &err);
+    if (!made)
+        return {false, err.isEmpty() ? QStringLiteral("offset failed") : err};
+    if (const Entity* e = doc.entity(source))
+        copyStyle(*e, *made);
     doc.addEntity(std::move(made));
     return {true, {}};
 }
