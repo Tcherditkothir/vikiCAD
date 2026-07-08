@@ -106,12 +106,23 @@ TopoDS_Shape SolidEntity::shapeFromBytes(const QByteArray& bytes)
     return shape;
 }
 
+void SolidEntity::applyTrsf(const gp_Trsf& t)
+{
+    if (m_shape.IsNull())
+        return;
+    BRepBuilderAPI_Transform op(m_shape, t, /*copy=*/true);
+    if (op.IsDone())
+        setShape(op.Shape());
+}
+
 void SolidEntity::geomToJson(QJsonObject& obj) const
 {
     // BREP as base64: the same serializer feeds the undo journal and the
     // native file. Compact enough at this document scale (zstd deferred).
     obj[QStringLiteral("brep")] =
         QString::fromLatin1(shapeToBytes(m_shape).toBase64());
+    if (!component.isEmpty())
+        obj[QStringLiteral("component")] = component;
 }
 
 void SolidEntity::geomFromJson(const QJsonObject& obj)
@@ -120,6 +131,7 @@ void SolidEntity::geomFromJson(const QJsonObject& obj)
         QByteArray::fromBase64(obj[QStringLiteral("brep")].toString().toLatin1());
     if (!bytes.isEmpty())
         setShape(shapeFromBytes(bytes));
+    component = obj[QStringLiteral("component")].toString();
 }
 
 } // namespace viki

@@ -33,9 +33,13 @@
 #include "io/QueryJson.h"
 #include "ipc/RpcServer.h"
 #include "occview/OcctViewWidget.h"
+#include "panels/AssemblyPanel.h"
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
+#include "solid/SolidEntity.h"
+
+#include <QFileInfo>
 #include "panels/ToolPanels.h"
 
 namespace viki {
@@ -77,6 +81,20 @@ MainWindow::MainWindow()
                            QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, propsDock);
 
+    m_assemblyPanel = new AssemblyPanel(this);
+    auto* asmDock = new QDockWidget(QStringLiteral("Assembly"), this);
+    asmDock->setObjectName(QStringLiteral("assemblyDock"));
+    asmDock->setWidget(m_assemblyPanel);
+    asmDock->setFeatures(QDockWidget::DockWidgetMovable |
+                         QDockWidget::DockWidgetFloatable |
+                         QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, asmDock);
+    connect(m_assemblyPanel, &AssemblyPanel::selectionChanged, this, [this] {
+        m_canvas->markDocumentDirty();
+        if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+            m_occtView->refreshFrom(*m_doc);
+    });
+
     // When a panel is torn off (floating) give it real window chrome so it can
     // be maximized / full-screened, not just a frameless floating box.
     const auto makeFloatMaximizable = [](QDockWidget* dock) {
@@ -98,6 +116,7 @@ MainWindow::MainWindow()
     auto* viewMenu0 = new QMenu(QStringLiteral("&View"), this);
     viewMenu0->addAction(layerDock->toggleViewAction());
     viewMenu0->addAction(propsDock->toggleViewAction());
+    viewMenu0->addAction(asmDock->toggleViewAction());
     viewMenu0->addAction(commandDock->toggleViewAction());
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->addAction(QStringLiteral("&New"), QKeySequence::New, this, &MainWindow::newFile);
@@ -110,8 +129,10 @@ MainWindow::MainWindow()
     fileMenu->addSeparator();
 #ifdef VIKICAD_HAS_DXF
     fileMenu->addAction(QStringLiteral("&Import DXF/DWG..."), this, &MainWindow::importDxfFile);
-    fileMenu->addSeparator();
 #endif
+    fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
+                        &MainWindow::insertStepComponent);
+    fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     menuBar()->addMenu(viewMenu0);
 
@@ -369,6 +390,13 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                 {QStringLiteral("is3d"),
                  m_3dButton ? m_3dButton->isChecked() : false}};
     }
+    if (method == QLatin1String("insertstep")) {
+        QString error;
+        if (!insertStepFile(params[QStringLiteral("path")].toString(), error))
+            return {{QStringLiteral("error"),
+                     error.isEmpty() ? QStringLiteral("insert failed") : error}};
+        return {{QStringLiteral("ok"), true}};
+    }
     if (method == QLatin1String("screenshot")) {
         const QString path = params[QStringLiteral("path")].toString();
         if (path.isEmpty())
@@ -433,7 +461,11 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_canvas->attach(m_doc.get(), m_processor.get(), &m_selection);
     m_layerPanel->attach(m_doc.get());
     m_propsPanel->attach(m_doc.get(), &m_selection);
-    m_doc->addChangeListener([this] { m_layerPanel->refresh(); });
+    m_assemblyPanel->attach(m_doc.get(), &m_selection);
+    m_doc->addChangeListener([this] {
+        m_layerPanel->refresh();
+        m_assemblyPanel->refresh();
+    });
     m_canvas->zoomExtents();
     updateWindowTitle();
     updateUnitsButton();
@@ -570,6 +602,11 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
         if (!r.ok || !doc)
             return reportError(r.error.isEmpty() ? QStringLiteral("STEP import failed")
                                                  : r.error);
+        // Tag the solids as a named component (so it shows in the assembly).
+        const QString comp = QFileInfo(path).completeBaseName();
+        for (const EntityId id : doc->drawOrder())
+            if (auto* s = dynamic_cast<SolidEntity*>(doc->entity(id)))
+                s->component = comp;
         adoptDocument(std::move(doc));
         m_commandBar->appendHistory(
             QStringLiteral("Imported %1 solids from %2 (%3 notes)")
@@ -660,6 +697,60 @@ void MainWindow::saveFileAs()
     if (!path.endsWith(QLatin1String(".vkd")))
         path += QLatin1String(".vkd");
     saveTo(path);
+}
+
+void MainWindow::insertStepComponent()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Insert STEP as component"), {},
+        QStringLiteral("STEP (*.step *.stp);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    QString error;
+    if (!insertStepFile(path, error))
+        QMessageBox::warning(this, QStringLiteral("Insert failed"),
+                             error.isEmpty() ? QStringLiteral("STEP import failed")
+                                             : error);
+}
+
+bool MainWindow::insertStepFile(const QString& path, QString& error)
+{
+    if (!m_doc)
+        return false;
+    std::unique_ptr<Document> tmp;
+    const StepResult r = importStep(path, tmp);
+    if (!r.ok || !tmp) {
+        error = r.error;
+        return false;
+    }
+    // Component name = the file's base name; each imported solid gets tagged.
+    const QString comp = QFileInfo(path).completeBaseName();
+    int added = 0;
+    m_doc->beginTransaction(QStringLiteral("INSERT STEP"));
+    for (const EntityId id : tmp->drawOrder()) {
+        const Entity* e = tmp->entity(id);
+        if (!e)
+            continue;
+        auto copy = e->clone();
+        if (auto* solid = dynamic_cast<SolidEntity*>(copy.get()))
+            solid->component = comp;
+        m_doc->addEntity(std::move(copy));
+        ++added;
+    }
+    m_doc->commitTransaction();
+    m_commandBar->appendHistory(
+        QStringLiteral("Inserted component '%1' (%2 solid%3)")
+            .arg(comp).arg(added).arg(added == 1 ? QString() : QStringLiteral("s")));
+    // Sync the 3D view exactly once (a double refresh crashed some GL drivers).
+    const bool already3d = m_3dButton && m_3dButton->isChecked();
+    if (documentIsSolidsOnly() && !already3d)
+        setView3D(true); // switches AND refreshes
+    else if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+        m_occtView->refreshFrom(*m_doc);
+    m_canvas->markDocumentDirty();
+    if (m_assemblyPanel)
+        m_assemblyPanel->refresh();
+    return true;
 }
 
 void MainWindow::editEntity(EntityId id)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <TopoDS_Shape.hxx>
+#include <gp_Trsf.hxx>
 
 #include "doc/Entity.h"
 
@@ -26,6 +27,13 @@ public:
 
     const TopoDS_Shape& shape() const { return m_shape; }
     void setShape(const TopoDS_Shape& shape);
+
+    // Apply a full 3D placement to the shape (MOVE3D/ROTATE3D, assembly
+    // positioning). Unlike transform(Xform2d) this is not limited to XY.
+    void applyTrsf(const gp_Trsf& t);
+
+    // Assembly component name (empty = ungrouped). Names a part in the tree.
+    QString component;
 
     // Serialized BREP (BinTools binary stream).
     static QByteArray shapeToBytes(const TopoDS_Shape& shape);

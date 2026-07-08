@@ -532,6 +532,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerSolidFinishCommands(p);
     registerMeasureCommands(p);
     registerGearCommands(p);
+    registerAssemblyCommands(p);
 }
 
 } // namespace viki

@@ -19,6 +19,7 @@ class CommandBar;
 class OcctViewWidget;
 class LayerPanel;
 class PropertiesPanel;
+class AssemblyPanel;
 class RpcServer;
 
 class MainWindow : public QMainWindow {
@@ -38,12 +39,14 @@ private slots:
     void saveFile();
     void saveFileAs();
     void importDxfFile();
+    void insertStepComponent(); // additive STEP import into the current doc (menu)
     void toggleUnits();
 
 private:
     // Load any supported drawing by extension (.vkd/.dxf/.dwg/.step). On
     // failure, shows a dialog when interactive, else logs to the command bar.
     bool loadFile(const QString& path, bool interactive);
+    bool insertStepFile(const QString& path, QString& error); // additive, shared
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();
@@ -60,6 +63,7 @@ private:
     CommandBar* m_commandBar = nullptr;
     LayerPanel* m_layerPanel = nullptr;
     PropertiesPanel* m_propsPanel = nullptr;
+    AssemblyPanel* m_assemblyPanel = nullptr;
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
     QToolButton* m_3dButton = nullptr;
