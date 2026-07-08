@@ -40,6 +40,9 @@ public:
     const InputRequest& currentRequest() const { return m_currentRequest; }
     void cancelActive();
 
+    // All registered command names and aliases, sorted — for autocompletion.
+    QStringList commandNames() const;
+
     CommandContext& ctx() { return m_ctx; }
 
 private:

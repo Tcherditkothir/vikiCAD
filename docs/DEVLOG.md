@@ -203,3 +203,10 @@ Lot de retours Lex traités :
 - **Bug corrigé** : `insertStepFile` sans `return` → UB → crash SIGILL dans le pilote GL. + double refresh de la vue 3D évité (crashait certains pilotes). Return ajouté, refresh unique.
 
 Suite : contrainte d'assemblage (mate/align), highlight persistant de la sélection, positionnement 3D interactif (gizmo).
+
+## 2026-07-08 (suite 4) — 3D : pick HiDPI, surbrillance, apparence, autocomplétion
+
+- **Pick 3D en HiDPI** (retour Lex, écran KDE ×1.4) : OCCT rend en pixels physiques, Qt donne les clics en pixels logiques → MoveTo cherchait à côté (« nothing under cursor »). `devicePos()` convertit via le rapport taille-fenêtre-OCCT / taille-widget-logique (robuste à tout facteur). Survol + clic + orbite + pan passent par là.
+- **Surbrillance de sélection** : couleurs vives distinctes — cyan au survol, orange à la sélection (le gris par défaut était invisible sur une pièce métal ombrée).
+- **Couleur + transparence des solides** : champ `transparency` sur SolidEntity (persisté) ; la vue OCCT applique la couleur résolue de l'entité + la transparence ; commande **TRANSPARENCY** (alias TRANS, %) ; le panneau Propriétés édite `transparency` et `component` (le blob BREP base64 est masqué) ; les éditions de couleur/transparence rafraîchissent la 3D. Validé : pièce à 40 % laisse voir l'intérieur.
+- **Autocomplétion** : `CommandProcessor::commandNames()` alimente un QCompleter (MatchContains, insensible à la casse) dans la barre de commande — taper « 3D » liste MOVE3D/ROTATE3D/FILLET3D, etc. Découvrabilité des commandes (dont 3D) réglée.

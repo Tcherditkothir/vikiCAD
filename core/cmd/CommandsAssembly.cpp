@@ -1,5 +1,7 @@
 #include "CommandProcessor.h"
 
+#include <algorithm>
+
 #include <gp_Ax1.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
@@ -165,8 +167,77 @@ private:
     double m_angle = 90.0;
 };
 
+// TRANSPARENCY <percent> <solids> — 0 = opaque, 100 = (nearly) invisible.
+class TransparencyCommand : public Command {
+public:
+    const char* name() const override { return "TRANSPARENCY"; }
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::Number,
+                          QStringLiteral("Transparency %% (0-95) <50>:"));
+    }
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (!m_havePct) {
+            if (v.kind == InputValue::Kind::Number)
+                m_pct = std::clamp(v.number, 0.0, 95.0);
+            else if (v.kind != InputValue::Kind::Finish)
+                return Step::cancelled();
+            m_havePct = true;
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select solids (Enter to finish):"));
+        }
+        switch (v.kind) {
+        case InputValue::Kind::EntitySet:
+            m_ids = v.entitySet;
+            return apply(ctx);
+        case InputValue::Kind::EntityRef:
+            m_ids.push_back(v.entityRef);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select solids (Enter to finish):"));
+        case InputValue::Kind::Finish:
+            return apply(ctx);
+        default:
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select solids (Enter to finish):"));
+        }
+    }
+
+private:
+    Step apply(CommandContext& ctx)
+    {
+        if (m_ids.empty())
+            return Step::cancelled();
+        ctx.doc().beginTransaction(QStringLiteral("TRANSPARENCY"));
+        int n = 0;
+        for (const EntityId id : m_ids) {
+            if (!dynamic_cast<const SolidEntity*>(ctx.doc().entity(id)))
+                continue;
+            if (auto* s = dynamic_cast<SolidEntity*>(ctx.doc().beginModify(id))) {
+                s->transparency = m_pct / 100.0;
+                ctx.doc().endModify(id);
+                ++n;
+            }
+        }
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("%1 solid(s) set to %2%% transparent")
+                     .arg(n).arg(int(m_pct)));
+        return Step::done();
+    }
+
+    bool m_havePct = false;
+    double m_pct = 50.0;
+    std::vector<EntityId> m_ids;
+};
+
 std::unique_ptr<Command> makeMove3D() { return std::make_unique<Move3DCommand>(); }
 std::unique_ptr<Command> makeRotate3D() { return std::make_unique<Rotate3DCommand>(); }
+std::unique_ptr<Command> makeTransparency()
+{
+    return std::make_unique<TransparencyCommand>();
+}
 
 } // namespace
 
@@ -174,6 +245,7 @@ void registerAssemblyCommands(CommandProcessor& p)
 {
     p.registerCommand(&makeMove3D, {QStringLiteral("M3")});
     p.registerCommand(&makeRotate3D, {QStringLiteral("RO3")});
+    p.registerCommand(&makeTransparency, {QStringLiteral("TRANS")});
 }
 
 } // namespace viki

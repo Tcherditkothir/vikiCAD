@@ -34,6 +34,9 @@ public:
 
     // Assembly component name (empty = ungrouped). Names a part in the tree.
     QString component;
+    // 3D appearance: 0 = opaque, 1 = fully transparent. Color uses the base
+    // Entity color (ByLayer or explicit rgb).
+    double transparency = 0.0;
 
     // Serialized BREP (BinTools binary stream).
     static QByteArray shapeToBytes(const TopoDS_Shape& shape);

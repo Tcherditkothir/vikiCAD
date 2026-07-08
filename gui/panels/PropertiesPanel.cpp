@@ -126,6 +126,8 @@ void PropertiesPanel::rebuildGeometryTable()
             addRow(QStringLiteral("type"), QLatin1String(e->typeName()), false);
             addRow(QStringLiteral("id"), QString::number(e->id()), false);
             for (auto it = geom.begin(); it != geom.end(); ++it) {
+                if (it.key() == QLatin1String("brep"))
+                    continue; // huge base64 BREP blob — not human-editable
                 const QJsonValue v = it.value();
                 if (v.isDouble())
                     addRow(it.key(), QString::number(v.toDouble(), 'f', 4), true);

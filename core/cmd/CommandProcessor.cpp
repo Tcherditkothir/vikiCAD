@@ -190,6 +190,18 @@ void CommandProcessor::cancelActive()
     finishCommand(true);
 }
 
+QStringList CommandProcessor::commandNames() const
+{
+    QStringList names;
+    names.reserve(int(m_registry.size()));
+    for (const auto& [name, factory] : m_registry) {
+        (void)factory;
+        names.push_back(name);
+    }
+    names.sort();
+    return names;
+}
+
 void CommandProcessor::finishCommand(bool cancelled)
 {
     // Safety net: a command must not leak an open transaction.

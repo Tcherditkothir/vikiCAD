@@ -1,11 +1,15 @@
 #include "OcctViewWidget.h"
 
+#include <algorithm>
+#include <cstdint>
+
 #include <QMouseEvent>
 #include <QStringList>
 #include <QWheelEvent>
 
 #include <AIS_Shape.hxx>
 #include <Aspect_Window.hxx>
+#include <Prs3d_Drawer.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Quantity_Color.hxx>
@@ -48,6 +52,13 @@ void OcctViewWidget::initViewer()
         m_view->SetBackgroundColor(Quantity_Color(0.09, 0.10, 0.11, Quantity_TOC_RGB));
         m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.08);
         m_view->SetProj(V3d_XposYnegZpos); // isometric-ish start
+        // Bold, distinct highlight colours: cyan on hover, orange when picked
+        // (the default grey is nearly invisible on a shaded metal part).
+        m_context->HighlightStyle()->SetColor(Quantity_Color(0.20, 0.80, 1.0,
+                                                             Quantity_TOC_RGB));
+        m_context->SelectionStyle()->SetColor(Quantity_Color(1.0, 0.55, 0.0,
+                                                             Quantity_TOC_RGB));
+        m_context->SelectionStyle()->SetTransparency(0.0f);
     } catch (...) {
         // No GL/X available (offscreen runs): degrade gracefully.
         m_initFailed = true;
@@ -69,7 +80,18 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         if (!solid || solid->shape().IsNull())
             continue;
         Handle(AIS_Shape) ais = new AIS_Shape(solid->shape());
-        ais->SetColor(Quantity_Color(0.72, 0.75, 0.78, Quantity_TOC_RGB));
+        const uint32_t rgb = doc.resolveColor(*solid);
+        // White (default drawing colour) reads as a flat metal grey in 3D.
+        const Quantity_Color col =
+            rgb == 0xFFFFFF
+                ? Quantity_Color(0.72, 0.75, 0.78, Quantity_TOC_RGB)
+                : Quantity_Color(((rgb >> 16) & 0xFF) / 255.0,
+                                 ((rgb >> 8) & 0xFF) / 255.0,
+                                 (rgb & 0xFF) / 255.0, Quantity_TOC_RGB);
+        ais->SetColor(col);
+        if (solid->transparency > 0.0)
+            ais->SetTransparency(Standard_ShortReal(
+                std::min(solid->transparency, 0.95)));
         m_context->Display(ais, AIS_Shaded, 0, false);
         // Selectable/highlightable on hover: whole solid, faces and edges.
         m_context->Activate(ais, 0); // whole shape

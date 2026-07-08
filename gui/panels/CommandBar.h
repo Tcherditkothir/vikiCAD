@@ -7,6 +7,7 @@
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QCompleter;
 
 namespace viki {
 
@@ -19,6 +20,8 @@ public:
     void appendHistory(const QString& text);
     void setPrompt(const QString& prompt);
     void focusInput();
+    // Command names/aliases for the autocompletion dropdown.
+    void setCompletions(const QStringList& names);
     // AutoCAD-style: typing anywhere lands here (focus + insert the chars).
     void beginTyping(const QString& seed);
     // When the predicate returns true, Space submits like Enter (it stays a
@@ -43,6 +46,7 @@ private:
     QPlainTextEdit* m_history = nullptr;
     QLabel* m_prompt = nullptr;
     QLineEdit* m_input = nullptr;
+    QCompleter* m_completer = nullptr;
     std::function<bool()> m_spaceSubmits;
 };
 

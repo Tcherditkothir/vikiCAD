@@ -121,8 +121,10 @@ void SolidEntity::geomToJson(QJsonObject& obj) const
     // native file. Compact enough at this document scale (zstd deferred).
     obj[QStringLiteral("brep")] =
         QString::fromLatin1(shapeToBytes(m_shape).toBase64());
-    if (!component.isEmpty())
-        obj[QStringLiteral("component")] = component;
+    // Always emitted so the properties panel shows editable rows even at the
+    // default values (empty component / 0 transparency).
+    obj[QStringLiteral("component")] = component;
+    obj[QStringLiteral("transparency")] = transparency;
 }
 
 void SolidEntity::geomFromJson(const QJsonObject& obj)
@@ -132,6 +134,7 @@ void SolidEntity::geomFromJson(const QJsonObject& obj)
     if (!bytes.isEmpty())
         setShape(shapeFromBytes(bytes));
     component = obj[QStringLiteral("component")].toString();
+    transparency = obj[QStringLiteral("transparency")].toDouble(0.0);
 }
 
 } // namespace viki

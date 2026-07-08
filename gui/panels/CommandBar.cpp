@@ -1,9 +1,11 @@
 #include "CommandBar.h"
 
+#include <QCompleter>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QStringListModel>
 #include <QVBoxLayout>
 
 namespace viki {
@@ -41,6 +43,22 @@ CommandBar::CommandBar(QWidget* parent)
 
     connect(m_input, &QLineEdit::returnPressed, this, [this] { submitLine(); });
     m_input->installEventFilter(this);
+}
+
+void CommandBar::setCompletions(const QStringList& names)
+{
+    if (!m_completer) {
+        m_completer = new QCompleter(this);
+        m_completer->setCaseSensitivity(Qt::CaseInsensitive);
+        m_completer->setCompletionMode(QCompleter::PopupCompletion);
+        // MatchContains so "3D" surfaces MOVE3D/ROTATE3D/FILLET3D, etc.
+        m_completer->setFilterMode(Qt::MatchContains);
+        m_completer->setModel(new QStringListModel(names, m_completer));
+        m_input->setCompleter(m_completer);
+    } else {
+        if (auto* model = qobject_cast<QStringListModel*>(m_completer->model()))
+            model->setStringList(names);
+    }
 }
 
 void CommandBar::submitLine()

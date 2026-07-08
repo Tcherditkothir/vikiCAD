@@ -268,6 +268,9 @@ MainWindow::MainWindow()
     });
     connect(m_propsPanel, &PropertiesPanel::propertiesApplied, this, [this] {
         m_canvas->markDocumentDirty();
+        // Colour / transparency edits must reflect in the 3D view too.
+        if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+            m_occtView->refreshFrom(*m_doc);
     });
 
     adoptDocument(std::make_unique<Document>());
@@ -458,6 +461,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_ctx = std::make_unique<CommandContext>(*m_doc, m_selection, m_canvas);
     m_processor = std::make_unique<CommandProcessor>(*m_ctx);
     registerBuiltinCommands(*m_processor);
+    m_commandBar->setCompletions(m_processor->commandNames());
     m_canvas->attach(m_doc.get(), m_processor.get(), &m_selection);
     m_layerPanel->attach(m_doc.get());
     m_propsPanel->attach(m_doc.get(), &m_selection);
