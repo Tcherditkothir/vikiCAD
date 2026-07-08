@@ -36,7 +36,22 @@ Session 2 (nouveau lot de retours) :
     dans `core/geom/GearGeometry`.
 12. **Aperçus live** ajoutés : OFFSET, GEAR, ELLIPSE, SPLINE.
 
+Session 3 (3D interactif) :
+13. **Ouvrir DXF/DWG/STEP directement** via File>Open (`loadFile` aiguille par
+    extension) + verbe IPC `open` unifié.
+14. **STEP → vue 3D directe** (`documentIsSolidsOnly` → bascule auto) ; bouton
+    3D mémorisé ; verbe IPC `view3d` ; capture 3D via `V3d_View::Dump`.
+15. **Sélection 3D interactive** : highlight au survol (AIS MoveTo, modes
+    solid/face/edge) + clic = sélection (signal `picked`).
+16. **Assemblage** : champ `component` sur SolidEntity ; import STEP additif
+    (`Insert STEP as component` + IPC `insertstep`) ; panneau Assembly (arbre) ;
+    commandes MOVE3D / ROTATE3D (`SolidEntity::applyTrsf`). Leçon : un `return`
+    manquant dans insertStepFile → SIGILL dans le pilote GL ; double refresh 3D
+    aussi à éviter.
+
 ## Backlog encore ouvert (suite)
+- 3D : contrainte d'assemblage (mate/align), gizmo de positionnement 3D,
+  highlight persistant de la sélection, MOVE3D interactif (pointer un point 3D).
 - Aperçus FILLET/CHAMFER/TRIM/EXTEND (survol/sélection).
 - MTEXT word-wrap par largeur de colonne ; dimpost (suffixe DIMSTYLE code 3).
 - Snap nearest/tangent/node ; tolérance de snap configurable.
