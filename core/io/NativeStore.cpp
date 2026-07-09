@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 
 #include "doc/EntityFactory.h"
+#include "solid/SolidOps.h"
 
 namespace viki {
 namespace {
@@ -127,6 +128,18 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
                                                        : QStringLiteral("mm"));
     putMeta("next_id", QString::number(doc.nextId()));
     putMeta("current_layer", QString::number(doc.currentLayer()));
+    {
+        // Persist the current work plane as nine full-precision doubles.
+        const WorkPlane& wp = documentWorkplane(doc);
+        const auto num = [](double d) {
+            return QString::number(d, 'g', 17);
+        };
+        putMeta("workplane",
+                QStringLiteral("%1 %2 %3 %4 %5 %6 %7 %8 %9")
+                    .arg(num(wp.origin.X()), num(wp.origin.Y()), num(wp.origin.Z()),
+                         num(wp.normal.X()), num(wp.normal.Y()), num(wp.normal.Z()),
+                         num(wp.xDir.X()), num(wp.xDir.Y()), num(wp.xDir.Z())));
+    }
     sqlite3_finalize(stmt);
 
     sqlite3_prepare_v2(db.get(),
@@ -305,6 +318,23 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
                 doc->setNextId(value.toLongLong());
             else if (key == QLatin1String("current_layer"))
                 doc->setCurrentLayer(value.toLongLong());
+            else if (key == QLatin1String("workplane")) {
+                const QStringList parts = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() == 9) {
+                    bool ok = true;
+                    double c[9];
+                    for (int i = 0; i < 9 && ok; ++i)
+                        c[i] = parts[i].toDouble(&ok);
+                    // Only accept non-degenerate direction vectors; gp_Dir throws
+                    // on a zero-magnitude vector, so guard before constructing.
+                    if (ok && (c[3] * c[3] + c[4] * c[4] + c[5] * c[5]) > 1e-18 &&
+                        (c[6] * c[6] + c[7] * c[7] + c[8] * c[8]) > 1e-18) {
+                        documentWorkplane(*doc) =
+                            WorkPlane{gp_Pnt(c[0], c[1], c[2]), gp_Dir(c[3], c[4], c[5]),
+                                      gp_Dir(c[6], c[7], c[8])};
+                    }
+                }
+            }
         }
         sqlite3_finalize(stmt);
     }

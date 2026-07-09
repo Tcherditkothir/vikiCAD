@@ -34,6 +34,7 @@ public:
                 return Step::cancelled();
             documentWorkplane(ctx.doc()) = WorkPlane{gp_Pnt(0, 0, v.number),
                                                      gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+            ctx.doc().clearExtraSnapPoints(); // drop any sketch-on-face reference snaps
             ctx.info(QStringLiteral("work plane: XY at Z=%1").arg(v.number));
             return Step::done();
         }

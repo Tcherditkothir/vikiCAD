@@ -6,6 +6,7 @@
 
 #include "doc/Entities.h"
 #include "io/NativeStore.h"
+#include "solid/SolidOps.h"
 
 using namespace viki;
 using Catch::Approx;
@@ -49,6 +50,41 @@ TEST_CASE("native store save/load round-trip", "[store]")
     loaded->commitTransaction();
     REQUIRE(next > circleId);
     REQUIRE(next > lineId);
+}
+
+TEST_CASE("native store persists the work plane", "[store]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("wp.vkd"));
+
+    // A non-default, non-axis-aligned frame so a silent fallback to world XY
+    // could not accidentally pass. origin offset, normal +xDir orthonormal.
+    const WorkPlane want{gp_Pnt(12.5, -3.0, 100.0),
+                         gp_Dir(0.0, 0.0, 1.0),
+                         gp_Dir(0.6, 0.8, 0.0)};
+
+    {
+        Document doc;
+        documentWorkplane(doc) = want;
+        QString error;
+        REQUIRE(NativeStore::save(doc, path, error));
+    }
+
+    QString error;
+    const auto loaded = NativeStore::load(path, error);
+    REQUIRE(loaded);
+    const WorkPlane& got = documentWorkplane(*loaded);
+
+    REQUIRE(got.origin.X() == Approx(want.origin.X()).margin(1e-9));
+    REQUIRE(got.origin.Y() == Approx(want.origin.Y()).margin(1e-9));
+    REQUIRE(got.origin.Z() == Approx(want.origin.Z()).margin(1e-9));
+    REQUIRE(got.normal.X() == Approx(want.normal.X()).margin(1e-9));
+    REQUIRE(got.normal.Y() == Approx(want.normal.Y()).margin(1e-9));
+    REQUIRE(got.normal.Z() == Approx(want.normal.Z()).margin(1e-9));
+    REQUIRE(got.xDir.X() == Approx(want.xDir.X()).margin(1e-9));
+    REQUIRE(got.xDir.Y() == Approx(want.xDir.Y()).margin(1e-9));
+    REQUIRE(got.xDir.Z() == Approx(want.xDir.Z()).margin(1e-9));
 }
 
 TEST_CASE("load rejects a non-vkd file", "[store]")
