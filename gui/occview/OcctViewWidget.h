@@ -31,6 +31,12 @@ public:
 
     // The face last clicked (empty if none / a whole solid was picked).
     const TopoDS_Shape& pickedFace() const { return m_pickedFace; }
+    EntityId pickedSolid() const { return m_pickedSolid; }
+    // Select at physical-pixel coords (shared by the mouse and the pick3d IPC
+    // verb); returns a human-readable description of what got selected.
+    QString pickAtPhysical(int px, int py);
+    // Pick at the physical centre of the view (for headless verification).
+    QString pickCenter();
 
 signals:
     // Emitted on pick: a short human-readable description of what's selected.

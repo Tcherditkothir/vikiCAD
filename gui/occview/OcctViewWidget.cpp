@@ -13,6 +13,7 @@
 #include <AIS_Shape.hxx>
 #include <Aspect_Window.hxx>
 #include <Prs3d_Drawer.hxx>
+#include <Prs3d_TypeOfHighlight.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Quantity_Color.hxx>
@@ -55,13 +56,18 @@ void OcctViewWidget::initViewer()
         m_view->SetBackgroundColor(Quantity_Color(0.09, 0.10, 0.11, Quantity_TOC_RGB));
         m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.08);
         m_view->SetProj(V3d_XposYnegZpos); // isometric-ish start
-        // Bold, distinct highlight colours: cyan on hover, orange when picked
-        // (the default grey is nearly invisible on a shaded metal part).
-        m_context->HighlightStyle()->SetColor(Quantity_Color(0.20, 0.80, 1.0,
-                                                             Quantity_TOC_RGB));
-        m_context->SelectionStyle()->SetColor(Quantity_Color(1.0, 0.55, 0.0,
-                                                             Quantity_TOC_RGB));
-        m_context->SelectionStyle()->SetTransparency(0.0f);
+        // Bold, distinct highlight colours: cyan on hover, orange when picked.
+        // Faces/edges are SUB-shapes, so the Local* highlight types must be
+        // set too — setting only Selected/Dynamic leaves them the faint grey
+        // default (why a picked face didn't turn orange).
+        const Quantity_Color cyan(0.20, 0.80, 1.0, Quantity_TOC_RGB);
+        const Quantity_Color orange(1.0, 0.55, 0.0, Quantity_TOC_RGB);
+        m_context->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(cyan);
+        m_context->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(cyan);
+        m_context->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(orange);
+        m_context->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(orange);
+        m_context->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)
+            ->SetTransparency(0.0f);
     } catch (...) {
         // No GL/X available (offscreen runs): degrade gracefully.
         m_initFailed = true;
@@ -182,15 +188,11 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
     m_lastPos = event->pos();
 }
 
-void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
+QString OcctViewWidget::pickAtPhysical(int px, int py)
 {
-    if (m_view.IsNull() || m_context.IsNull() || event->button() != Qt::LeftButton)
-        return;
-    // A click (no meaningful drag) selects; a drag was an orbit.
-    if ((event->pos() - m_pressPos).manhattanLength() >= 4)
-        return;
-    const QPoint p = devicePos(event->pos());
-    m_context->MoveTo(p.x(), p.y(), m_view, Standard_False);
+    if (m_view.IsNull() || m_context.IsNull())
+        return QStringLiteral("3D: no view");
+    m_context->MoveTo(px, py, m_view, Standard_False);
     m_context->SelectDetected();
 
     m_pickedFace = TopoDS_Shape();
@@ -220,15 +222,36 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         default: ++solids; break;
         }
     }
+    // Show the selection highlight (the SelectionStyle colour) right away.
+    m_context->UpdateCurrentViewer();
     QStringList parts;
     if (solids) parts << QStringLiteral("%1 solid").arg(solids);
     if (faces) parts << QStringLiteral("%1 face").arg(faces);
     if (edges) parts << QStringLiteral("%1 edge").arg(edges);
     if (verts) parts << QStringLiteral("%1 vertex").arg(verts);
-    emit picked(parts.isEmpty() ? QStringLiteral("3D: nothing under cursor")
-                                : QStringLiteral("3D selected: %1")
-                                      .arg(parts.join(QStringLiteral(", "))));
-    m_view->Redraw();
+    return parts.isEmpty() ? QStringLiteral("3D: nothing under cursor")
+                           : QStringLiteral("3D selected: %1")
+                                 .arg(parts.join(QStringLiteral(", ")));
+}
+
+QString OcctViewWidget::pickCenter()
+{
+    if (m_view.IsNull() || m_view->Window().IsNull())
+        return QStringLiteral("3D: no view");
+    Standard_Integer w = 0, h = 0;
+    m_view->Window()->Size(w, h);
+    return pickAtPhysical(w / 2, h / 2);
+}
+
+void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_view.IsNull() || m_context.IsNull() || event->button() != Qt::LeftButton)
+        return;
+    // A click (no meaningful drag) selects; a drag was an orbit.
+    if ((event->pos() - m_pressPos).manhattanLength() >= 4)
+        return;
+    const QPoint p = devicePos(event->pos());
+    emit picked(pickAtPhysical(p.x(), p.y()));
 }
 
 void OcctViewWidget::wheelEvent(QWheelEvent* event)

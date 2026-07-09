@@ -348,6 +348,10 @@ int cmdConnect(const QStringList& args)
         params[QStringLiteral("path")] = args[1];
     else if (method == QLatin1String("view3d") && args.size() > 1)
         params[QStringLiteral("on")] = args[1] != QLatin1String("off");
+    else if (method == QLatin1String("pick3d") && args.size() > 2) {
+        params[QStringLiteral("x")] = args[1].toInt();
+        params[QStringLiteral("y")] = args[2].toInt();
+    }
 
     QLocalSocket socket;
     socket.connectToServer(QStringLiteral("vikicad"));

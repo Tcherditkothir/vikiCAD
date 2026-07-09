@@ -222,6 +222,16 @@ MainWindow::MainWindow()
     bindToggle(Qt::Key_F8, orthoBtn);
     bindToggle(Qt::Key_F10, polarBtn);
 
+    // Standard edit shortcuts (route to the UNDO/REDO commands).
+    const auto bindCommand = [this](const QKeySequence& key, const QString& cmd) {
+        auto* sc = new QShortcut(key, this);
+        sc->setContext(Qt::ApplicationShortcut);
+        connect(sc, &QShortcut::activated, this, [this, cmd] { onCommandEntered(cmd); });
+    };
+    bindCommand(QKeySequence::Undo, QStringLiteral("UNDO"));          // Ctrl+Z
+    bindCommand(QKeySequence::Redo, QStringLiteral("REDO"));          // Ctrl+Shift+Z
+    bindCommand(QKeySequence(QStringLiteral("Ctrl+Y")), QStringLiteral("REDO"));
+
     m_unitsBtn = new QToolButton(this);
     m_unitsBtn->setText(QStringLiteral("mm"));
     connect(m_unitsBtn, &QToolButton::clicked, this, &MainWindow::toggleUnits);
@@ -419,6 +429,16 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         return {{QStringLiteral("ok"), true},
                 {QStringLiteral("is3d"),
                  m_3dButton ? m_3dButton->isChecked() : false}};
+    }
+    if (method == QLatin1String("pick3d")) {
+        if (!m_occtView || m_viewStack->currentWidget() != m_occtView)
+            return {{QStringLiteral("error"), QStringLiteral("not in 3D view")}};
+        // Coords in physical view pixels; default to the view centre.
+        const int cx = params[QStringLiteral("x")].toInt(-1);
+        const int cy = params[QStringLiteral("y")].toInt(-1);
+        const QString info = (cx < 0 || cy < 0) ? m_occtView->pickCenter()
+                                                : m_occtView->pickAtPhysical(cx, cy);
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("picked"), info}};
     }
     if (method == QLatin1String("insertstep")) {
         QString error;
