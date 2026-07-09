@@ -50,7 +50,9 @@ private:
     bool m_awaitOffset = false;
 };
 
-// EXTRUDE height ids   (profile entities are consumed into the solid)
+// EXTRUDE height [New/Join/Cut/Symmetric] (target) ids
+// Numeric height first (before any selection), then the mode keyword. For
+// Join/Cut a target solid is picked; then the profile entities are consumed.
 class ExtrudeCommand : public Command {
 public:
     const char* name() const override { return "EXTRUDE"; }
@@ -68,25 +70,81 @@ public:
     {
         if (v.kind == InputValue::Kind::Cancel)
             return Step::cancelled();
-        if (!m_haveHeight) {
+        switch (m_stage) {
+        case 0: // height
             if (v.kind != InputValue::Kind::Number)
                 return Step::cancelled();
             m_height = v.number;
-            m_haveHeight = true;
+            m_stage = 1;
+            return Step::cont(InputKind::Keyword,
+                              QStringLiteral("Mode [New/Join/Cut/Symmetric] <New>:"));
+        case 1: // mode keyword (Finish / Enter keeps the default New)
+            if (v.kind == InputValue::Kind::Keyword) {
+                const QString k = v.text.toUpper();
+                // A bare id at the mode prompt (e.g. "EXTRUDE 20 1") means the
+                // user skipped the mode: default New and this is the first
+                // profile id. Keep the pre-modes call form working.
+                bool digits = !k.isEmpty();
+                for (const QChar c : k)
+                    digits = digits && c.isDigit();
+                if (digits) {
+                    m_mode = solidops::ExtrudeMode::NewBody;
+                    m_ids.push_back(k.toLongLong());
+                    m_stage = 3;
+                    return Step::cont(InputKind::EntitySet,
+                                      QStringLiteral("Select profiles:"));
+                }
+                if (k == QLatin1String("NEW") || k == QLatin1String("N"))
+                    m_mode = solidops::ExtrudeMode::NewBody;
+                else if (k == QLatin1String("JOIN") || k == QLatin1String("J"))
+                    m_mode = solidops::ExtrudeMode::Join;
+                else if (k == QLatin1String("CUT") || k == QLatin1String("C"))
+                    m_mode = solidops::ExtrudeMode::Cut;
+                else if (k == QLatin1String("SYMMETRIC") || k == QLatin1String("S"))
+                    m_mode = solidops::ExtrudeMode::Symmetric;
+                else
+                    return Step::cancelled();
+            } else if (v.kind != InputValue::Kind::Finish) {
+                return Step::cancelled();
+            }
+            if (m_mode == solidops::ExtrudeMode::Join ||
+                m_mode == solidops::ExtrudeMode::Cut) {
+                m_stage = 2; // ask for the target next
+                return Step::cont(InputKind::EntitySet,
+                                  QStringLiteral("Pick target solid:"));
+            }
+            m_stage = 3;
             if (!m_ids.empty())
                 return build(ctx);
             return Step::cont(InputKind::EntitySet,
                               QStringLiteral("Select profile entities:"));
-        }
-        switch (v.kind) {
-        case InputValue::Kind::EntitySet:
-            m_ids = v.entitySet;
-            return build(ctx);
-        case InputValue::Kind::EntityRef:
-            m_ids.push_back(v.entityRef);
-            return Step::cont(InputKind::EntitySet, QStringLiteral("Select profiles:"));
-        case InputValue::Kind::Finish:
-            return m_ids.empty() ? Step::cancelled() : build(ctx);
+        case 2: // target solid (Join/Cut only)
+            if (v.kind == InputValue::Kind::EntityRef)
+                m_target = v.entityRef;
+            else if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                m_target = v.entitySet.front();
+            else
+                return Step::cancelled();
+            m_stage = 3;
+            if (!m_ids.empty())
+                return build(ctx);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select profile entities:"));
+        case 3: // profile entities
+            switch (v.kind) {
+            case InputValue::Kind::EntitySet:
+                // Append: a leading id may already have been captured at the
+                // mode prompt (legacy "EXTRUDE h id id ..." form).
+                m_ids.insert(m_ids.end(), v.entitySet.begin(), v.entitySet.end());
+                return build(ctx);
+            case InputValue::Kind::EntityRef:
+                m_ids.push_back(v.entityRef);
+                return Step::cont(InputKind::EntitySet, QStringLiteral("Select profiles:"));
+            case InputValue::Kind::Finish:
+                return m_ids.empty() ? Step::cancelled() : build(ctx);
+            default:
+                return Step::cancelled();
+            }
         default:
             return Step::cancelled();
         }
@@ -101,7 +159,18 @@ private:
             ctx.info(wires.message);
             return Step::cancelled();
         }
-        const auto solid = solidops::extrudeWires(wires.wires, m_height, plane);
+        TopoDS_Shape targetShape;
+        if (m_mode == solidops::ExtrudeMode::Join ||
+            m_mode == solidops::ExtrudeMode::Cut) {
+            auto* t = dynamic_cast<SolidEntity*>(ctx.doc().entity(m_target));
+            if (!t) {
+                ctx.info(QStringLiteral("target must be a solid"));
+                return Step::cancelled();
+            }
+            targetShape = t->shape();
+        }
+        const auto solid =
+            solidops::extrudeWires(wires.wires, m_height, plane, m_mode, targetShape);
         if (!solid.ok) {
             ctx.info(solid.message);
             return Step::cancelled();
@@ -109,6 +178,9 @@ private:
         ctx.doc().beginTransaction(QStringLiteral("EXTRUDE"));
         for (const EntityId id : m_ids)
             ctx.doc().removeEntity(id);
+        if (m_mode == solidops::ExtrudeMode::Join ||
+            m_mode == solidops::ExtrudeMode::Cut)
+            ctx.doc().removeEntity(m_target);
         const EntityId sid =
             ctx.doc().addEntity(std::make_unique<SolidEntity>(solid.shape));
         ctx.doc().commitTransaction();
@@ -116,9 +188,11 @@ private:
         return Step::done();
     }
 
+    int m_stage = 0;
     std::vector<EntityId> m_ids;
-    bool m_haveHeight = false;
     double m_height = 10.0;
+    solidops::ExtrudeMode m_mode = solidops::ExtrudeMode::NewBody;
+    EntityId m_target = 0;
 };
 
 // REVOLVE angle_deg axis_p1 axis_p2 ids

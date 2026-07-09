@@ -44,6 +44,19 @@ struct SolidResult {
 SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
                          const WorkPlane& plane = {});
 
+// EXTRUDE modes. NewBody = a standalone prism (default, same as extrudeWires).
+// Join = fuse the prism onto `target`. Cut = subtract the prism from `target`.
+// Symmetric = extrude `height/2` on both sides of the work plane (total height
+// stays `height`, centred on the plane) as a new body.
+enum class ExtrudeMode { NewBody, Join, Cut, Symmetric };
+
+// Extrude with a mode. For NewBody/Symmetric `target` is ignored (pass a null
+// shape). For Join/Cut `target` is the existing solid to fuse/subtract against;
+// the result is `target` ± the freshly extruded prism.
+SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
+                         const WorkPlane& plane, ExtrudeMode mode,
+                         const TopoDS_Shape& target = {});
+
 // Revolution around the axis through a->b (in the work plane), angle radians.
 SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axisA,
                          const Vec2d& axisB, double angle, const WorkPlane& plane);

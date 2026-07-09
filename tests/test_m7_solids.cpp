@@ -310,6 +310,134 @@ TEST_CASE("makeHole drills a through and a blind hole", "[m7][hole]")
     CHECK_FALSE(solidops::makeHole(TopoDS_Shape(), xy, Vec2d{5, 5}, 4.0, 5.0, true).ok);
 }
 
+TEST_CASE("extrudeWires Symmetric doubles the height about the plane", "[m7][extrude-modes]")
+{
+    using namespace viki;
+    // A r5 circle profile on the XY plane, extruded symmetrically (total 10).
+    const WorkPlane xy{gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+    // Build the wire via a document + wiresFromEntities for parity with EXTRUDE.
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("CIRCLE 0,0 5")));
+    const auto wires =
+        solidops::wiresFromEntities(rig.doc, {EntityId(1)}, xy);
+    REQUIRE(wires.ok);
+
+    // One-sided height 10 spans z 0..10.
+    const auto oneSided =
+        solidops::extrudeWires(wires.wires, 10.0, xy, solidops::ExtrudeMode::NewBody);
+    REQUIRE(oneSided.ok);
+    {
+        Bnd_Box bb;
+        BRepBndLib::Add(oneSided.shape, bb);
+        double xmn, ymn, zmn, xmx, ymx, zmx;
+        bb.Get(xmn, ymn, zmn, xmx, ymx, zmx);
+        CHECK(zmn == Approx(0.0).margin(1e-6));
+        CHECK(zmx == Approx(10.0).margin(1e-6));
+    }
+
+    // Symmetric total height 10 spans z -5..+5 (same volume, centred).
+    const auto sym =
+        solidops::extrudeWires(wires.wires, 10.0, xy, solidops::ExtrudeMode::Symmetric);
+    REQUIRE(sym.ok);
+    CHECK(volumeOf(sym.shape) == Approx(M_PI * 25.0 * 10.0).epsilon(1e-4));
+    Bnd_Box bb;
+    BRepBndLib::Add(sym.shape, bb);
+    double xmn, ymn, zmn, xmx, ymx, zmx;
+    bb.Get(xmn, ymn, zmn, xmx, ymx, zmx);
+    CHECK(zmn == Approx(-5.0).margin(1e-6));
+    CHECK(zmx == Approx(5.0).margin(1e-6));
+    CHECK(zmx - zmn == Approx(10.0).margin(1e-6)); // full height about the plane
+}
+
+TEST_CASE("extrudeWires Cut removes the prism from a target box", "[m7][extrude-modes]")
+{
+    using namespace viki;
+    // Target: 40x40x10 box built from a RECT extrusion.
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(16000.0).epsilon(1e-9));
+
+    // A r5 circle centred at (20,20), extruded 10 up as a Cut tool.
+    const WorkPlane xy{gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("CIRCLE 20,20 5")));
+    const auto wires = solidops::wiresFromEntities(rig.doc, {EntityId(1)}, xy);
+    REQUIRE(wires.ok);
+
+    const auto cut =
+        solidops::extrudeWires(wires.wires, 10.0, xy, solidops::ExtrudeMode::Cut, box);
+    REQUIRE(cut.ok);
+    CHECK(volumeOf(cut.shape) == Approx(16000.0 - M_PI * 25.0 * 10.0).epsilon(1e-4));
+
+    // Join adds the prism back (fusing overlapping volume yields the box again).
+    const auto join =
+        solidops::extrudeWires(wires.wires, 10.0, xy, solidops::ExtrudeMode::Join, box);
+    REQUIRE(join.ok);
+    CHECK(volumeOf(join.shape) == Approx(16000.0).epsilon(1e-4));
+
+    // Guard: Join/Cut without a target fails.
+    CHECK_FALSE(solidops::extrudeWires(wires.wires, 10.0, xy,
+                                       solidops::ExtrudeMode::Cut).ok);
+}
+
+TEST_CASE("EXTRUDE command Cut mode subtracts a prism from a target solid",
+          "[m7][extrude-modes]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("WORKPLANE XY")));
+    // Target box solid (id 2), then a circle profile (id 3).
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 40,40")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 1"))); // solid id 2
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(16000.0).epsilon(1e-6));
+    REQUIRE(rig.run(QStringLiteral("CIRCLE 20,20 5"))); // profile id 3
+
+    // Pre-select the profile so the trailing id on the line is the target.
+    rig.selection.add(3);
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 CUT 2")));
+    const SolidEntity* holed = firstSolid(rig.doc);
+    REQUIRE(holed);
+    REQUIRE(rig.doc.entityCount() == 1); // profile + target consumed, one solid
+    CHECK(volumeOf(holed->shape()) ==
+          Approx(16000.0 - M_PI * 25.0 * 10.0).epsilon(1e-4));
+
+    // Undo restores the intact box and the profile.
+    REQUIRE(rig.run(QStringLiteral("UNDO")));
+    CHECK(volumeOf(firstSolid(rig.doc)->shape()) == Approx(16000.0).epsilon(1e-6));
+}
+
+TEST_CASE("EXTRUDE command Symmetric mode centres the solid on the work plane",
+          "[m7][extrude-modes]")
+{
+    Rig rig;
+    // Pin the work plane to XY (the per-document registry can carry a stale
+    // plane from a sibling test that reuses this Document's address).
+    REQUIRE(rig.run(QStringLiteral("WORKPLANE XY")));
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 10,10")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 20 SYMMETRIC 1")));
+    const SolidEntity* solid = firstSolid(rig.doc);
+    REQUIRE(solid);
+    CHECK(volumeOf(solid->shape()) == Approx(10.0 * 10.0 * 20.0).epsilon(1e-6));
+    Bnd_Box bb;
+    BRepBndLib::Add(solid->shape(), bb);
+    double xmn, ymn, zmn, xmx, ymx, zmx;
+    bb.Get(xmn, ymn, zmn, xmx, ymx, zmx);
+    CHECK(zmn == Approx(-10.0).margin(1e-6)); // centred: -10..+10
+    CHECK(zmx == Approx(10.0).margin(1e-6));
+
+    // Legacy form still works: EXTRUDE height id defaults to New (one-sided).
+    Rig rig2;
+    REQUIRE(rig2.run(QStringLiteral("WORKPLANE XY")));
+    REQUIRE(rig2.run(QStringLiteral("RECT 0,0 10,10")));
+    REQUIRE(rig2.run(QStringLiteral("EXTRUDE 20 1")));
+    const SolidEntity* s2 = firstSolid(rig2.doc);
+    REQUIRE(s2);
+    Bnd_Box bb2;
+    BRepBndLib::Add(s2->shape(), bb2);
+    double a, b, zmn2, c, d, zmx2;
+    bb2.Get(a, b, zmn2, c, d, zmx2);
+    CHECK(zmn2 == Approx(0.0).margin(1e-6)); // one-sided: 0..20
+    CHECK(zmx2 == Approx(20.0).margin(1e-6));
+}
+
 TEST_CASE("HOLE command bores a through hole and undoes", "[m7][hole]")
 {
     Rig rig;

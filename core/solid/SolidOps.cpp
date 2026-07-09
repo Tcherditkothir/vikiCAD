@@ -12,6 +12,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
@@ -26,6 +27,7 @@
 #include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
 #include "doc/Entities.h"
@@ -214,15 +216,15 @@ WireResult wiresFromEntities(const Document& doc, const std::vector<EntityId>& i
     return result;
 }
 
-SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
-                         const WorkPlane& plane)
+namespace {
+
+// Build the prism(s) for `wires`, extruding by `dir` from `base` (a point on the
+// starting plane; the faces are moved there first so a symmetric extrude can
+// start below the work plane). Multiple wires are fused into one solid.
+SolidResult prismFromWires(const std::vector<TopoDS_Wire>& wires, const gp_Vec& base,
+                           const gp_Vec& dir)
 {
     SolidResult result;
-    if (nearZero(height)) {
-        result.message = QStringLiteral("height must be non-zero");
-        return result;
-    }
-    const gp_Vec dir = gp_Vec(plane.normal) * height; // along the plane normal
     TopoDS_Shape acc;
     for (const TopoDS_Wire& wire : wires) {
         BRepBuilderAPI_MakeFace face(wire);
@@ -230,8 +232,14 @@ SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
             result.message = QStringLiteral("profile wire does not bound a face");
             return result;
         }
-        BRepPrimAPI_MakePrism prism(face.Face(), dir);
-        if (!prism.IsDone()) {
+        TopoDS_Shape faceShape = face.Face();
+        if (base.Magnitude() > 1e-12) {
+            gp_Trsf move;
+            move.SetTranslation(base);
+            faceShape = BRepBuilderAPI_Transform(faceShape, move, true).Shape();
+        }
+        BRepPrimAPI_MakePrism prism(faceShape, dir);
+        if (prism.Shape().IsNull()) {
             result.message = QStringLiteral("extrusion failed");
             return result;
         }
@@ -248,6 +256,63 @@ SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
     }
     result.ok = true;
     result.shape = acc;
+    return result;
+}
+
+} // namespace
+
+SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
+                         const WorkPlane& plane)
+{
+    SolidResult result;
+    if (nearZero(height)) {
+        result.message = QStringLiteral("height must be non-zero");
+        return result;
+    }
+    const gp_Vec dir = gp_Vec(plane.normal) * height; // along the plane normal
+    return prismFromWires(wires, gp_Vec(0, 0, 0), dir);
+}
+
+SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
+                         const WorkPlane& plane, ExtrudeMode mode,
+                         const TopoDS_Shape& target)
+{
+    SolidResult result;
+    if (nearZero(height)) {
+        result.message = QStringLiteral("height must be non-zero");
+        return result;
+    }
+    if ((mode == ExtrudeMode::Join || mode == ExtrudeMode::Cut) && target.IsNull()) {
+        result.message = QStringLiteral("Join/Cut needs a target solid");
+        return result;
+    }
+
+    const gp_Vec n(plane.normal);
+    gp_Vec base(0, 0, 0);
+    gp_Vec dir = n * height;
+    if (mode == ExtrudeMode::Symmetric) {
+        // Centre the prism on the work plane: start half below, run the full
+        // height, so the solid spans -height/2 .. +height/2 about the plane.
+        base = n * (-height / 2.0);
+        dir = n * height;
+    }
+
+    const SolidResult prism = prismFromWires(wires, base, dir);
+    if (!prism.ok)
+        return prism;
+
+    switch (mode) {
+    case ExtrudeMode::NewBody:
+    case ExtrudeMode::Symmetric:
+        result.ok = true;
+        result.shape = prism.shape;
+        return result;
+    case ExtrudeMode::Join:
+        return booleanOp(target, prism.shape, BoolOp::Union);
+    case ExtrudeMode::Cut:
+        return booleanOp(target, prism.shape, BoolOp::Subtract);
+    }
+    result.message = QStringLiteral("unknown extrude mode");
     return result;
 }
 
