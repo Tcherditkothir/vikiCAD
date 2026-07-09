@@ -1,6 +1,7 @@
 #include "SolidOps.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -908,6 +909,46 @@ std::vector<SnapPoint> faceSnapPoints2d(const TopoDS_Shape& face,
             pts.push_back({to2d(curve.Ellipse().Location()), SnapKind::Center});
     }
     return pts;
+}
+
+std::vector<gp_Trsf> patternRect(int nx, int ny, int nz, double dx, double dy,
+                                 double dz)
+{
+    nx = std::max(nx, 1);
+    ny = std::max(ny, 1);
+    nz = std::max(nz, 1);
+    std::vector<gp_Trsf> out;
+    out.reserve(static_cast<size_t>(nx) * ny * nz);
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                gp_Trsf t;
+                t.SetTranslation(gp_Vec(i * dx, j * dy, k * dz));
+                out.push_back(t);
+            }
+    return out;
+}
+
+std::vector<gp_Trsf> patternPolar(int count, const gp_Dir& axis,
+                                  const gp_Pnt& center, double totalAngleDeg)
+{
+    count = std::max(count, 1);
+    std::vector<gp_Trsf> out;
+    out.reserve(static_cast<size_t>(count));
+    // Full turn: don't duplicate the endpoint, so divide by count. A partial
+    // sweep spans endpoints, so divide by (count-1).
+    const bool fullTurn = std::abs(std::abs(totalAngleDeg) - 360.0) < 1e-9;
+    const double denom = (fullTurn || count <= 1)
+                             ? static_cast<double>(count)
+                             : static_cast<double>(count - 1);
+    const double stepRad = (totalAngleDeg * M_PI / 180.0) / denom;
+    const gp_Ax1 ax(center, axis);
+    for (int i = 0; i < count; ++i) {
+        gp_Trsf t;
+        t.SetRotation(ax, i * stepRad);
+        out.push_back(t);
+    }
+    return out;
 }
 
 } // namespace solidops

@@ -155,6 +155,27 @@ std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,
 std::vector<SnapPoint> faceSnapPoints2d(const TopoDS_Shape& face,
                                         const WorkPlane& plane);
 
+// 3D PATTERNS (Fusion "Rectangular/Circular Pattern"): return the list of
+// gp_Trsf placements to clone a picked solid into a grid or ring. The
+// placements are returned (not the shapes) so the caller creates one new
+// SolidEntity per transform, mirroring CommandsAssembly's gp_Trsf usage.
+//
+// patternRect: an nx*ny*nz grid stepping `dx`,`dy`,`dz` mm along the world
+// X/Y/Z axes. The first cell (i=j=k=0) is the identity, so the original
+// position is included. Counts below 1 are clamped to 1; the result has
+// nx*ny*nz elements.
+std::vector<gp_Trsf> patternRect(int nx, int ny, int nz, double dx, double dy,
+                                 double dz);
+
+// patternPolar: `count` copies spread over `totalAngleDeg` degrees about the
+// axis through `center` along `axis` (a unit direction, typically world Z).
+// The first copy is the identity (angle 0). When `totalAngleDeg` is 360 the
+// copies are spaced by 360/count (the endpoint is not duplicated); otherwise
+// they are evenly spaced across the arc, endpoints included (count>1).
+// `count` below 1 is clamped to 1; the result has `count` elements.
+std::vector<gp_Trsf> patternPolar(int count, const gp_Dir& axis,
+                                  const gp_Pnt& center, double totalAngleDeg);
+
 } // namespace solidops
 
 // The current work plane, per document (small registry, v1). Set by WORKPLANE

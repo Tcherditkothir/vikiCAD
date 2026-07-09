@@ -34,6 +34,7 @@ add_library(vikicore STATIC
     cmd/CommandsMeasure.cpp
     cmd/CommandsGear.cpp
     cmd/CommandsAssembly.cpp
+    cmd/CommandsPattern3D.cpp
     cmd/CommandsParam.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp

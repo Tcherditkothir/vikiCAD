@@ -533,6 +533,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerMeasureCommands(p);
     registerGearCommands(p);
     registerAssemblyCommands(p);
+    registerPattern3DCommands(p);
     registerParamCommands(p);
 }
 
