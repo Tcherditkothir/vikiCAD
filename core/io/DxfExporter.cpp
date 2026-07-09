@@ -313,6 +313,8 @@ private:
                 out.secPoint = out.basePoint;
                 out.height = txt->height();
                 out.angle = txt->rotation(); // MTEXT code 50 is radians (spec)
+                if (txt->columnWidth > 0.0)
+                    out.widthscale = txt->columnWidth; // reference width, code 41
                 QString content = txt->text();
                 content.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
                 content.replace(QLatin1Char('{'), QLatin1String("\\{"));

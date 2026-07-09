@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <QStringList>
+
 #include "Entity.h"
 
 namespace viki {
@@ -31,9 +33,16 @@ public:
     TextHAlign hAlign = TextHAlign::Left;
     TextVAlign vAlign = TextVAlign::Baseline;
     double lineSpacing = kLineSpacing; // multiples of height (MTEXT code 44)
+    // MTEXT column width (mm). When > 0, words are wrapped to this width using
+    // the same font metrics as layout (DXF MTEXT reference rectangle, code 41).
+    double columnWidth = 0.0;
 
     static constexpr double kLineSpacing = 1.6; // multiples of height
     static constexpr double kCharAspect = 0.62; // approx width/height
+
+    // The text split on explicit '\n' and then word-wrapped to columnWidth
+    // when it is set. This is the effective set of rendered lines.
+    QStringList wrappedLines() const;
 
     // Local-Y of the FIRST line's baseline relative to the anchor point,
     // given the vertical alignment. Shared with the DXF exporter.

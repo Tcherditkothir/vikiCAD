@@ -421,6 +421,11 @@ public:
         }
         // Line spacing factor (code 44): AutoCAD "single" = 5/3 of height.
         t->lineSpacing = (data.interlin > 0 ? data.interlin : 1.0) * (5.0 / 3.0);
+        // MTEXT reference rectangle width (code 41): drives word wrap. The
+        // DRW default of 1.0 is the TEXT width-factor and must not be mistaken
+        // for a 1mm column, so only accept a width wider than one glyph.
+        if (data.widthscale > data.height * TextEntity::kCharAspect)
+            t->columnWidth = data.widthscale;
         place(std::move(t), data);
     }
 
@@ -690,6 +695,8 @@ public:
         s.extBeyond = data.dimexe * k;
         s.textGap = std::fabs(data.dimgap) * k;
         s.decimals = std::clamp(data.dimdec, 0, 8);
+        // DIMPOST (code 3): prefix/suffix template applied to the value.
+        s.dimpost = QString::fromStdString(data.dimpost);
         doc->upsertDimStyle(s);
     }
     void addVport(const DRW_Vport&) override {}

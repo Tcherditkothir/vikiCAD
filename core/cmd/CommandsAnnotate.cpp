@@ -495,7 +495,7 @@ public:
                      .arg(s.textGap)
                      .arg(s.decimals));
         return Step::cont(InputKind::Keyword,
-                          QStringLiteral("Set [TH/AS/EO/EB/GAP/DEC/SUF] (Enter to finish):"));
+                          QStringLiteral("Set [TH/AS/EO/EB/GAP/DEC/SUF/POST] (Enter to finish):"));
     }
 
     Step onInput(CommandContext& ctx, const InputValue& v) override
@@ -508,15 +508,21 @@ public:
             if (v.kind != InputValue::Kind::Keyword)
                 return Step::cancelled();
             m_pendingKey = v.text;
-            return Step::cont(m_pendingKey == QLatin1String("SUF") ? InputKind::Keyword
-                                                                   : InputKind::Number,
-                              QStringLiteral("Value for %1:").arg(m_pendingKey));
+            // SUF/POST take a free-form string (case preserved for POST).
+            InputKind vk = InputKind::Number;
+            if (m_pendingKey == QLatin1String("SUF"))
+                vk = InputKind::Keyword;
+            else if (m_pendingKey == QLatin1String("POST"))
+                vk = InputKind::Text;
+            return Step::cont(vk, QStringLiteral("Value for %1:").arg(m_pendingKey));
         }
         DimStyle s = ctx.doc().currentDimStyle();
         const QString key = m_pendingKey;
         m_pendingKey.clear();
         if (key == QLatin1String("SUF") && v.kind == InputValue::Kind::Keyword) {
             s.suffix = v.text == QLatin1String("NONE") ? QString() : v.text;
+        } else if (key == QLatin1String("POST") && v.kind == InputValue::Kind::Text) {
+            s.dimpost = v.text == QLatin1String("NONE") ? QString() : v.text;
         } else if (v.kind == InputValue::Kind::Number) {
             if (key == QLatin1String("TH")) s.textHeight = std::max(0.1, v.number);
             else if (key == QLatin1String("AS")) s.arrowSize = std::max(0.1, v.number);
@@ -529,7 +535,7 @@ public:
         }
         ctx.doc().upsertDimStyle(s);
         return Step::cont(InputKind::Keyword,
-                          QStringLiteral("Set [TH/AS/EO/EB/GAP/DEC/SUF] (Enter to finish):"));
+                          QStringLiteral("Set [TH/AS/EO/EB/GAP/DEC/SUF/POST] (Enter to finish):"));
     }
 
 private:

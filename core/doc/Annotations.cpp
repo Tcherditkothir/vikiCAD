@@ -48,6 +48,38 @@ std::unique_ptr<Entity> TextEntity::clone() const
     return std::make_unique<TextEntity>(*this);
 }
 
+QStringList TextEntity::wrappedLines() const
+{
+    const QStringList raw = m_text.split(QLatin1Char('\n'));
+    if (columnWidth <= 0.0)
+        return raw;
+    // Wrap each hard line to columnWidth using the layout font metric
+    // (kCharAspect * height per character). A word wider than the column on
+    // its own still occupies its own line rather than being split.
+    const double charW = kCharAspect * m_height;
+    const int cols = charW > 0.0
+                         ? std::max(1, int(std::floor(columnWidth / charW)))
+                         : 1;
+    QStringList out;
+    for (const QString& hard : raw) {
+        const QStringList words = hard.split(QLatin1Char(' '), Qt::KeepEmptyParts);
+        QString cur;
+        for (const QString& w : words) {
+            if (cur.isEmpty()) {
+                cur = w;
+            } else if (cur.size() + 1 + w.size() <= cols) {
+                cur += QLatin1Char(' ');
+                cur += w;
+            } else {
+                out.push_back(cur);
+                cur = w;
+            }
+        }
+        out.push_back(cur); // preserves empty hard lines too
+    }
+    return out;
+}
+
 double TextEntity::firstBaselineY(TextVAlign v, double h, double ls, int lines)
 {
     switch (v) {
@@ -64,7 +96,7 @@ double TextEntity::firstBaselineY(TextVAlign v, double h, double ls, int lines)
 
 BBox2d TextEntity::bounds() const
 {
-    const QStringList lines = m_text.split(QLatin1Char('\n'));
+    const QStringList lines = wrappedLines();
     double maxLen = 1;
     for (const QString& l : lines)
         maxLen = std::max(maxLen, double(l.size()));
@@ -95,7 +127,7 @@ void TextEntity::transform(const Xform2d& xf)
 
 void TextEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
 {
-    const QStringList lines = m_text.split(QLatin1Char('\n'));
+    const QStringList lines = wrappedLines();
     const double y0 = firstBaselineY(vAlign, m_height, lineSpacing, lines.size());
     const Vec2d base = m_pos + Vec2d{0, y0}.rotated(m_rotation);
     const Vec2d down = Vec2d{0, -lineSpacing * m_height}.rotated(m_rotation);
@@ -136,6 +168,8 @@ void TextEntity::geomToJson(QJsonObject& obj) const
         obj[QStringLiteral("valign")] = int(vAlign);
     if (lineSpacing != kLineSpacing)
         obj[QStringLiteral("lspace")] = lineSpacing;
+    if (columnWidth > 0.0)
+        obj[QStringLiteral("colwidth")] = columnWidth;
 }
 
 void TextEntity::geomFromJson(const QJsonObject& obj)
@@ -147,6 +181,7 @@ void TextEntity::geomFromJson(const QJsonObject& obj)
     hAlign = TextHAlign(obj[QStringLiteral("halign")].toInt(0));
     vAlign = TextVAlign(obj[QStringLiteral("valign")].toInt(0));
     lineSpacing = obj[QStringLiteral("lspace")].toDouble(kLineSpacing);
+    columnWidth = obj[QStringLiteral("colwidth")].toDouble(0.0);
 }
 
 // ---- DimensionEntity ------------------------------------------------------------
@@ -238,9 +273,10 @@ void DimensionEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& o
         kind == Kind::Angular
             ? QString::number(measurement() * 180.0 / M_PI, 'f', 1) +
                   QStringLiteral("°")
-            : (kind == Kind::Radius ? QStringLiteral("R") :
-               kind == Kind::Diameter ? QStringLiteral("Ø") : QString()) +
-                  formatLength(measurement(), ctx, st);
+            : st.applyDimpost(
+                  (kind == Kind::Radius ? QStringLiteral("R") :
+                   kind == Kind::Diameter ? QStringLiteral("Ø") : QString()) +
+                  formatLength(measurement(), ctx, st));
     QString label = measured;
     if (!textOverride.isEmpty()) {
         // AutoCAD semantics: "<>" = measured value; a blank override

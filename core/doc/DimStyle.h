@@ -15,6 +15,10 @@ struct DimStyle {
     double textGap = 1.0;     // dimension line to text
     int decimals = 2;
     QString suffix;           // appended to the measurement text
+    // DXF DIMPOST (code 3): prefix/suffix template around the measurement.
+    // A "<>" placeholder marks where the value goes; without it the whole
+    // string is treated as a plain suffix (e.g. " mm").
+    QString dimpost;
 
     QJsonObject toJson() const
     {
@@ -25,7 +29,8 @@ struct DimStyle {
                 {QStringLiteral("ext_beyond"), extBeyond},
                 {QStringLiteral("text_gap"), textGap},
                 {QStringLiteral("decimals"), decimals},
-                {QStringLiteral("suffix"), suffix}};
+                {QStringLiteral("suffix"), suffix},
+                {QStringLiteral("dimpost"), dimpost}};
     }
     static DimStyle fromJson(const QJsonObject& o)
     {
@@ -38,7 +43,21 @@ struct DimStyle {
         s.textGap = o[QStringLiteral("text_gap")].toDouble(s.textGap);
         s.decimals = o[QStringLiteral("decimals")].toInt(s.decimals);
         s.suffix = o[QStringLiteral("suffix")].toString();
+        s.dimpost = o[QStringLiteral("dimpost")].toString();
         return s;
+    }
+
+    // Apply the DIMPOST template to an already-formatted measurement string.
+    QString applyDimpost(const QString& value) const
+    {
+        if (dimpost.isEmpty())
+            return value;
+        if (dimpost.contains(QLatin1String("<>"))) {
+            QString r = dimpost;
+            r.replace(QLatin1String("<>"), value);
+            return r;
+        }
+        return value + dimpost; // plain suffix
     }
 };
 

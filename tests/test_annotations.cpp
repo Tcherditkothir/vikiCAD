@@ -40,6 +40,51 @@ TEST_CASE("TEXT creates multiline text", "[m4]")
     REQUIRE(prims.strokes.empty()); // pick box only under forHitTest
 }
 
+TEST_CASE("MTEXT column width word-wraps into multiple lines", "[annotation-debt]")
+{
+    Rig rig;
+    // A long single-line paragraph. At height 5 each glyph is 0.62*5 = 3.1mm,
+    // so a 30mm column fits ~9 chars per line and must break into >1 line.
+    const QString para =
+        QStringLiteral("the quick brown fox jumps over the lazy dog");
+    auto t = std::make_unique<TextEntity>(Vec2d{0, 0}, 5.0, 0.0, para);
+    t->columnWidth = 30.0;
+    auto t2 = std::make_unique<TextEntity>(Vec2d{0, 0}, 5.0, 0.0, para);
+
+    rig.doc.beginTransaction(QStringLiteral("add"));
+    const EntityId id = rig.doc.addEntity(std::move(t));
+    const EntityId id2 = rig.doc.addEntity(std::move(t2)); // no column
+    rig.doc.commitTransaction();
+
+    const auto* te = dynamic_cast<const TextEntity*>(rig.doc.entity(id));
+    REQUIRE(te);
+    REQUIRE(te->wrappedLines().size() > 1);
+
+    const auto prims = rig.render(id);
+    REQUIRE(prims.texts.size() > 1);
+    REQUIRE(prims.texts.size() == size_t(te->wrappedLines().size()));
+
+    // With no column set the same text stays a single line.
+    REQUIRE(rig.render(id2).texts.size() == 1);
+}
+
+TEST_CASE("DIMSTYLE dimpost suffixes the dimension text", "[annotation-debt]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("DIMLINEAR 0,0 10,0 5,-10")));
+    // Plain suffix form: no <> placeholder → appended.
+    REQUIRE(rig.run(QStringLiteral("DIMSTYLE POST mm")));
+    auto prims = rig.render(1);
+    REQUIRE(prims.texts.size() == 1);
+    REQUIRE(prims.texts[0].text == QStringLiteral("10.00mm"));
+    REQUIRE(prims.texts[0].text.endsWith(QStringLiteral("mm")));
+
+    // Placeholder form: "<>" is replaced by the measured value.
+    REQUIRE(rig.run(QStringLiteral("DIMSTYLE POST [<>]")));
+    prims = rig.render(1);
+    REQUIRE(prims.texts[0].text == QStringLiteral("[10.00]"));
+}
+
 TEST_CASE("DIMLINEAR measures along the chosen axis and follows units", "[m4]")
 {
     Rig rig;
