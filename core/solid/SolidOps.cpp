@@ -12,13 +12,17 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Ax2.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
@@ -363,6 +367,82 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
     // distance > 0 grows the material (boss), < 0 removes it (pocket).
     return booleanOp(solid, prism.Shape(),
                      distance > 0 ? BoolOp::Union : BoolOp::Subtract);
+}
+
+SolidResult makeHole(const TopoDS_Shape& solid, const WorkPlane& plane,
+                     const Vec2d& center, double diameter, double depth,
+                     bool through)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("hole needs a target solid");
+        return result;
+    }
+    if (diameter <= 1e-9) {
+        result.message = QStringLiteral("hole diameter must be positive");
+        return result;
+    }
+    if (!through && depth <= 1e-9) {
+        result.message = QStringLiteral("hole depth must be positive");
+        return result;
+    }
+
+    const gp_Pnt c3 = to3d(center, plane);   // hole centre, on the work plane
+    const gp_Dir n = plane.normal;            // bore axis
+
+    // The bore goes INTO the material, i.e. opposite the plane normal (the
+    // normal points out of the sketch face, like EXTRUDE's positive direction).
+    double length = depth;
+    gp_Pnt base = c3;
+    if (through) {
+        // Span the solid's full extent along the normal, with generous margin,
+        // so the cylinder pierces clean through regardless of where the work
+        // plane sits relative to the solid.
+        Bnd_Box bb;
+        BRepBndLib::Add(solid, bb);
+        if (bb.IsVoid()) {
+            result.message = QStringLiteral("target solid is empty");
+            return result;
+        }
+        double xmin, ymin, zmin, xmax, ymax, zmax;
+        bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        const gp_Vec axis(n);
+        // Project the 8 bbox corners onto the axis to find the extent.
+        const double xs[2] = {xmin, xmax};
+        const double ys[2] = {ymin, ymax};
+        const double zs[2] = {zmin, zmax};
+        double lo = 1e300, hi = -1e300;
+        for (int i = 0; i < 2; ++i)
+            for (int j = 0; j < 2; ++j)
+                for (int k = 0; k < 2; ++k) {
+                    const gp_Vec corner(xs[i], ys[j], zs[k]);
+                    const double t = corner.Dot(axis);
+                    lo = std::min(lo, t);
+                    hi = std::max(hi, t);
+                }
+        const double centreT = gp_Vec(c3.X(), c3.Y(), c3.Z()).Dot(axis);
+        const double span = hi - lo;
+        const double margin = span * 0.1 + diameter + 1.0;
+        // Start below the far side, run all the way past the near side.
+        const double startT = lo - margin;
+        length = (hi + margin) - startT;
+        base = c3.Translated(axis * (startT - centreT));
+    } else {
+        // Blind hole: cylinder base at the plane, boring inward (-normal).
+        base = c3;
+        length = depth;
+    }
+
+    const gp_Dir boreDir = through ? n : gp_Dir(gp_Vec(n).Reversed());
+    const gp_Ax2 ax(base, boreDir);
+    // Note: BRepPrimAPI_MakeCylinder::IsDone() is unreliable before the shape is
+    // built, so force the build via Shape() and check for a null result instead.
+    const TopoDS_Shape tool = BRepPrimAPI_MakeCylinder(ax, diameter / 2.0, length).Shape();
+    if (tool.IsNull()) {
+        result.message = QStringLiteral("building the hole cylinder failed");
+        return result;
+    }
+    return booleanOp(solid, tool, BoolOp::Subtract);
 }
 
 std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)

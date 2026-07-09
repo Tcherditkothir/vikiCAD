@@ -273,3 +273,59 @@ TEST_CASE("planeFromFace extracts a planar face's frame", "[m7][workplane]")
     }
     CHECK(foundTop); // the +Z top face is present
 }
+
+TEST_CASE("makeHole drills a through and a blind hole", "[m7][hole]")
+{
+    using namespace viki;
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(1000.0).epsilon(1e-9));
+
+    // Through hole d=4 on the bottom XY plane, centred under the footprint:
+    // pierces the full 10mm height, removing pi*2^2*10.
+    const WorkPlane xy{gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+    const auto through = solidops::makeHole(box, xy, Vec2d{5, 5}, 4.0, 0.0, true);
+    REQUIRE(through.ok);
+    CHECK(volumeOf(through.shape) ==
+          Approx(1000.0 - M_PI * 4.0 * 10.0).epsilon(1e-4));
+    // The hole is interior: the bounding box is unchanged (nothing pierced the
+    // outer walls).
+    Bnd_Box bb;
+    BRepBndLib::Add(through.shape, bb);
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    CHECK(xmax - xmin == Approx(10.0).margin(1e-6));
+    CHECK(zmax - zmin == Approx(10.0).margin(1e-6));
+
+    // Blind hole from the TOP face (normal +Z points out of the material, so the
+    // bore runs -Z into the body): depth 3 removes pi*2^2*3.
+    const WorkPlane top{gp_Pnt(0, 0, 10), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+    const auto blind = solidops::makeHole(box, top, Vec2d{5, 5}, 4.0, 3.0, false);
+    REQUIRE(blind.ok);
+    CHECK(volumeOf(blind.shape) ==
+          Approx(1000.0 - M_PI * 4.0 * 3.0).epsilon(1e-4));
+
+    // Guards.
+    CHECK_FALSE(solidops::makeHole(box, xy, Vec2d{5, 5}, 0.0, 5.0, false).ok);
+    CHECK_FALSE(solidops::makeHole(box, xy, Vec2d{5, 5}, 4.0, 0.0, false).ok);
+    CHECK_FALSE(solidops::makeHole(TopoDS_Shape(), xy, Vec2d{5, 5}, 4.0, 5.0, true).ok);
+}
+
+TEST_CASE("HOLE command bores a through hole and undoes", "[m7][hole]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 20,20")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 1"))); // solid id 2
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(4000.0).epsilon(1e-6));
+
+    // HOLE diameter T(hrough) center-point solid-id — numeric params first.
+    REQUIRE(rig.run(QStringLiteral("HOLE 4 T 10,10 2")));
+    const SolidEntity* holed = firstSolid(rig.doc);
+    REQUIRE(holed);
+    REQUIRE(rig.doc.entityCount() == 1); // old solid consumed, one solid remains
+    CHECK(volumeOf(holed->shape()) ==
+          Approx(4000.0 - M_PI * 4.0 * 10.0).epsilon(1e-4));
+
+    // Undo restores the un-drilled solid (BREP in the journal).
+    REQUIRE(rig.run(QStringLiteral("UNDO")));
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(4000.0).epsilon(1e-6));
+}

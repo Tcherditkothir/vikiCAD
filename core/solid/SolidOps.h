@@ -51,6 +51,16 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
 enum class BoolOp { Union, Subtract, Intersect };
 SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op);
 
+// Parametric HOLE: drill a cylinder of `diameter` at the 2D `center` on the
+// work plane, boring along the plane normal, and Cut it from `solid`. With
+// `through = true` the bore pierces the whole solid (depth is ignored and the
+// cylinder spans the full extent of `solid` along the normal, with margin);
+// otherwise it goes `depth` deep from the work plane into the material
+// (opposite the normal). Result volume is the solid minus the removed cylinder.
+SolidResult makeHole(const TopoDS_Shape& solid, const WorkPlane& plane,
+                     const Vec2d& center, double diameter, double depth,
+                     bool through);
+
 // Push/Pull: extrude `face` (a face OF `solid`) along its outward normal by
 // `distance`, then fuse (distance > 0, a boss) or cut (distance < 0, a pocket)
 // with the solid. This is the direct-modeling "extrude a face" operation.

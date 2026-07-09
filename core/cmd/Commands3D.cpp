@@ -261,6 +261,88 @@ private:
     solidops::BoolOp m_op;
 };
 
+// HOLE diameter (depth | T=through) center-point solid-id
+// Numeric params come first (the greedy EntitySet must not eat them).
+class HoleCommand : public Command {
+public:
+    const char* name() const override { return "HOLE"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::Distance, QStringLiteral("Hole diameter:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        switch (m_stage) {
+        case 0: // diameter
+            if (v.kind != InputValue::Kind::Number || v.number <= 0)
+                return Step::cancelled();
+            m_diameter = v.number;
+            m_stage = 1;
+            return Step::cont(InputKind::Distance,
+                              QStringLiteral("Depth or [T=through]:"));
+        case 1: // depth or Through
+            if (v.kind == InputValue::Kind::Keyword && v.text == QLatin1String("T")) {
+                m_through = true;
+            } else if (v.kind == InputValue::Kind::Number && v.number > 0) {
+                m_depth = v.number;
+            } else {
+                return Step::cancelled();
+            }
+            m_stage = 2;
+            return Step::cont(InputKind::Point, QStringLiteral("Hole center:"));
+        case 2: // center point
+            if (v.kind != InputValue::Kind::Point)
+                return Step::cancelled();
+            m_center = v.point;
+            ctx.setLastPoint(v.point);
+            m_stage = 3;
+            return Step::cont(InputKind::EntitySet, QStringLiteral("Pick target solid:"));
+        case 3: // target solid
+            if (v.kind == InputValue::Kind::EntityRef)
+                return build(ctx, v.entityRef);
+            if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                return build(ctx, v.entitySet.front());
+            return Step::cancelled();
+        default:
+            return Step::cancelled();
+        }
+    }
+
+private:
+    Step build(CommandContext& ctx, EntityId target)
+    {
+        auto* solid = dynamic_cast<SolidEntity*>(ctx.doc().entity(target));
+        if (!solid) {
+            ctx.info(QStringLiteral("target must be a solid"));
+            return Step::cancelled();
+        }
+        const WorkPlane plane = documentWorkplane(ctx.doc());
+        const auto out = solidops::makeHole(solid->shape(), plane, m_center,
+                                            m_diameter, m_depth, m_through);
+        if (!out.ok) {
+            ctx.info(out.message);
+            return Step::cancelled();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("HOLE"));
+        ctx.doc().removeEntity(target);
+        const EntityId sid =
+            ctx.doc().addEntity(std::make_unique<SolidEntity>(out.shape));
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("hole (d=%1) in solid %2").arg(m_diameter).arg(sid));
+        return Step::done();
+    }
+
+    int m_stage = 0;
+    double m_diameter = 5.0;
+    double m_depth = 10.0;
+    bool m_through = false;
+    Vec2d m_center;
+};
+
 std::unique_ptr<Command> makeUnion()
 {
     return std::make_unique<BooleanCommand>(solidops::BoolOp::Union);
@@ -290,6 +372,7 @@ void registerSolidCommands(CommandProcessor& p)
     p.registerCommand(&makeUnion);
     p.registerCommand(&makeSubtract, {QStringLiteral("SUB")});
     p.registerCommand(&makeIntersect, {QStringLiteral("INT")});
+    p.registerCommand(&make<HoleCommand>, {QStringLiteral("HO")});
 }
 
 } // namespace viki
