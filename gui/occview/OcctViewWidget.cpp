@@ -271,15 +271,19 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
     }
     QMenu menu(this);
     QAction* pp = menu.addAction(QStringLiteral("Push/Pull face…"));
-    if (menu.exec(event->globalPos()) != pp)
-        return;
-    bool ok = false;
-    const double d = QInputDialog::getDouble(
-        this, QStringLiteral("Push / Pull"),
-        QStringLiteral("Distance (+ adds a boss, − cuts a pocket):"), 5.0,
-        -1.0e6, 1.0e6, 3, &ok);
-    if (ok && std::fabs(d) > 1e-9)
-        emit pushPullFace(m_pickedSolid, d);
+    QAction* sk = menu.addAction(QStringLiteral("Sketch on this face"));
+    QAction* chosen = menu.exec(event->globalPos());
+    if (chosen == pp) {
+        bool ok = false;
+        const double d = QInputDialog::getDouble(
+            this, QStringLiteral("Push / Pull"),
+            QStringLiteral("Distance (+ adds a boss, − cuts a pocket):"), 5.0,
+            -1.0e6, 1.0e6, 3, &ok);
+        if (ok && std::fabs(d) > 1e-9)
+            emit pushPullFace(m_pickedSolid, d);
+    } else if (chosen == sk) {
+        emit sketchOnFace();
+    }
 }
 
 } // namespace viki

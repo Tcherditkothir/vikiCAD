@@ -1,6 +1,9 @@
 #include "SolidOps.h"
 
+#include <map>
+
 #include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -14,6 +17,7 @@
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 
@@ -27,7 +31,9 @@ namespace {
 
 gp_Pnt to3d(const Vec2d& p, const WorkPlane& plane)
 {
-    return {p.x, p.y, plane.zOffset};
+    const gp_Vec x(plane.xDir);
+    const gp_Vec y(plane.normal.Crossed(plane.xDir));
+    return plane.origin.Translated(x * p.x + y * p.y);
 }
 
 // Segment/arc pieces of a profile, oriented a -> b.
@@ -201,13 +207,15 @@ WireResult wiresFromEntities(const Document& doc, const std::vector<EntityId>& i
     return result;
 }
 
-SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height)
+SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
+                         const WorkPlane& plane)
 {
     SolidResult result;
     if (nearZero(height)) {
         result.message = QStringLiteral("height must be non-zero");
         return result;
     }
+    const gp_Vec dir = gp_Vec(plane.normal) * height; // along the plane normal
     TopoDS_Shape acc;
     for (const TopoDS_Wire& wire : wires) {
         BRepBuilderAPI_MakeFace face(wire);
@@ -215,7 +223,7 @@ SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height)
             result.message = QStringLiteral("profile wire does not bound a face");
             return result;
         }
-        BRepPrimAPI_MakePrism prism(face.Face(), gp_Vec(0, 0, height));
+        BRepPrimAPI_MakePrism prism(face.Face(), dir);
         if (!prism.IsDone()) {
             result.message = QStringLiteral("extrusion failed");
             return result;
@@ -245,7 +253,10 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
         return result;
     }
     const Vec2d dir = (axisB - axisA).normalized();
-    const gp_Ax1 axis(to3d(axisA, plane), gp_Dir(dir.x, dir.y, 0));
+    // Map the in-plane 2D axis direction to 3D through the work-plane frame.
+    const gp_Vec ax3 = gp_Vec(plane.xDir) * dir.x +
+                       gp_Vec(plane.normal.Crossed(plane.xDir)) * dir.y;
+    const gp_Ax1 axis(to3d(axisA, plane), gp_Dir(ax3));
     TopoDS_Shape acc;
     for (const TopoDS_Wire& wire : wires) {
         BRepBuilderAPI_MakeFace face(wire);
@@ -351,5 +362,29 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
                      distance > 0 ? BoolOp::Union : BoolOp::Subtract);
 }
 
+std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)
+{
+    if (face.IsNull() || face.ShapeType() != TopAbs_FACE)
+        return std::nullopt;
+    BRepAdaptor_Surface surf(TopoDS::Face(face));
+    if (surf.GetType() != GeomAbs_Plane)
+        return std::nullopt; // can only sketch on a planar face
+    const gp_Pln pln = surf.Plane();
+    WorkPlane wp;
+    wp.origin = pln.Location();
+    wp.normal = pln.Axis().Direction();
+    wp.xDir = pln.XAxis().Direction();
+    // Face orientation flips the surface normal; keep the outward sense.
+    if (TopoDS::Face(face).Orientation() == TopAbs_REVERSED)
+        wp.normal.Reverse();
+    return wp;
+}
+
 } // namespace solidops
+
+WorkPlane& documentWorkplane(const Document& doc)
+{
+    static std::map<const Document*, WorkPlane> planes;
+    return planes[&doc];
+}
 } // namespace viki

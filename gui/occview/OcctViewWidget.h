@@ -43,6 +43,8 @@ signals:
     void picked(const QString& info);
     // Right-click "Push/Pull" on a selected face: extrude it by `distance`.
     void pushPullFace(EntityId solid, double distance);
+    // Right-click "Sketch on this face": set the work plane to the picked face.
+    void sketchOnFace();
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;

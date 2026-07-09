@@ -14,16 +14,7 @@
 namespace viki {
 namespace {
 
-// The current work plane offset, per document — stored in a tiny registry
-// keyed by document address (v1 pragmatism; becomes a Document field when
-// face planes land).
-double& workplaneZ(const Document& doc)
-{
-    static std::map<const Document*, double> zs;
-    return zs[&doc];
-}
-
-// WORKPLANE XY | OFFSET z
+// WORKPLANE XY | OFFSET z   (the sketch-on-face plane is set from the 3D view)
 class WorkplaneCommand : public Command {
 public:
     const char* name() const override { return "WORKPLANE"; }
@@ -41,7 +32,8 @@ public:
         if (m_awaitOffset) {
             if (v.kind != InputValue::Kind::Number)
                 return Step::cancelled();
-            workplaneZ(ctx.doc()) = v.number;
+            documentWorkplane(ctx.doc()) = WorkPlane{gp_Pnt(0, 0, v.number),
+                                                     gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
             ctx.info(QStringLiteral("work plane: XY at Z=%1").arg(v.number));
             return Step::done();
         }
@@ -49,7 +41,7 @@ public:
             m_awaitOffset = true;
             return Step::cont(InputKind::Distance, QStringLiteral("Z offset:"));
         }
-        workplaneZ(ctx.doc()) = 0.0;
+        documentWorkplane(ctx.doc()) = WorkPlane{}; // world XY
         ctx.info(QStringLiteral("work plane: XY at Z=0"));
         return Step::done();
     }
@@ -103,13 +95,13 @@ public:
 private:
     Step build(CommandContext& ctx)
     {
-        const WorkPlane plane{workplaneZ(ctx.doc())};
+        const WorkPlane plane = documentWorkplane(ctx.doc());
         const auto wires = solidops::wiresFromEntities(ctx.doc(), m_ids, plane);
         if (!wires.ok) {
             ctx.info(wires.message);
             return Step::cancelled();
         }
-        const auto solid = solidops::extrudeWires(wires.wires, m_height);
+        const auto solid = solidops::extrudeWires(wires.wires, m_height, plane);
         if (!solid.ok) {
             ctx.info(solid.message);
             return Step::cancelled();
@@ -192,7 +184,7 @@ public:
 private:
     Step build(CommandContext& ctx)
     {
-        const WorkPlane plane{workplaneZ(ctx.doc())};
+        const WorkPlane plane = documentWorkplane(ctx.doc());
         const auto wires = solidops::wiresFromEntities(ctx.doc(), m_ids, plane);
         if (!wires.ok) {
             ctx.info(wires.message);

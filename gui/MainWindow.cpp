@@ -307,6 +307,19 @@ void MainWindow::toggle3D(bool on)
             m_occtView = new OcctViewWidget(this);
             connect(m_occtView, &OcctViewWidget::picked, this,
                     [this](const QString& info) { m_commandBar->appendHistory(info); });
+            connect(m_occtView, &OcctViewWidget::sketchOnFace, this, [this] {
+                const auto wp = solidops::planeFromFace(m_occtView->pickedFace());
+                if (!wp) {
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! sketch: pick a FLAT face"));
+                    return;
+                }
+                documentWorkplane(*m_doc) = *wp;
+                setView3D(false); // back to the 2D canvas to draw the profile
+                m_commandBar->appendHistory(QStringLiteral(
+                    "Work plane set to the face. Draw a closed 2D profile, then "
+                    "EXTRUDE — it builds on this face. WORKPLANE XY to reset."));
+            });
             connect(m_occtView, &OcctViewWidget::pushPullFace, this,
                     [this](EntityId id, double dist) {
                         const auto* solid =

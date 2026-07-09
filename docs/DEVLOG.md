@@ -216,3 +216,13 @@ Suite : contrainte d'assemblage (mate/align), highlight persistant de la sélect
 - **Menu contextuel du panneau Assembly** (clic droit) : Propriétés, Couleur…, Transparence…, Renommer le composant…, Supprimer — chaque action en transaction annulable, répercutée en 2D et 3D.
 - **Malentendu commande éclairci** : `EXTRUDE` = profil 2D fermé → solide (sketch → solide), PAS l'extrusion d'une face de solide. D'où « rien ne se produit » quand Lex sélectionnait une face 3D. La sélection 3D (OCCT) n'alimente pas non plus le système de commandes 2D.
 - **Push/Pull (le vrai « extruder une face »)** : clic droit sur une face sélectionnée dans la vue 3D → « Push/Pull face… » → distance. `solidops::pushPullFace` prisme la face selon sa normale sortante puis fusionne (>0, bossage) ou coupe (<0, poche) avec le solide parent. La vue OCCT retient la face + le solide propriétaire ; MainWindow applique en transaction et rafraîchit. Testé sur une boîte (1000 → bossage 1500 → poche 700).
+
+## 2026-07-08 (suite 6) — Sketch sur face + plan de travail généralisé
+
+- **Malentendu EXTRUDE** rappelé : EXTRUDE = profil 2D fermé → solide (pas push/pull). Push/pull = clic droit sur une face.
+- **Plan de travail généralisé** : `WorkPlane` passe d'un simple `zOffset` à un repère orthonormé (origine + normale + axe X). `to3d`, `extrudeWires` (prisme selon la normale), `revolveWires` (axe dans le plan) généralisés ; défaut = plan XY monde (2D inchangé). Stockage par document via `documentWorkplane(doc)`.
+- **Sketch sur face** : `solidops::planeFromFace` extrait le plan d'une face PLANE (origine/normale/axe X, sens sortant). Clic droit sur une face en 3D → « Sketch on this face » fixe le plan de travail sur cette face et bascule en 2D ; le profil 2D dessiné y est placé et EXTRUDE construit perpendiculairement à la face. `WORKPLANE XY` réinitialise.
+- **Surbrillance** : correction `LocalSelected`/`LocalDynamic` (les faces sont des sous-formes) → la face sélectionnée est bien en orange. **Ctrl+Z/Ctrl+Y** câblés. Verbe IPC `pick3d` pour piloter/vérifier la sélection 3D.
+- Tests : extrude sur plan non-XY (cylindre selon +X, bbox vérifiée), planeFromFace sur les faces d'une boîte, push/pull (bossage/poche). 101 cas verts, ASan propre.
+
+**Limite connue (à améliorer pour l'ergonomie Fusion)** : on dessine le profil dans le canevas 2D abstrait (pas visuellement posé sur la face à l'écran) ; la vue ne se réoriente pas encore face à la face. Prochain pas : environnement de sketch réorienté + silhouette de la face en référence.

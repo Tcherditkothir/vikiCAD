@@ -230,3 +230,46 @@ TEST_CASE("Push/Pull a face grows (boss) and shrinks (pocket) the solid", "[m7][
     CHECK_FALSE(solidops::pushPullFace(box, face, 0.0).ok);
     CHECK_FALSE(solidops::pushPullFace(box, box, 5.0).ok); // not a face
 }
+
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <TopExp_Explorer.hxx>
+
+TEST_CASE("EXTRUDE follows a non-XY work plane", "[m7][workplane]")
+{
+    Rig rig;
+    // A circle r5 in sketch coords, extruded on the YZ plane (normal +X).
+    REQUIRE(rig.run(QStringLiteral("CIRCLE 0,0 5")));
+    documentWorkplane(rig.doc) =
+        WorkPlane{gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0), gp_Dir(0, 1, 0)};
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 1")));
+    const SolidEntity* solid = firstSolid(rig.doc);
+    REQUIRE(solid);
+    // Same volume as any r5/height10 cylinder, but now the axis is +X.
+    CHECK(volumeOf(solid->shape()) == Approx(M_PI * 25.0 * 10.0).epsilon(1e-4));
+    Bnd_Box box;
+    BRepBndLib::Add(solid->shape(), box);
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    CHECK(xmax - xmin == Approx(10.0).margin(0.2)); // extruded along X
+    CHECK(ymax - ymin == Approx(10.0).margin(0.2)); // circle diameter
+    CHECK(zmax - zmin == Approx(10.0).margin(0.2));
+}
+
+TEST_CASE("planeFromFace extracts a planar face's frame", "[m7][workplane]")
+{
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    bool foundTop = false;
+    for (TopExp_Explorer e(box, TopAbs_FACE); e.More(); e.Next()) {
+        const auto wp = solidops::planeFromFace(e.Current());
+        REQUIRE(wp.has_value());
+        // Every box face normal is axis-aligned and unit length.
+        const gp_Dir n = wp->normal;
+        CHECK(std::abs(n.X()) + std::abs(n.Y()) + std::abs(n.Z()) ==
+              Approx(1.0).margin(1e-9));
+        if (std::abs(n.Z() - 1.0) < 1e-6)
+            foundTop = true;
+    }
+    CHECK(foundTop); // the +Z top face is present
+}
