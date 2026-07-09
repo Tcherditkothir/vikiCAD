@@ -231,3 +231,60 @@ Suite : contrainte d'assemblage (mate/align), highlight persistant de la sélect
 
 - **Sketch-sur-face v2** : `solidops::faceOutline2d` projette les arêtes de la face (contour + trous + découpes) dans le repère 2D du plan de sketch ; le canevas les dessine en bleu pointillé (référence) et zoome dessus, et masque les placeholders `[3D LxlxH]` pendant le sketch. On dessine enfin SUR la face réelle. Verbe IPC `sketchface` (extraction de `beginSketchOnFace`) pour piloter/vérifier. Validé sur MOTOR_FIX (trous + découpe + arête courbe visibles ; cercle dessiné au bon endroit).
 - **Prépa nuit** : `docs/FUSION_GAP.md` = liste priorisée de l'écart avec Fusion (sketch/features/assemblage/nav/paramétrique), taguée [AUTO]/[GUI]. `scripts/overnight-workflow.mjs` = workflow qui implémente ces features EN SÉQUENCE (jamais en parallèle : arbre partagé), chaque agent build+test Catch2+commit-si-vert/revert-si-rouge. REPRISE.md a une section « TRAVAIL NOCTURNE AUTONOME » en tête. Lex dort ~5-6 h et m'a autorisé à poursuivre seul : lancer le workflow après compaction, relancer par lots jusqu'à son retour.
+
+## 2026-07-09 — Nuit autonome : 21 features vers l'ergonomie Fusion
+
+Lex a dormi ~5-6 h en m'autorisant à travailler seul via des workflows
+autonomes (build + test Catch2 + commit-si-vert / revert-si-rouge, en séquence).
+Bilan : **suite 814/102 → 1256 assertions / 172 cas**, arbre propre, 21 features
+commitées atomiquement.
+
+**Incident nuit 1 (récupéré).** Le premier lancement du workflow a échoué :
+surcharge serveur API 529 sur les 4 premières features, ET un agent mort a
+laissé l'arbre sale, ce qui a fait échouer en cascade tout le reste (l'ancienne
+règle « abort si arbre sale »). Rien de commité. Correctifs :
+- Récupéré `hole-feature` du stash, fini/testé/commité à la main (`866e93d`).
+- **Piège OCCT gravé** : `BRepPrimAPI_Make*::IsDone()` n'est pas fiable tant que
+  `.Shape()` n'a pas forcé le build → toujours construire la forme et
+  null-checker (mordu sur le cylindre du trou).
+- **Workflow durci** (`dd5e3e0`) : chaque agent fait `git reset --hard HEAD` au
+  démarrage (le commité est sauf) au lieu d'abandonner → plus de cascade ; +
+  idempotence (grep avant d'implémenter) pour relancer sans doublon.
+
+**Lot 1 (8 features)** : EXTRUDE modes New/Join/Cut/Symmetric ; SHELL (coque
+BRepOffsetAPI_MakeThickSolid) ; congé/chanfrein d'arêtes CHOISIES (filletEdges/
+chamferEdges) ; MATE d'assemblage (2 faces planes → gp_Trsf) ; export STL
+(binaire/ASCII, CLI `export .stl`) ; mesure 3D (minDistance/MEASURE3D) ; snap
+sur la référence de face en sketch ; table de paramètres PARAM (évaluateur
+d'expressions, persistant).
+
+**Lot 2 (7 features)** : détection d'interférences (CLASH/checkAllInterferences)
+; patterns 3D (PATTERN3D rect, PATTERNPOLAR3D) ; SWEEP + LOFT ; snaps NEAREST/
+NODE/TANGENT ; DRAFT (dépouille de faces) ; SECTION (plan de coupe → profil +
+aire) ; **fondations de l'historique paramétrique** (`FeatureTree` : Sketch +
+Extrude rejouables, régénération éditable — purement additif, nouveaux fichiers,
+n'altère pas SolidEntity/.vkd).
+
+**Lot 3 (6 features)** : export OBJ (maillage, à côté du STL) ; cœur des vues
+normalisées (directions Top/Front/Right/Iso + alignToFaceDir) ; **persistance du
+plan de travail** dans le .vkd + purge des snaps de sketch obsolètes ; dette 2D
+(word-wrap MTEXT par largeur de colonne + suffixe DIMSTYLE dimpost) ;
+**mise en plan HLR** (`render::projectToDrawing` + commande MAKEVIEW : projette
+un solide en vues 2D par élimination des lignes cachées) ; détection de régions
+auto (arrangement planaire de courbes sécantes).
+
+**Vérifié à la main (CLI) :** STL (box → 12 triangles, 684 o), OBJ (24 v / 12 f),
+PATTERN3D (3×2 → 6 corps), CLASH (overlap 200 mm³ exact), SECTION (aire 100 mm²),
+MAKEVIEW TOP (4 arêtes visibles, projection 20 u), FeatureTree additif confirmé.
+
+**À valider VISUELLEMENT par Lex (non testable sans souris) :** placement/miroir
+éventuel de la vue MAKEVIEW par rapport au modèle ; ressenti des commandes 3D
+nouvelles dans la GUI ; toutes ces features sont pour l'instant pilotables au
+clavier/CLI — l'intégration GUI fine (boutons, gizmos, ViewCube widget, vue de
+sketch réorientée) reste à faire et demande son pilotage.
+
+**Non fait exprès (demande le pilotage de Lex ou est purement GUI)** : solveur de
+contraintes de sketch (H/V/parallèle/tangent…) et cotes pilotantes ; gizmo de
+déplacement 3D à la souris ; matériaux/apparences réalistes ; câblage de
+`FeatureTree` dans SolidEntity/.vkd (refonte du modèle de données). Voir
+`docs/FUSION_GAP.md` (items cochés).

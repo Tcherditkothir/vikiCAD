@@ -29,3 +29,27 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
 - **Piège (heredoc bash)** : un fixture DXF contient une ligne littérale `EOF` — un heredoc `<< 'EOF'` se fait couper au milieu. Utiliser un délimiteur improbable (`ENDOFTEST`).
 
 - **Leçon (dwg2dxf enveloppe à 254 octets)** : LibreDWG coupe les valeurs de chaîne longues à une largeur FIXE (254 o, parfois 255 quand un caractère UTF-8 de 2 octets chevauche) en insérant un CR/LF brut au milieu de la valeur. Signal robuste pour distinguer une continuation d'un vrai code de groupe : la largeur d'enveloppe. Ne PAS se fier seulement à « ligne non numérique » (une continuation pourrait être purement numérique) ni re-coller inconditionnellement (un DXF natif pourrait avoir une valeur de 254 o légitime). Combiner : segment ≥ 254 ET ligne suivante non numérique. Le DXF bien formé n'a jamais de ligne non numérique là où un code est attendu, donc zéro régression.
+
+## 2026-07-09 — Nuit autonome (workflows)
+
+- **Piège OCCT** : `BRepPrimAPI_Make*::IsDone()` (cylindre, boîte…) renvoie
+  souvent `false` tant que la forme n'est pas construite. Ne PAS s'y fier :
+  forcer `.Shape()` (ce qui déclenche `Build()`) puis `IsNull()`-checker le
+  résultat. A fait échouer le trou paramétrique (« building the hole cylinder
+  failed » alors que le cylindre était valide).
+- **Leçon (orchestration autonome)** : un agent qui meurt (ex. API 529) en
+  laissant l'arbre sale empoisonne TOUS les agents suivants si la règle est
+  « abort si arbre sale ». Correctif gravé dans les scripts de nuit : chaque
+  agent fait `git reset --hard HEAD` au DÉMARRAGE (le travail commité est sauf
+  dans HEAD ; seul le non-commité d'un agent mort saute). + idempotence (grep du
+  symbole avant d'implémenter) pour qu'une relance de lot ne duplique rien.
+  Séquentiel + reset-au-démarrage + commit-si-vert = arbre jamais cassé.
+- **Leçon (résilience 529)** : les surcharges serveur transitoires arrivent en
+  fenêtres ; relancer le même lot plus tard passe (les agents retentent en
+  interne, mais une fenêtre de surcharge soutenue les tue quand même). Rendre le
+  workflow ré-exécutable (idempotent, arbre propre) vaut mieux que d'essayer
+  d'éviter le 529.
+- **Leçon (récupération)** : quand un agent laisse un travail partiel propre dans
+  le stash (ici `makeHole` complet à ~90 %), le finir à la main (enregistrement
+  de la commande + test + build) est plus rapide et fiable que de tout jeter et
+  relancer — mes propres appels d'outils ne subissent pas la même fenêtre 529.

@@ -10,6 +10,31 @@ Chaque item porte :
   headless du cœur, mais **Lex valide** le ressenti au réveil.
 - Priorité P0 (le plus fort levier) → P3.
 
+## ✅ FAIT pendant la nuit autonome du 2026-07-09 (21 features, testées)
+
+Cœur implémenté + testé headless (à valider en GUI par Lex) :
+- **Esquisse** : snap sur la référence de face ✅ ; régions auto (fondations) ✅.
+- **Features** : Trou paramétrique ✅ ; Extrude New/Join/Cut/Symmetric ✅ ;
+  Coque (Shell) ✅ ; Congé/chanfrein par arête choisie ✅ ; Pattern 3D rect+polar
+  ✅ ; Sweep + Loft ✅ ; Draft (dépouille) ✅ ; **Historique de features =
+  fondations `FeatureTree`** ✅ (à câbler dans SolidEntity/.vkd — refonte à
+  piloter avec Lex).
+- **Assemblage** : Mate 2 faces planes ✅ ; Détection d'interférences ✅.
+- **Nav** : cœur des vues normalisées (Top/Front/Iso + alignToFace) ✅ (widget
+  ViewCube = GUI, à faire) ; Mesure 3D (min distance) ✅.
+- **Paramétrique/données** : Table de paramètres + évaluateur ✅ ; Export STL ✅
+  + OBJ ✅ ; **Dérivation dessin 2D par HLR (MAKEVIEW)** ✅.
+- **Dettes** : snap NEAREST/NODE/TANGENT ✅ ; word-wrap MTEXT + dimpost ✅ ;
+  persistance du plan de travail + purge snaps de sketch ✅.
+
+**RESTE (demande le pilotage de Lex ou est purement GUI)** : solveur de
+contraintes de sketch + cotes pilotantes ; vue de sketch réorientée face au plan
+; gizmo de déplacement 3D souris ; matériaux/apparences/ombres ; ViewCube widget
++ section dynamique ; câblage de FeatureTree dans le modèle de données ; export
+3MF ; Rib/Web/Thread réel ; sweep/loft avancés (twist, guide rails).
+
+---
+
 ## Contexte technique (déjà en place, réutiliser)
 - Solides = `SolidEntity` (wrapper `TopoDS_Shape`), BREP dans .vkd + undo.
 - `core/solid/SolidOps.*` : extrude/revolve/boolean/pushPullFace/planeFromFace/
