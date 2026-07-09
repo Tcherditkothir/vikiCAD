@@ -15,12 +15,23 @@
 
 namespace viki {
 
+class CommandProcessor;
+
 // OCCT AIS 3D view (shaded solids). Rotate = left drag, pan = middle drag,
 // zoom = wheel. Rebuilt from the document on every activation.
+//
+// When a command is running and asks for a Point, the 3D view becomes an input
+// device (Fusion-style): hovering a planar face makes it the active work
+// plane, the cursor position on it feeds the command's pointer hint and ghost
+// preview (red = material removed, blue = added), and a click supplies the
+// point — plus the face's owning solid if the command then asks for one.
 class OcctViewWidget : public QWidget {
     Q_OBJECT
 public:
     explicit OcctViewWidget(QWidget* parent = nullptr);
+
+    // Wire the document + command processor (same pattern as CanvasWidget).
+    void attach(Document* doc, CommandProcessor* processor);
 
     // (Re)display every solid in the document and fit the view.
     void refreshFrom(const Document& doc);
@@ -45,6 +56,9 @@ signals:
     void pushPullFace(EntityId solid, double distance);
     // Right-click "Sketch on this face": set the work plane to the picked face.
     void sketchOnFace();
+    // Command input was provided from the 3D view (same contract as
+    // CanvasWidget::interaction): the main window refreshes prompt + views.
+    void interaction();
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -62,18 +76,39 @@ private:
     // Logical (Qt) -> physical (OCCT) pixel mapping for HiDPI displays.
     QPoint devicePos(const QPoint& logical) const;
 
+    // Command-input pipeline (active-command Point prompts only).
+    bool commandWantsPoint() const;
+    // Resolve the cursor into work-plane 2D coords: prefer the surface point of
+    // the planar face under the cursor (which also becomes the work plane and
+    // snaps to the face's feature points); fall back to a ray/work-plane
+    // intersection in free space. Updates m_hover* members.
+    bool cursorToPlane(const QPoint& physical, Vec2d& uv);
+    void updateGhost(const Vec2d& uv);
+    void clearGhost();
+
     Handle(V3d_Viewer) m_viewer;
     Handle(V3d_View) m_view;
     Handle(AIS_InteractiveContext) m_context;
     QPoint m_lastPos;
     QPoint m_pressPos;
     bool m_initFailed = false;
+    bool m_fittedOnce = false;
+
+    Document* m_doc = nullptr;
+    CommandProcessor* m_processor = nullptr;
 
     // Map each displayed shape back to its document entity, and remember the
     // last picked face + its owning solid (for Push/Pull).
     std::vector<std::pair<Handle(AIS_InteractiveObject), EntityId>> m_shapes;
     TopoDS_Shape m_pickedFace;
     EntityId m_pickedSolid = kInvalidEntityId;
+
+    // Transient ghost of the active command's pending result.
+    Handle(AIS_InteractiveObject) m_ghost;
+    // What the cursor last resolved to during a Point prompt.
+    bool m_hoverValid = false;
+    Vec2d m_hoverUv;
+    EntityId m_hoverSolid = kInvalidEntityId;
 };
 
 } // namespace viki

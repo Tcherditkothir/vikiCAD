@@ -18,11 +18,17 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
+#include <StdSelect_ViewerSelector3d.hxx>
 #include <TopAbs.hxx>
 #include <TopoDS_Shape.hxx>
 #include <Xw_Window.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Vec.hxx>
 
+#include "cmd/Command.h"
+#include "cmd/CommandProcessor.h"
 #include "solid/SolidEntity.h"
+#include "solid/SolidOps.h"
 
 namespace viki {
 
@@ -77,12 +83,21 @@ void OcctViewWidget::initViewer()
     }
 }
 
+void OcctViewWidget::attach(Document* doc, CommandProcessor* processor)
+{
+    m_doc = doc;
+    m_processor = processor;
+    m_hoverValid = false;
+    m_hoverSolid = kInvalidEntityId;
+}
+
 void OcctViewWidget::refreshFrom(const Document& doc)
 {
     initViewer();
     if (m_view.IsNull())
         return;
     m_context->RemoveAll(false);
+    m_ghost.Nullify(); // RemoveAll dropped it with everything else
     m_shapes.clear();
     m_pickedFace = TopoDS_Shape();
     m_pickedSolid = kInvalidEntityId;
@@ -112,8 +127,13 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_EDGE));
         ++shown;
     }
-    if (shown > 0)
+    // Fit the camera on the first population only: refreshes now also happen
+    // after every command (a hole appears in place), and re-fitting each time
+    // would make the camera jump under the user's cursor.
+    if (shown > 0 && !m_fittedOnce) {
         m_view->FitAll(0.1, false);
+        m_fittedOnce = true;
+    }
     m_view->Redraw();
 }
 
@@ -171,6 +191,120 @@ void OcctViewWidget::mousePressEvent(QMouseEvent* event)
     }
 }
 
+// Is the running command asking for a point-like input right now?
+bool OcctViewWidget::commandWantsPoint() const
+{
+    if (!m_processor || !m_doc || !m_processor->hasActiveCommand())
+        return false;
+    const InputKind k = m_processor->currentRequest().kind;
+    return k == InputKind::Point || k == InputKind::Distance;
+}
+
+// Resolve the cursor into work-plane 2D coordinates. Hovering a PLANAR face:
+// that face becomes the active work plane (so a hole bores along its normal,
+// like Fusion), the OCCT-detected surface point is projected into the plane,
+// and the position snaps to the face's own feature points (hole centers, edge
+// vertices). In free space: intersect the view ray with the current plane.
+bool OcctViewWidget::cursorToPlane(const QPoint& physical, Vec2d& uv)
+{
+    m_hoverValid = false;
+    m_hoverSolid = kInvalidEntityId;
+    if (m_view.IsNull() || m_context.IsNull() || !m_doc)
+        return false;
+
+    if (m_context->HasDetected()) {
+        Handle(StdSelect_BRepOwner) owner =
+            Handle(StdSelect_BRepOwner)::DownCast(m_context->DetectedOwner());
+        if (!owner.IsNull() && owner->HasShape() &&
+            owner->Shape().ShapeType() == TopAbs_FACE) {
+            const TopoDS_Shape face = owner->Shape();
+            const auto plane = solidops::planeFromFace(face);
+            const auto sel = m_context->MainSelector();
+            if (plane && !sel.IsNull() && sel->NbPicked() > 0) {
+                documentWorkplane(*m_doc) = *plane;
+                uv = solidops::projectToPlane2d(sel->PickedPoint(1), *plane);
+                // Snap to the face's real features within ~10 px.
+                const double tol = std::max(m_view->Convert(10), 1e-6);
+                double best = tol;
+                for (const SnapPoint& s : solidops::faceSnapPoints2d(face, *plane)) {
+                    const double d = s.p.distanceTo(uv);
+                    if (d < best) {
+                        best = d;
+                        uv = s.p;
+                    }
+                }
+                // Remember the owning solid: a later EntitySet prompt (e.g.
+                // HOLE's target) is answered by the same click.
+                const Handle(AIS_InteractiveObject) io =
+                    Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+                for (const auto& pr : m_shapes)
+                    if (pr.first == io)
+                        m_hoverSolid = pr.second;
+                m_hoverUv = uv;
+                m_hoverValid = true;
+                return true;
+            }
+        }
+    }
+
+    // Free space: view ray ∩ current work plane.
+    const WorkPlane plane = documentWorkplane(*m_doc);
+    Standard_Real px = 0, py = 0, pz = 0, vx = 0, vy = 0, vz = 0;
+    m_view->ConvertWithProj(physical.x(), physical.y(), px, py, pz, vx, vy, vz);
+    const gp_Vec dir(vx, vy, vz);
+    const gp_Vec n(plane.normal);
+    const double denom = dir.Dot(n);
+    if (std::fabs(denom) < 1e-9)
+        return false; // ray parallel to the plane
+    const gp_Vec toPlane(gp_Pnt(px, py, pz), plane.origin);
+    const double t = toPlane.Dot(n) / denom;
+    const gp_Pnt hit(px + vx * t, py + vy * t, pz + vz * t);
+    uv = solidops::projectToPlane2d(hit, plane);
+    m_hoverUv = uv;
+    m_hoverValid = true;
+    return true;
+}
+
+void OcctViewWidget::updateGhost(const Vec2d& uv)
+{
+    if (m_context.IsNull() || !m_processor || !m_processor->hasActiveCommand()) {
+        clearGhost();
+        return;
+    }
+    Preview3d preview;
+    if (!m_processor->activeCommand()->preview3d(m_processor->ctx(), uv, preview) ||
+        preview.shape.IsNull()) {
+        clearGhost();
+        return;
+    }
+    if (!m_ghost.IsNull())
+        m_context->Remove(m_ghost, false);
+    Handle(AIS_Shape) ghost = new AIS_Shape(preview.shape);
+    // Fusion colour language: red = material removed, blue = added.
+    Quantity_Color col(0.70, 0.72, 0.75, Quantity_TOC_RGB);
+    if (preview.effect == Preview3d::Effect::Remove)
+        col = Quantity_Color(0.95, 0.25, 0.20, Quantity_TOC_RGB);
+    else if (preview.effect == Preview3d::Effect::Add)
+        col = Quantity_Color(0.25, 0.55, 0.95, Quantity_TOC_RGB);
+    ghost->SetColor(col);
+    ghost->SetTransparency(0.55f);
+    m_context->Display(ghost, AIS_Shaded, -1, false); // -1: not selectable
+    m_ghost = ghost;
+    m_view->Redraw();
+}
+
+void OcctViewWidget::clearGhost()
+{
+    if (m_ghost.IsNull())
+        return;
+    if (!m_context.IsNull()) {
+        m_context->Remove(m_ghost, false);
+        if (!m_view.IsNull())
+            m_view->Redraw();
+    }
+    m_ghost.Nullify();
+}
+
 void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_view.IsNull())
@@ -184,6 +318,17 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
     } else if (!m_context.IsNull()) {
         // No button: dynamic hover highlight of the face/edge under the cursor.
         m_context->MoveTo(p.x(), p.y(), m_view, Standard_True);
+        // Command input mode: the 3D cursor feeds the running command with a
+        // live position (pointer hint) and a ghost of the pending result.
+        if (commandWantsPoint()) {
+            Vec2d uv;
+            if (cursorToPlane(p, uv)) {
+                m_processor->ctx().setPointerHint(uv);
+                updateGhost(uv);
+            }
+        } else if (!m_ghost.IsNull()) {
+            clearGhost(); // the command ended some other way
+        }
     }
     m_lastPos = event->pos();
 }
@@ -247,10 +392,48 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_view.IsNull() || m_context.IsNull() || event->button() != Qt::LeftButton)
         return;
-    // A click (no meaningful drag) selects; a drag was an orbit.
+    // A click (no meaningful drag) acts; a drag was an orbit.
     if ((event->pos() - m_pressPos).manhattanLength() >= 4)
         return;
     const QPoint p = devicePos(event->pos());
+
+    // A running command asking for a point: the click IS the point (work-plane
+    // coords resolved by the last hover). If the command then asks for an
+    // entity and the click was on a solid's face, the same click answers that
+    // too — HOLE 6 T + one click on a face = a hole in that solid.
+    if (commandWantsPoint()) {
+        Vec2d uv;
+        if (m_hoverValid)
+            uv = m_hoverUv;
+        else if (!cursorToPlane(p, uv))
+            return;
+        const EntityId hitSolid = m_hoverSolid;
+        m_processor->provideInput(InputValue::makePoint(uv));
+        if (m_processor->hasActiveCommand() &&
+            m_processor->currentRequest().kind == InputKind::EntitySet &&
+            hitSolid != kInvalidEntityId) {
+            m_processor->provideInput(InputValue::makeEntityRef(hitSolid));
+        }
+        if (!m_processor->hasActiveCommand())
+            clearGhost();
+        emit interaction();
+        return;
+    }
+
+    // A running command asking for entities: clicking a solid supplies it
+    // (same contract as the 2D canvas hit-test click).
+    if (m_processor && m_doc && m_processor->hasActiveCommand() &&
+        m_processor->currentRequest().kind == InputKind::EntitySet) {
+        pickAtPhysical(p.x(), p.y());
+        if (m_pickedSolid != kInvalidEntityId) {
+            m_processor->provideInput(InputValue::makeEntityRef(m_pickedSolid));
+            if (!m_processor->hasActiveCommand())
+                clearGhost();
+            emit interaction();
+            return;
+        }
+    }
+
     emit picked(pickAtPhysical(p.x(), p.y()));
 }
 

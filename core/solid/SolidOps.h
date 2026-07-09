@@ -145,6 +145,13 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
 // curved faces.
 std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face);
 
+// Express a 3D point in a work plane's 2D sketch coordinates (the inverse of
+// the plane's own to-3D mapping): u = (p - origin)·xDir, v = (p - origin)·yDir
+// with yDir = normal × xDir. Feeds 3D-view mouse positions into 2D commands.
+Vec2d projectToPlane2d(const gp_Pnt& p, const WorkPlane& plane);
+// And back: the 3D point of sketch coords `uv` on `plane`.
+gp_Pnt planePoint3d(const Vec2d& uv, const WorkPlane& plane);
+
 // Assembly MATE constraint between two PLANAR faces. Returns the gp_Trsf that
 // rigidly moves the solid owning `faceA` so that `faceA` becomes coincident
 // with `faceB` (their planes overlap) and their outward normals are opposed

@@ -1,5 +1,8 @@
 #include "CommandProcessor.h"
 
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
+
 #include "doc/EntityFactory.h"
 #include "doc/Entities.h"
 #include "render/DrawingProjection.h"
@@ -389,6 +392,33 @@ public:
         default:
             return Step::cancelled();
         }
+    }
+
+    // Fusion-style ghost: a red translucent cylinder of the bore, following
+    // the cursor while the centre is being placed (then pinned at the chosen
+    // centre while the target solid is picked).
+    bool preview3d(CommandContext& ctx, const Vec2d& cursor, Preview3d& out) override
+    {
+        if (m_stage < 2)
+            return false; // diameter/depth not set yet — nothing meaningful
+        const WorkPlane plane = documentWorkplane(ctx.doc());
+        const Vec2d at = m_stage == 2 ? cursor : m_center;
+        // A through bore's true extent needs the target solid; before it is
+        // known, straddle the plane with a generous visual length.
+        const double len =
+            m_through ? std::max(m_depth, m_diameter * 6.0) : m_depth;
+        const gp_Pnt base = solidops::planePoint3d(at, plane);
+        const gp_Dir into(gp_Vec(plane.normal).Reversed()); // bore into material
+        const gp_Pnt origin =
+            m_through ? base.Translated(gp_Vec(plane.normal) * (len * 0.5)) : base;
+        const TopoDS_Shape ghost =
+            BRepPrimAPI_MakeCylinder(gp_Ax2(origin, into), m_diameter / 2.0, len)
+                .Shape();
+        if (ghost.IsNull())
+            return false;
+        out.shape = ghost;
+        out.effect = Preview3d::Effect::Remove;
+        return true;
     }
 
 private:

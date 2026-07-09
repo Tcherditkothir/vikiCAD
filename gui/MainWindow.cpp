@@ -305,6 +305,9 @@ void MainWindow::toggle3D(bool on)
     if (on) {
         if (!m_occtView) {
             m_occtView = new OcctViewWidget(this);
+            m_occtView->attach(m_doc.get(), m_processor.get());
+            connect(m_occtView, &OcctViewWidget::interaction, this,
+                    &MainWindow::onInteraction);
             connect(m_occtView, &OcctViewWidget::picked, this,
                     [this](const QString& info) { m_commandBar->appendHistory(info); });
             connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
@@ -516,6 +519,8 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     registerBuiltinCommands(*m_processor);
     m_commandBar->setCompletions(m_processor->commandNames());
     m_canvas->attach(m_doc.get(), m_processor.get(), &m_selection);
+    if (m_occtView)
+        m_occtView->attach(m_doc.get(), m_processor.get());
     m_layerPanel->attach(m_doc.get());
     m_propsPanel->attach(m_doc.get(), &m_selection);
     m_assemblyPanel->attach(m_doc.get(), &m_selection);
@@ -565,12 +570,20 @@ void MainWindow::onCommandEntered(const QString& line)
         m_lastCommand = line.section(QLatin1Char(' '), 0, 0).toUpper();
     refreshPromptAndMessages();
     m_canvas->markDocumentDirty(); // typed points can land mid-transaction too
+    // Typed 3D commands (HOLE, SHELL, PATTERN3D…) must show up without having
+    // to toggle the view off and on again.
+    if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+        m_occtView->refreshFrom(*m_doc);
 }
 
 void MainWindow::onInteraction()
 {
     refreshPromptAndMessages();
     m_propsPanel->refresh();
+    // Mouse-driven commands mutate solids too (e.g. HOLE placed by a 3D
+    // click): keep the 3D view in sync when it is the active view.
+    if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+        m_occtView->refreshFrom(*m_doc);
 }
 
 void MainWindow::refreshPromptAndMessages()

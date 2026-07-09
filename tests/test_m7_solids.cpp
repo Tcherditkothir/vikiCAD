@@ -737,3 +737,47 @@ TEST_CASE("solid renders its real 2D silhouette, no placeholder label", "[m7][si
     CHECK(hi.x == Approx(20.0).margin(1e-6));
     CHECK(hi.y == Approx(20.0).margin(1e-6));
 }
+
+TEST_CASE("projectToPlane2d round-trips with planePoint3d", "[m7][plane2d]")
+{
+    // A tilted plane: origin off-axis, normal +X, xDir +Y (the YZ plane).
+    const WorkPlane plane{gp_Pnt(5, -2, 7), gp_Dir(1, 0, 0), gp_Dir(0, 1, 0)};
+    const Vec2d uv{12.5, -3.75};
+    const gp_Pnt p = solidops::planePoint3d(uv, plane);
+    const Vec2d back = solidops::projectToPlane2d(p, plane);
+    CHECK(back.x == Approx(uv.x).margin(1e-9));
+    CHECK(back.y == Approx(uv.y).margin(1e-9));
+    // And a known 3D point: uv (1,2) on the YZ plane = origin + (0,1,0)*1 + (0,0,1)*2.
+    const gp_Pnt q = solidops::planePoint3d(Vec2d{1, 2}, plane);
+    CHECK(q.X() == Approx(5.0).margin(1e-9));
+    CHECK(q.Y() == Approx(-1.0).margin(1e-9));
+    CHECK(q.Z() == Approx(9.0).margin(1e-9));
+}
+
+TEST_CASE("HOLE ghost preview is a red-effect cylinder at the cursor", "[m7][hole][preview3d]")
+{
+    Rig rig;
+    // Start HOLE with d=6, through — the command now awaits the centre point.
+    REQUIRE(rig.processor.submit(QStringLiteral("HOLE 6 T"), false).ok);
+    REQUIRE(rig.processor.hasActiveCommand());
+
+    Preview3d ghost;
+    REQUIRE(rig.processor.activeCommand()->preview3d(rig.ctx, Vec2d{10, 10}, ghost));
+    CHECK(ghost.effect == Preview3d::Effect::Remove); // hole removes material
+    REQUIRE_FALSE(ghost.shape.IsNull());
+    // Through ghost length = max(depth default 10, 6*d = 36) -> pi*3^2*36.
+    CHECK(volumeOf(ghost.shape) == Approx(M_PI * 9.0 * 36.0).epsilon(1e-6));
+    // Centred at the cursor on the XY work plane.
+    Bnd_Box bb;
+    BRepBndLib::Add(ghost.shape, bb);
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    CHECK((xmin + xmax) / 2.0 == Approx(10.0).margin(1e-6));
+    CHECK((ymin + ymax) / 2.0 == Approx(10.0).margin(1e-6));
+
+    // No ghost before the numeric params are in.
+    Rig fresh;
+    REQUIRE(fresh.processor.submit(QStringLiteral("HOLE"), false).ok);
+    Preview3d none;
+    CHECK_FALSE(fresh.processor.activeCommand()->preview3d(fresh.ctx, Vec2d{0, 0}, none));
+}

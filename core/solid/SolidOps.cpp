@@ -1082,6 +1082,19 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)
     return wp;
 }
 
+Vec2d projectToPlane2d(const gp_Pnt& p, const WorkPlane& plane)
+{
+    const gp_Vec d(plane.origin, p);
+    const gp_Vec x(plane.xDir);
+    const gp_Vec y(gp_Vec(plane.normal).Crossed(gp_Vec(plane.xDir)));
+    return Vec2d{d.Dot(x), d.Dot(y)};
+}
+
+gp_Pnt planePoint3d(const Vec2d& uv, const WorkPlane& plane)
+{
+    return to3d(uv, plane);
+}
+
 std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
                                      const TopoDS_Shape& faceB)
 {
