@@ -616,3 +616,51 @@ TEST_CASE("mateTransform snaps a moving face flat onto a fixed face", "[m7][mate
     CHECK_FALSE(solidops::mateTransform(fixed, faceB).has_value());  // solid, not a face
     CHECK_FALSE(solidops::mateTransform(faceA, TopoDS_Shape()).has_value());
 }
+
+TEST_CASE("minDistance between two boxes 5mm apart along X", "[m7][measure3d]")
+{
+    using namespace viki;
+    // Box A occupies x in [0,10]; box B is translated +15 in X so it occupies
+    // x in [15,25]. The nearest faces sit at x=10 and x=15 → gap = 5mm.
+    const TopoDS_Shape a = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(15.0, 0.0, 0.0));
+    const TopoDS_Shape b =
+        BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape(),
+                                 shift, true)
+            .Shape();
+
+    CHECK(solidops::minDistance(a, b) == Approx(5.0).margin(1e-9));
+    // Symmetric.
+    CHECK(solidops::minDistance(b, a) == Approx(5.0).margin(1e-9));
+    // A shape against itself touches → 0.
+    CHECK(solidops::minDistance(a, a) == Approx(0.0).margin(1e-9));
+    // Null shape → -1 failure sentinel.
+    CHECK(solidops::minDistance(a, TopoDS_Shape()) == Approx(-1.0));
+}
+
+TEST_CASE("MEASURE3D command reports two boxes 5mm apart", "[m7][measure3d]")
+{
+    using namespace viki;
+    Rig rig;
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(15.0, 0.0, 0.0));
+    rig.doc.beginTransaction(QStringLiteral("setup"));
+    // Box A: 10x10x10 at origin.
+    const EntityId ia = rig.doc.addEntity(std::make_unique<SolidEntity>(
+        BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()));
+    // Box B: shifted +15 in X → 5mm gap.
+    const EntityId ib = rig.doc.addEntity(std::make_unique<SolidEntity>(
+        BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape(),
+                                 shift, true)
+            .Shape()));
+    rig.doc.commitTransaction();
+
+    rig.ctx.clearMessages();
+    REQUIRE(rig.run(QStringLiteral("MEASURE3D %1 %2").arg(ia).arg(ib)));
+    REQUIRE_FALSE(rig.ctx.messages().empty());
+    const QString msg = rig.ctx.messages().back();
+    CHECK(msg.contains(QStringLiteral("min distance")));
+    // The reported number is 5.
+    CHECK(msg.contains(QStringLiteral("5")));
+}

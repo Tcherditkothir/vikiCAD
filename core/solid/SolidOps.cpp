@@ -20,6 +20,7 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
@@ -770,6 +771,20 @@ std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
     // moving solid so faceA snaps flat against faceB.
     t.SetDisplacement(src.Ax2(), dst.Ax2());
     return t;
+}
+
+double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b)
+{
+    if (a.IsNull() || b.IsNull())
+        return -1.0;
+    try {
+        BRepExtrema_DistShapeShape ext(a, b);
+        if (!ext.IsDone() || ext.NbSolution() < 1)
+            return -1.0;
+        return ext.Value();
+    } catch (const Standard_Failure&) {
+        return -1.0;
+    }
 }
 
 std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,

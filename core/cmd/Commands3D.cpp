@@ -430,6 +430,39 @@ std::unique_ptr<Command> makeIntersect()
     return std::make_unique<BooleanCommand>(solidops::BoolOp::Intersect);
 }
 
+// MEASURE3D  id-a id-b  — reports the minimum 3D distance (mm) between two
+// solids. Read-only: no transaction, no mutation. The distance is surfaced via
+// ctx.info (picked up by the CLI/GUI message channel).
+class Measure3DCommand : public Command {
+public:
+    const char* name() const override { return "MEASURE3D"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select two solids (ids):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind != InputValue::Kind::EntitySet || v.entitySet.size() != 2)
+            return Step::cancelled();
+        auto* sa = dynamic_cast<SolidEntity*>(ctx.doc().entity(v.entitySet[0]));
+        auto* sb = dynamic_cast<SolidEntity*>(ctx.doc().entity(v.entitySet[1]));
+        if (!sa || !sb) {
+            ctx.info(QStringLiteral("both ids must be solids"));
+            return Step::cancelled();
+        }
+        const double d = solidops::minDistance(sa->shape(), sb->shape());
+        if (d < 0.0) {
+            ctx.info(QStringLiteral("distance computation failed"));
+            return Step::cancelled();
+        }
+        ctx.info(QStringLiteral("min distance = %1 mm").arg(d, 0, 'g', 12));
+        return Step::done();
+    }
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -447,6 +480,7 @@ void registerSolidCommands(CommandProcessor& p)
     p.registerCommand(&makeSubtract, {QStringLiteral("SUB")});
     p.registerCommand(&makeIntersect, {QStringLiteral("INT")});
     p.registerCommand(&make<HoleCommand>, {QStringLiteral("HO")});
+    p.registerCommand(&make<Measure3DCommand>, {QStringLiteral("M3D")});
 }
 
 } // namespace viki

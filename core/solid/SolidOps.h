@@ -116,6 +116,11 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face);
 std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
                                      const TopoDS_Shape& faceB);
 
+// Minimum 3D distance between two shapes (solids, faces, edges…), in mm, using
+// BRepExtrema_DistShapeShape. Returns 0 when the shapes touch or interpenetrate.
+// Returns -1 on failure (null shapes or the extrema solver not done).
+double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b);
+
 // The face's boundary edges projected into the work-plane's 2D (u,v) frame —
 // reference geometry drawn in the 2D canvas so you sketch on the real face
 // outline (holes included), not a blank rectangle. One polyline per edge.
