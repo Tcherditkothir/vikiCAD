@@ -307,19 +307,8 @@ void MainWindow::toggle3D(bool on)
             m_occtView = new OcctViewWidget(this);
             connect(m_occtView, &OcctViewWidget::picked, this,
                     [this](const QString& info) { m_commandBar->appendHistory(info); });
-            connect(m_occtView, &OcctViewWidget::sketchOnFace, this, [this] {
-                const auto wp = solidops::planeFromFace(m_occtView->pickedFace());
-                if (!wp) {
-                    m_commandBar->appendHistory(
-                        QStringLiteral("! sketch: pick a FLAT face"));
-                    return;
-                }
-                documentWorkplane(*m_doc) = *wp;
-                setView3D(false); // back to the 2D canvas to draw the profile
-                m_commandBar->appendHistory(QStringLiteral(
-                    "Work plane set to the face. Draw a closed 2D profile, then "
-                    "EXTRUDE — it builds on this face. WORKPLANE XY to reset."));
-            });
+            connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
+                    &MainWindow::beginSketchOnFace);
             connect(m_occtView, &OcctViewWidget::pushPullFace, this,
                     [this](EntityId id, double dist) {
                         const auto* solid =
@@ -453,6 +442,10 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                                                 : m_occtView->pickAtPhysical(cx, cy);
         return {{QStringLiteral("ok"), true}, {QStringLiteral("picked"), info}};
     }
+    if (method == QLatin1String("sketchface")) {
+        beginSketchOnFace();
+        return {{QStringLiteral("ok"), true}};
+    }
     if (method == QLatin1String("insertstep")) {
         QString error;
         if (!insertStepFile(params[QStringLiteral("path")].toString(), error))
@@ -530,6 +523,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
         m_layerPanel->refresh();
         m_assemblyPanel->refresh();
     });
+    m_canvas->clearSketchReference();
     m_canvas->zoomExtents();
     updateWindowTitle();
     updateUnitsButton();
@@ -761,6 +755,26 @@ void MainWindow::saveFileAs()
     if (!path.endsWith(QLatin1String(".vkd")))
         path += QLatin1String(".vkd");
     saveTo(path);
+}
+
+void MainWindow::beginSketchOnFace()
+{
+    if (!m_doc || !m_occtView)
+        return;
+    const auto wp = solidops::planeFromFace(m_occtView->pickedFace());
+    if (!wp) {
+        m_commandBar->appendHistory(QStringLiteral("! sketch: pick a FLAT face"));
+        return;
+    }
+    documentWorkplane(*m_doc) = *wp;
+    // Project the real face outline into the sketch plane so the canvas shows
+    // the face (holes and all), not a blank box.
+    m_canvas->setSketchReference(
+        solidops::faceOutline2d(m_occtView->pickedFace(), *wp));
+    setView3D(false); // back to the 2D canvas to draw the profile
+    m_commandBar->appendHistory(QStringLiteral(
+        "Sketching on the face (blue dashed outline). Draw a closed profile, "
+        "then EXTRUDE. WORKPLANE XY resets."));
 }
 
 void MainWindow::insertStepComponent()

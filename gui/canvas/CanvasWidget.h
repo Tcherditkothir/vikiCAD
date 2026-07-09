@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <vector>
 
 #include <QPixmap>
 #include <QWidget>
@@ -26,6 +27,10 @@ public:
     // ViewHook
     void zoomExtents() override;
     void zoomWindow(const BBox2d& box) override;
+
+    // Sketch-on-face reference outline (world 2D, in the sketch plane frame).
+    void setSketchReference(std::vector<std::vector<Vec2d>> loops);
+    void clearSketchReference() { m_sketchRef.clear(); update(); }
 
     // Input-mode toggles (status bar buttons).
     SnapSettings& snapSettings() { return m_snapSettings; }
@@ -88,6 +93,7 @@ private:
     double m_gridSpacing = 10.0; // mm
     std::optional<SnapResult> m_activeSnap;
     Vec2d m_effectiveCursor;
+    std::vector<std::vector<Vec2d>> m_sketchRef; // face outline while sketching
 
     // Grip editing (selection, no active command).
     struct GripDrag {

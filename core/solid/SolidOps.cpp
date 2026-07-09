@@ -2,7 +2,9 @@
 
 #include <map>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -14,6 +16,7 @@
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Circ.hxx>
@@ -378,6 +381,34 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)
     if (TopoDS::Face(face).Orientation() == TopAbs_REVERSED)
         wp.normal.Reverse();
     return wp;
+}
+
+std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,
+                                              const WorkPlane& plane)
+{
+    std::vector<std::vector<Vec2d>> loops;
+    if (face.IsNull() || face.ShapeType() != TopAbs_FACE)
+        return loops;
+    const gp_Vec xv(plane.xDir);
+    const gp_Vec yv(plane.normal.Crossed(plane.xDir));
+    const auto to2d = [&](const gp_Pnt& p) {
+        const gp_Vec d(plane.origin, p);
+        return Vec2d{d.Dot(xv), d.Dot(yv)};
+    };
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        BRepAdaptor_Curve curve(edge);
+        const double t0 = curve.FirstParameter();
+        const double t1 = curve.LastParameter();
+        // A line needs 2 points; curves are sampled finely.
+        const int n = curve.GetType() == GeomAbs_Line ? 1 : 48;
+        std::vector<Vec2d> poly;
+        poly.reserve(n + 1);
+        for (int i = 0; i <= n; ++i)
+            poly.push_back(to2d(curve.Value(t0 + (t1 - t0) * i / n)));
+        loops.push_back(std::move(poly));
+    }
+    return loops;
 }
 
 } // namespace solidops

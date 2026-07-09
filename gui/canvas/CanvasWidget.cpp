@@ -68,6 +68,18 @@ void CanvasWidget::zoomWindow(const BBox2d& box)
     markDocumentDirty();
 }
 
+void CanvasWidget::setSketchReference(std::vector<std::vector<Vec2d>> loops)
+{
+    m_sketchRef = std::move(loops);
+    BBox2d box;
+    for (const std::vector<Vec2d>& loop : m_sketchRef)
+        for (const Vec2d& v : loop)
+            box.expand(v);
+    if (box.isValid())
+        zoomWindow(box.inflated(std::max(box.width(), box.height()) * 0.15));
+    update();
+}
+
 void CanvasWidget::drawGrid(QPainter& painter) const
 {
     const double pxPerMinor = m_gridSpacing * m_camera.scale();
@@ -121,6 +133,11 @@ void CanvasWidget::rebuildStaticLayer()
             continue;
         const Layer* layer = m_doc->layer(e->layerId());
         if (layer && !layer->visible)
+            continue;
+        // While sketching on a face, hide the solid footprint placeholders —
+        // the blue face outline is the reference to draw against.
+        if (!m_sketchRef.empty() &&
+            QLatin1String(e->typeName()) == QLatin1String("solid"))
             continue;
         // View culling.
         if (!m_doc->entityBounds(*e).intersects(ctx.viewBox))
@@ -301,6 +318,21 @@ void CanvasWidget::paintEvent(QPaintEvent*)
         p.setBrush(c);
         p.drawRect(QRectF(m_rubberStart, m_cursorPx).normalized());
         p.setBrush(Qt::NoBrush);
+    }
+
+    // Sketch-on-face reference: the picked face's outline, projected into the
+    // sketch plane, so you draw ON the real face (holes and all).
+    if (!m_sketchRef.empty()) {
+        QPen refPen(QColor(90, 200, 255, 180), 0, Qt::DashLine);
+        p.setPen(refPen);
+        for (const std::vector<Vec2d>& loop : m_sketchRef) {
+            if (loop.size() < 2)
+                continue;
+            QPainterPath path(m_camera.worldToScreen(loop.front()));
+            for (size_t i = 1; i < loop.size(); ++i)
+                path.lineTo(m_camera.worldToScreen(loop[i]));
+            p.drawPath(path);
+        }
     }
 
     drawSnapGlyph(p);

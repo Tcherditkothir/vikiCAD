@@ -47,6 +47,7 @@ private:
     // failure, shows a dialog when interactive, else logs to the command bar.
     bool loadFile(const QString& path, bool interactive);
     bool insertStepFile(const QString& path, QString& error); // additive, shared
+    void beginSketchOnFace(); // set the work plane to the picked 3D face
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();

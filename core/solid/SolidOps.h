@@ -61,6 +61,12 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
 // curved faces.
 std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face);
 
+// The face's boundary edges projected into the work-plane's 2D (u,v) frame —
+// reference geometry drawn in the 2D canvas so you sketch on the real face
+// outline (holes included), not a blank rectangle. One polyline per edge.
+std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,
+                                              const WorkPlane& plane);
+
 } // namespace solidops
 
 // The current work plane, per document (small registry, v1). Set by WORKPLANE
