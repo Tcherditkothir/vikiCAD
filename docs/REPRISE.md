@@ -49,9 +49,23 @@ Session 3 (3D interactif) :
     manquant dans insertStepFile → SIGILL dans le pilote GL ; double refresh 3D
     aussi à éviter.
 
-## Backlog encore ouvert (suite)
-- 3D : contrainte d'assemblage (mate/align), gizmo de positionnement 3D,
-  highlight persistant de la sélection, MOVE3D interactif (pointer un point 3D).
+Session 4-6 (3D interactif approfondi) :
+17. Pick 3D HiDPI (devicePos), surbrillance orange (LocalSelected), couleur+
+    transparence des solides (TRANS), autocomplétion (QCompleter), verbe IPC
+    `pick3d`/`view3d`/`insertstep`.
+18. Menu clic droit panneau Assembly (couleur/transparence/renommer/supprimer).
+19. Push/Pull d'une face (clic droit 3D → prisme+booléen ; `solidops::pushPullFace`).
+20. Ctrl+Z/Ctrl+Y.
+21. **Plan de travail généralisé** (`WorkPlane` = origine+normale+axeX ;
+    `documentWorkplane(doc)`) + **Sketch sur face** (clic droit → `planeFromFace`
+    → plan de travail + bascule 2D ; EXTRUDE perpendiculaire à la face).
+
+## Backlog encore ouvert (suite) — vers l'ergonomie Fusion
+- **Sketch sur face v2** : environnement de sketch réorienté (vue face à la
+  face) + silhouette de la face projetée en référence (on dessine encore dans
+  le canevas 2D abstrait).
+- Contrainte d'assemblage (mate/align), gizmo de positionnement 3D interactif,
+  MOVE3D en pointant un point 3D, historique de features (paramétrique).
 - Aperçus FILLET/CHAMFER/TRIM/EXTEND (survol/sélection).
 - MTEXT word-wrap par largeur de colonne ; dimpost (suffixe DIMSTYLE code 3).
 - Snap nearest/tangent/node ; tolérance de snap configurable.
