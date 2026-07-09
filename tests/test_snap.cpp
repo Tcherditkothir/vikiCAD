@@ -5,6 +5,7 @@
 
 #include "doc/Block.h"
 #include "doc/Entities.h"
+#include "doc/EntitiesEx.h"
 #include "snap/SnapEngine.h"
 
 using namespace viki;
@@ -71,6 +72,88 @@ TEST_CASE("perpendicular snap from a base point", "[snap]")
     REQUIRE(r->kind == SnapKind::Perpendicular);
     REQUIRE(r->point.x == Approx(30.0));
     REQUIRE(r->point.y == Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("nearest snap returns the foot of perpendicular on a line", "[snap]")
+{
+    const Document doc = makeDoc();
+    SnapSettings s;
+    // Isolate NEAREST: turn off every other typed mode so only the closest point
+    // on an entity competes.
+    s.endpoint = s.node = s.midpoint = s.center = s.quadrant = false;
+    s.intersection = s.perpendicular = s.tangent = false;
+    // Line 1 is the X axis from (0,0) to (100,0). Cursor above it at (30,3): the
+    // closest point on the line is the foot of the perpendicular, (30,0).
+    const auto r = snapQuery(doc, {30, 3}, 5.0, s, std::nullopt);
+    REQUIRE(r);
+    REQUIRE(r->kind == SnapKind::Nearest);
+    REQUIRE(r->point.x == Approx(30.0));
+    REQUIRE(r->point.y == Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("node snap targets a POINT entity", "[snap]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("setup"));
+    doc.addEntity(std::make_unique<PointEntity>(Vec2d{40, 60}));
+    doc.commitTransaction();
+
+    SnapSettings s;
+    const auto r = snapQuery(doc, {41, 59}, 5.0, s, std::nullopt);
+    REQUIRE(r);
+    REQUIRE(r->kind == SnapKind::Node);
+    REQUIRE(r->point.x == Approx(40.0));
+    REQUIRE(r->point.y == Approx(60.0));
+
+    // Toggleable: disabling node drops the candidate.
+    s.node = false;
+    s.nearest = false; // a POINT has no segments, but be explicit
+    REQUIRE_FALSE(snapQuery(doc, {41, 59}, 5.0, s, std::nullopt));
+}
+
+TEST_CASE("tangent snap from an external point to a circle", "[snap]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("setup"));
+    doc.addEntity(std::make_unique<CircleEntity>(Vec2d{0, 0}, 30.0));
+    doc.commitTransaction();
+
+    SnapSettings s;
+    // Only tangent is interesting here; keep the higher-priority modes off so
+    // the tangent point is what gets returned near the cursor.
+    s.endpoint = s.node = s.midpoint = s.center = s.quadrant = false;
+    s.intersection = s.perpendicular = s.nearest = false;
+
+    // Base well outside the circle; one tangent point lies up-and-right.
+    const Vec2d base{100, 0};
+    // Cursor near the expected upper tangent point of a circle r=30, base at
+    // (100,0): tangent length L=sqrt(100^2-30^2), touch point roughly (9,28.6).
+    const auto r = snapQuery(doc, {9, 29}, 6.0, s, base);
+    REQUIRE(r);
+    REQUIRE(r->kind == SnapKind::Tangent);
+
+    const Vec2d tp = r->point;
+    // The tangent point lies on the circle.
+    REQUIRE(tp.length() == Approx(30.0).margin(1e-9));
+    // Radius (center->tp) is perpendicular to the tangent line (base->tp):
+    // their dot product is ~0.
+    const Vec2d radius = tp;              // center is origin
+    const Vec2d tangentLine = tp - base;  // along the tangent
+    REQUIRE(radius.dot(tangentLine) == Approx(0.0).margin(1e-6));
+}
+
+TEST_CASE("tangent needs an external base (none inside the circle)", "[snap]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("setup"));
+    doc.addEntity(std::make_unique<CircleEntity>(Vec2d{0, 0}, 30.0));
+    doc.commitTransaction();
+
+    SnapSettings s;
+    s.endpoint = s.node = s.midpoint = s.center = s.quadrant = false;
+    s.intersection = s.perpendicular = s.nearest = false;
+    // Base inside the circle: no real tangent exists.
+    REQUIRE_FALSE(snapQuery(doc, {10, 5}, 6.0, s, Vec2d{5, 0}));
 }
 
 TEST_CASE("disabled master switch returns nothing", "[snap]")

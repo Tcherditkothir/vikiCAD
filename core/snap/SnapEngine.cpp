@@ -1,6 +1,7 @@
 #include "SnapEngine.h"
 
 #include "doc/Block.h"
+#include "doc/Entities.h"
 #include "geom/GeomUtil.h"
 
 namespace viki {
@@ -10,25 +11,31 @@ int priorityOf(SnapKind k)
 {
     switch (k) {
     case SnapKind::Endpoint: return 0;
-    case SnapKind::Intersection: return 1;
-    case SnapKind::Midpoint: return 2;
-    case SnapKind::Center: return 3;
-    case SnapKind::Quadrant: return 4;
-    case SnapKind::Perpendicular: return 5;
-    case SnapKind::Grid: return 6;
+    case SnapKind::Node: return 1;
+    case SnapKind::Intersection: return 2;
+    case SnapKind::Midpoint: return 3;
+    case SnapKind::Center: return 4;
+    case SnapKind::Quadrant: return 5;
+    case SnapKind::Perpendicular: return 6;
+    case SnapKind::Tangent: return 7;
+    case SnapKind::Nearest: return 8;
+    case SnapKind::Grid: return 9;
     }
-    return 7;
+    return 10;
 }
 
 bool kindEnabled(SnapKind k, const SnapSettings& s)
 {
     switch (k) {
     case SnapKind::Endpoint: return s.endpoint;
+    case SnapKind::Node: return s.node;
     case SnapKind::Midpoint: return s.midpoint;
     case SnapKind::Center: return s.center;
     case SnapKind::Quadrant: return s.quadrant;
     case SnapKind::Intersection: return s.intersection;
     case SnapKind::Perpendicular: return s.perpendicular;
+    case SnapKind::Tangent: return s.tangent;
+    case SnapKind::Nearest: return s.nearest;
     case SnapKind::Grid: return true;
     }
     return false;
@@ -203,6 +210,57 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
                                 c.segs);
             const Vec2d foot = closestOnSegments(c.segs, *perpBase);
             consider(foot, SnapKind::Perpendicular, c.e->id());
+        }
+    }
+
+    // Tangent from the rubber-band base to a circle/arc: the two points on the
+    // circle where the line base->point is perpendicular to the radius. Only the
+    // one nearest the cursor is offered as a snap candidate. On an arc, the
+    // tangent point must lie within the arc's angular sweep.
+    if (settings.tangent && perpBase) {
+        for (const Cand& c : cands) {
+            Vec2d center;
+            double radius = 0.0;
+            const ArcEntity* arc = nullptr;
+            if (const auto* ci = dynamic_cast<const CircleEntity*>(c.e)) {
+                center = ci->center();
+                radius = ci->radius();
+            } else if ((arc = dynamic_cast<const ArcEntity*>(c.e))) {
+                center = arc->center();
+                radius = arc->radius();
+            } else {
+                continue;
+            }
+            const Vec2d d = center - *perpBase;
+            const double dist = d.length();
+            if (dist <= radius + 1e-12) // base inside/on circle: no real tangent
+                continue;
+            // Tangent length and the half-angle between center-line and tangent.
+            const double baseAngle = d.angle();
+            const double alpha = std::acos(radius / dist);
+            for (const double sign : {+1.0, -1.0}) {
+                const double a = baseAngle + M_PI + sign * alpha;
+                const Vec2d tp = center + Vec2d::polar(radius, a);
+                if (arc) {
+                    const double rel =
+                        normalizeAngle((tp - center).angle() - arc->startAngle());
+                    if (rel > std::abs(arc->sweep()) + 1e-9)
+                        continue;
+                }
+                consider(tp, SnapKind::Tangent, c.e->id());
+            }
+        }
+    }
+
+    // Nearest point on any entity to the cursor (lowest priority — a fallback).
+    if (settings.nearest) {
+        for (Cand& c : cands) {
+            if (c.segs.empty())
+                collectSegments(flatten(doc, *c.e, tolerance * 0.05,
+                                        probe.inflated(tolerance * 4)),
+                                c.segs);
+            const Vec2d q = closestOnSegments(c.segs, cursor);
+            consider(q, SnapKind::Nearest, c.e->id());
         }
     }
 

@@ -17,11 +17,14 @@ inline constexpr EntityId kInvalidEntityId = 0;
 // Typed object-snap candidate emitted by entities.
 enum class SnapKind {
     Endpoint,
+    Node,          // a POINT entity
+    Intersection,
     Midpoint,
     Center,
     Quadrant,
-    Intersection,
     Perpendicular,
+    Tangent,       // tangent from the rubber-band base to a circle/arc
+    Nearest,       // closest point on an entity to the cursor
     Grid,
 };
 

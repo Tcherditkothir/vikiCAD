@@ -491,7 +491,7 @@ void SplineEntity::snapPoints(std::vector<SnapPoint>& out) const
 
 void PointEntity::snapPoints(std::vector<SnapPoint>& out) const
 {
-    out.push_back({m_pos, SnapKind::Endpoint});
+    out.push_back({m_pos, SnapKind::Node});
 }
 
 
