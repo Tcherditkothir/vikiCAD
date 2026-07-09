@@ -198,3 +198,35 @@ TEST_CASE("FILLET3D and CHAMFER3D round all edges", "[m8]")
     REQUIRE(rig.run(QStringLiteral("CHAMFER3D 1 2")));
     REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) < before);
 }
+
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+
+#include "solid/SolidOps.h"
+
+TEST_CASE("Push/Pull a face grows (boss) and shrinks (pocket) the solid", "[m7][pushpull]")
+{
+    using namespace viki;
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(1000.0).epsilon(1e-9));
+
+    // First face of the box (area 100).
+    TopExp_Explorer exp(box, TopAbs_FACE);
+    REQUIRE(exp.More());
+    const TopoDS_Shape face = exp.Current();
+
+    // Boss: push +5 along the outward normal -> +100*5 = 500.
+    const auto boss = solidops::pushPullFace(box, face, 5.0);
+    REQUIRE(boss.ok);
+    CHECK(volumeOf(boss.shape) == Approx(1500.0).epsilon(1e-6));
+
+    // Pocket: pull -3 into the material -> -100*3 = 300.
+    const auto pocket = solidops::pushPullFace(box, face, -3.0);
+    REQUIRE(pocket.ok);
+    CHECK(volumeOf(pocket.shape) == Approx(700.0).epsilon(1e-6));
+
+    // Guards.
+    CHECK_FALSE(solidops::pushPullFace(box, face, 0.0).ok);
+    CHECK_FALSE(solidops::pushPullFace(box, box, 5.0).ok); // not a face
+}

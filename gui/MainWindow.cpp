@@ -38,6 +38,7 @@
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
 #include "solid/SolidEntity.h"
+#include "solid/SolidOps.h"
 
 #include <QFileInfo>
 #include "panels/ToolPanels.h"
@@ -296,6 +297,32 @@ void MainWindow::toggle3D(bool on)
             m_occtView = new OcctViewWidget(this);
             connect(m_occtView, &OcctViewWidget::picked, this,
                     [this](const QString& info) { m_commandBar->appendHistory(info); });
+            connect(m_occtView, &OcctViewWidget::pushPullFace, this,
+                    [this](EntityId id, double dist) {
+                        const auto* solid =
+                            dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                        if (!solid)
+                            return;
+                        const auto res = solidops::pushPullFace(
+                            solid->shape(), m_occtView->pickedFace(), dist);
+                        if (!res.ok) {
+                            m_commandBar->appendHistory(
+                                QStringLiteral("! push/pull: %1").arg(res.message));
+                            return;
+                        }
+                        m_doc->beginTransaction(QStringLiteral("PUSHPULL"));
+                        if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                            s->setShape(res.shape);
+                            m_doc->endModify(id);
+                        }
+                        m_doc->commitTransaction();
+                        m_occtView->refreshFrom(*m_doc);
+                        m_commandBar->appendHistory(
+                            QStringLiteral("Push/Pull: %1 by %2")
+                                .arg(dist > 0 ? QStringLiteral("boss")
+                                              : QStringLiteral("pocket"))
+                                .arg(dist));
+                    });
             m_viewStack->addWidget(m_occtView);
         }
         m_occtView->refreshFrom(*m_doc);

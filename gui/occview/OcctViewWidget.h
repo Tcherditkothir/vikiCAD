@@ -1,8 +1,13 @@
 #pragma once
 
+#include <utility>
+#include <vector>
+
 #include <QWidget>
 
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_InteractiveObject.hxx>
+#include <TopoDS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 
@@ -24,11 +29,17 @@ public:
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
     bool dumpToFile(const QString& path);
 
+    // The face last clicked (empty if none / a whole solid was picked).
+    const TopoDS_Shape& pickedFace() const { return m_pickedFace; }
+
 signals:
     // Emitted on pick: a short human-readable description of what's selected.
     void picked(const QString& info);
+    // Right-click "Push/Pull" on a selected face: extrude it by `distance`.
+    void pushPullFace(EntityId solid, double distance);
 
 protected:
+    void contextMenuEvent(QContextMenuEvent* event) override;
     QPaintEngine* paintEngine() const override { return nullptr; }
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -49,6 +60,12 @@ private:
     QPoint m_lastPos;
     QPoint m_pressPos;
     bool m_initFailed = false;
+
+    // Map each displayed shape back to its document entity, and remember the
+    // last picked face + its owning solid (for Push/Pull).
+    std::vector<std::pair<Handle(AIS_InteractiveObject), EntityId>> m_shapes;
+    TopoDS_Shape m_pickedFace;
+    EntityId m_pickedSolid = kInvalidEntityId;
 };
 
 } // namespace viki

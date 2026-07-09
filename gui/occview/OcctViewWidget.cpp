@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 
+#include <QContextMenuEvent>
+#include <QInputDialog>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QStringList>
 #include <QWheelEvent>
@@ -74,12 +77,16 @@ void OcctViewWidget::refreshFrom(const Document& doc)
     if (m_view.IsNull())
         return;
     m_context->RemoveAll(false);
+    m_shapes.clear();
+    m_pickedFace = TopoDS_Shape();
+    m_pickedSolid = kInvalidEntityId;
     int shown = 0;
     for (const EntityId id : doc.drawOrder()) {
         const auto* solid = dynamic_cast<const SolidEntity*>(doc.entity(id));
         if (!solid || solid->shape().IsNull())
             continue;
         Handle(AIS_Shape) ais = new AIS_Shape(solid->shape());
+        m_shapes.push_back({ais, id});
         const uint32_t rgb = doc.resolveColor(*solid);
         // White (default drawing colour) reads as a flat metal grey in 3D.
         const Quantity_Color col =
@@ -186,6 +193,8 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
     m_context->MoveTo(p.x(), p.y(), m_view, Standard_False);
     m_context->SelectDetected();
 
+    m_pickedFace = TopoDS_Shape();
+    m_pickedSolid = kInvalidEntityId;
     int solids = 0, faces = 0, edges = 0, verts = 0;
     for (m_context->InitSelected(); m_context->MoreSelected(); m_context->NextSelected()) {
         Handle(StdSelect_BRepOwner) owner =
@@ -195,7 +204,17 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
             continue;
         }
         switch (owner->Shape().ShapeType()) {
-        case TopAbs_FACE: ++faces; break;
+        case TopAbs_FACE:
+            ++faces;
+            if (m_pickedFace.IsNull()) { // remember the first face for Push/Pull
+                m_pickedFace = owner->Shape();
+                const Handle(AIS_InteractiveObject) io =
+                    Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+                for (const auto& pr : m_shapes)
+                    if (pr.first == io)
+                        m_pickedSolid = pr.second;
+            }
+            break;
         case TopAbs_EDGE: ++edges; break;
         case TopAbs_VERTEX: ++verts; break;
         default: ++solids; break;
@@ -218,6 +237,26 @@ void OcctViewWidget::wheelEvent(QWheelEvent* event)
         return;
     const double factor = event->angleDelta().y() > 0 ? 1.2 : 1.0 / 1.2;
     m_view->SetZoom(factor);
+}
+
+void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // Right-click a selected face -> Push/Pull (extrude that face).
+    if (m_pickedFace.IsNull() || m_pickedSolid == kInvalidEntityId) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+    QMenu menu(this);
+    QAction* pp = menu.addAction(QStringLiteral("Push/Pull face…"));
+    if (menu.exec(event->globalPos()) != pp)
+        return;
+    bool ok = false;
+    const double d = QInputDialog::getDouble(
+        this, QStringLiteral("Push / Pull"),
+        QStringLiteral("Distance (+ adds a boss, − cuts a pocket):"), 5.0,
+        -1.0e6, 1.0e6, 3, &ok);
+    if (ok && std::fabs(d) > 1e-9)
+        emit pushPullFace(m_pickedSolid, d);
 }
 
 } // namespace viki

@@ -25,6 +25,8 @@ signals:
 
 private:
     void itemActivated(QTreeWidgetItem* item, int column);
+    void showContextMenu(const QPoint& pos);
+    std::vector<EntityId> idsForItem(QTreeWidgetItem* item) const;
 
     QTreeWidget* m_tree = nullptr;
     Document* m_doc = nullptr;

@@ -1,5 +1,6 @@
 #include "SolidOps.h"
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -308,6 +309,46 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
     result.ok = true;
     result.shape = out;
     return result;
+}
+
+SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
+                         double distance)
+{
+    SolidResult result;
+    if (solid.IsNull() || face.IsNull() || face.ShapeType() != TopAbs_FACE) {
+        result.message = QStringLiteral("push/pull needs a solid and one of its faces");
+        return result;
+    }
+    if (std::fabs(distance) < 1e-9) {
+        result.message = QStringLiteral("push/pull distance is zero");
+        return result;
+    }
+    const TopoDS_Face f = TopoDS::Face(face);
+
+    // Outward normal at the face centre (respecting the face orientation).
+    BRepAdaptor_Surface surf(f);
+    const Standard_Real u = 0.5 * (surf.FirstUParameter() + surf.LastUParameter());
+    const Standard_Real v = 0.5 * (surf.FirstVParameter() + surf.LastVParameter());
+    gp_Pnt p;
+    gp_Vec du, dv;
+    surf.D1(u, v, p, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (n.Magnitude() < 1e-12) {
+        result.message = QStringLiteral("cannot find the face normal");
+        return result;
+    }
+    n.Normalize();
+    if (f.Orientation() == TopAbs_REVERSED)
+        n.Reverse();
+
+    BRepPrimAPI_MakePrism prism(f, n * distance);
+    if (!prism.IsDone()) {
+        result.message = QStringLiteral("extruding the face failed");
+        return result;
+    }
+    // distance > 0 grows the material (boss), < 0 removes it (pocket).
+    return booleanOp(solid, prism.Shape(),
+                     distance > 0 ? BoolOp::Union : BoolOp::Subtract);
 }
 
 } // namespace solidops

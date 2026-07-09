@@ -45,5 +45,11 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
 enum class BoolOp { Union, Subtract, Intersect };
 SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op);
 
+// Push/Pull: extrude `face` (a face OF `solid`) along its outward normal by
+// `distance`, then fuse (distance > 0, a boss) or cut (distance < 0, a pocket)
+// with the solid. This is the direct-modeling "extrude a face" operation.
+SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
+                         double distance);
+
 } // namespace solidops
 } // namespace viki
