@@ -6,6 +6,8 @@
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
 #include "render/HitTest.h"
+#include "solid/SolidEntity.h"
+#include "solid/SolidOps.h"
 
 // Measurement / inquiry commands: DIST, ID, AREA, LIST.
 // Results go through ctx.info() — visible in the GUI history and in the
@@ -232,6 +234,91 @@ public:
     }
 };
 
+// INTERFERE [id id]: assembly clash check. With two solid ids, report the
+// overlap (interference) volume of that pair. With no ids, sweep every solid
+// pair in the document and report all that interpenetrate. The ids come as one
+// EntitySet gulp, so "INTERFERE 1 2" works headless.
+class InterfereCommand : public Command {
+public:
+    const char* name() const override { return "INTERFERE"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        // Honor a pre-existing selection (e.g. picked in the GUI).
+        const auto sel = ctx.selection().ids();
+        if (sel.size() >= 2)
+            return report(ctx, sel);
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select two solids (Enter to check all):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        std::vector<EntityId> ids;
+        switch (v.kind) {
+        case InputValue::Kind::EntitySet:
+            ids = v.entitySet;
+            break;
+        case InputValue::Kind::EntityRef:
+            ids.push_back(v.entityRef);
+            break;
+        case InputValue::Kind::Finish:
+            break; // sweep all
+        case InputValue::Kind::Cancel:
+            return Step::cancelled();
+        default:
+            return Step::cancelled();
+        }
+        return report(ctx, ids);
+    }
+
+private:
+    QString fmtVol(CommandContext& ctx, double mm3) const
+    {
+        const bool inches = ctx.doc().displayUnits() == DisplayUnits::Inches;
+        const double cube = 25.4 * 25.4 * 25.4;
+        return QStringLiteral("%1 %2")
+            .arg(inches ? mm3 / cube : mm3, 0, 'f', 3)
+            .arg(inches ? QStringLiteral("in³") : QStringLiteral("mm³"));
+    }
+
+    Step report(CommandContext& ctx, const std::vector<EntityId>& ids)
+    {
+        if (ids.size() >= 2) {
+            const auto* a = dynamic_cast<const SolidEntity*>(ctx.doc().entity(ids[0]));
+            const auto* b = dynamic_cast<const SolidEntity*>(ctx.doc().entity(ids[1]));
+            if (!a || !b) {
+                ctx.info(QStringLiteral("INTERFERE needs two solids"));
+                return Step::done();
+            }
+            const double v = solidops::interferenceVolume(a->shape(), b->shape());
+            if (v > 0.0)
+                ctx.info(QStringLiteral("#%1 and #%2 interfere: overlap = %3")
+                             .arg(ids[0])
+                             .arg(ids[1])
+                             .arg(fmtVol(ctx, v)));
+            else
+                ctx.info(QStringLiteral("#%1 and #%2 do not interfere")
+                             .arg(ids[0])
+                             .arg(ids[1]));
+            return Step::done();
+        }
+        // Sweep the whole document.
+        const auto pairs = solidops::checkAllInterferences(ctx.doc());
+        if (pairs.empty()) {
+            ctx.info(QStringLiteral("no interferences found"));
+            return Step::done();
+        }
+        ctx.info(QStringLiteral("%1 interfering pair(s):").arg(pairs.size()));
+        for (const auto& p : pairs)
+            ctx.info(QStringLiteral("  #%1 <-> #%2  overlap = %3")
+                         .arg(p.a)
+                         .arg(p.b)
+                         .arg(fmtVol(ctx, p.volume)));
+        return Step::done();
+    }
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -246,6 +333,7 @@ void registerMeasureCommands(CommandProcessor& p)
     p.registerCommand(&make<IdCommand>);
     p.registerCommand(&make<AreaCommand>, {QStringLiteral("AA")});
     p.registerCommand(&make<ListCommand>, {QStringLiteral("LI")});
+    p.registerCommand(&make<InterfereCommand>, {QStringLiteral("CLASH")});
 }
 
 } // namespace viki

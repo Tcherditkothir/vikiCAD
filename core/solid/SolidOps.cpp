@@ -1,5 +1,6 @@
 #include "SolidOps.h"
 
+#include <algorithm>
 #include <map>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -46,6 +47,7 @@
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
+#include "solid/SolidEntity.h"
 
 namespace viki {
 namespace solidops {
@@ -789,6 +791,65 @@ double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b)
     } catch (const Standard_Failure&) {
         return -1.0;
     }
+}
+
+double interferenceVolume(const TopoDS_Shape& a, const TopoDS_Shape& b)
+{
+    if (a.IsNull() || b.IsNull())
+        return 0.0;
+    try {
+        BRepAlgoAPI_Common alg(a, b);
+        if (!alg.IsDone())
+            return 0.0;
+        const TopoDS_Shape common = alg.Shape();
+        if (common.IsNull())
+            return 0.0;
+        // A face/edge-only touch produces a common shape with no solid volume;
+        // VolumeProperties then integrates to ~0, which is exactly what we want.
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(common, props);
+        const double v = props.Mass();
+        return v > 0.0 ? v : 0.0;
+    } catch (const Standard_Failure&) {
+        return 0.0;
+    }
+}
+
+std::vector<Interference> checkAllInterferences(const Document& doc, double minVolume)
+{
+    // Collect every solid, cheaply reject non-overlapping pairs via their
+    // OCCT bounding boxes before paying for a boolean common.
+    struct Item {
+        EntityId id;
+        const TopoDS_Shape* shape;
+        Bnd_Box box;
+    };
+    std::vector<Item> items;
+    for (const EntityId id : doc.drawOrder()) {
+        const Entity* e = doc.entity(id);
+        const auto* s = dynamic_cast<const SolidEntity*>(e);
+        if (!s || s->shape().IsNull())
+            continue;
+        Bnd_Box box;
+        BRepBndLib::Add(s->shape(), box);
+        items.push_back({id, &s->shape(), box});
+    }
+
+    std::vector<Interference> out;
+    for (size_t i = 0; i < items.size(); ++i) {
+        for (size_t j = i + 1; j < items.size(); ++j) {
+            if (items[i].box.IsOut(items[j].box))
+                continue; // boxes disjoint → cannot overlap
+            const double v = interferenceVolume(*items[i].shape, *items[j].shape);
+            if (v > minVolume)
+                out.push_back({items[i].id, items[j].id, v});
+        }
+    }
+    std::sort(out.begin(), out.end(),
+              [](const Interference& p, const Interference& q) {
+                  return p.volume > q.volume;
+              });
+    return out;
 }
 
 std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,

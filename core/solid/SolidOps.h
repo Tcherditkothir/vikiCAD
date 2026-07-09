@@ -121,6 +121,27 @@ std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
 // Returns -1 on failure (null shapes or the extrema solver not done).
 double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b);
 
+// Interference (clash) volume between two solids, in mm³: the volume of their
+// BRepAlgoAPI_Common (the overlapping material). Returns 0 when the solids are
+// disjoint or only touch on a face/edge (a common with zero volume), and 0 on
+// failure (null shapes or the boolean not done). Positive only for a genuine
+// interpenetration.
+double interferenceVolume(const TopoDS_Shape& a, const TopoDS_Shape& b);
+
+// One overlapping pair found by checkAllInterferences.
+struct Interference {
+    EntityId a = 0;
+    EntityId b = 0;
+    double volume = 0.0; // mm³ of overlapping material (> tolerance)
+};
+
+// Sweep every unordered pair of SolidEntity in the document and return those
+// that interpenetrate (interferenceVolume above `minVolume`, default 1e-6 mm³
+// to ignore numeric noise from merely-touching parts). Pairs are reported with
+// a < b entity ids, ordered by decreasing overlap volume.
+std::vector<Interference> checkAllInterferences(const Document& doc,
+                                                double minVolume = 1e-6);
+
 // The face's boundary edges projected into the work-plane's 2D (u,v) frame —
 // reference geometry drawn in the 2D canvas so you sketch on the real face
 // outline (holes included), not a blank rectangle. One polyline per edge.
