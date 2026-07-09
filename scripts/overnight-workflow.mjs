@@ -27,36 +27,38 @@ core/cmd/Commands*.cpp with NUMERIC PARAMS BEFORE entity selection; every
 mutation goes through a document transaction (undo is automatic).
 
 RULES (strict):
-1. Before you start, run: cd ${REPO} && git status --porcelain — it MUST be
-   empty. If not, STOP and report "tree dirty".
+0. IDEMPOTENCY. This feature may already be implemented by a previous run.
+   FIRST grep core/ for the key symbol named in the feature (e.g. the function
+   or command name). If it already exists AND the full suite is green, do NOT
+   re-implement — report committed=false, summary "already present". Otherwise
+   implement it.
+1. START CLEAN. Before you touch anything, run:
+     cd ${REPO} && git reset --hard HEAD && git clean -fd core tests gui cli docs scripts
+   This discards leftover junk from a prior agent that died mid-run (all
+   COMMITTED work is safe in HEAD; only uncommitted changes are dropped). Do
+   NOT abort on a dirty tree — clean it and proceed. Never touch build/.
 2. Implement the feature in core/ (testable) + a command and/or IPC verb if it
    helps. Keep it consistent with existing code style.
 3. Add a Catch2 test in tests/ that proves it (volumes via GProp, bounds via
    Bnd_Box, etc.). Register new test files / sources in the CMakeLists.
+   OCCT pitfall: BRepPrimAPI_Make*::IsDone() is unreliable before the shape is
+   built — force .Shape() and null-check instead of trusting IsDone().
 4. Build: cmake --build build/debug -j$(nproc). Fix all errors.
 5. Run the FULL suite: ./build/debug/tests/vikicad-tests. It MUST be all-green.
 6. If green: git add -A && git commit with a clear message ending with
    the Co-Authored-By trailer for Claude. If NOT green after real effort:
-   run "git checkout -- ." then "git clean -fd core tests gui cli", and report
-   failure.
+   run "git reset --hard HEAD" then "git clean -fd core tests gui cli", and
+   report committed=false. LEAVE THE TREE CLEAN either way.
 7. NEVER git push. NEVER touch build config beyond adding source/test files.
 8. Do NOT start the GUI (it gets reaped); verify via tests + CLI only.
 Return a one-paragraph report: what you built, the test you added, and
 committed=true/false.
 `
 
+// NOTE: hole-feature was implemented + committed manually (866e93d) after the
+// first overnight run died on API 529 overload — it is intentionally NOT in
+// this list. The idempotency rule (0) makes re-runs safe regardless.
 const FEATURES = [
-  {
-    name: 'hole-feature',
-    prompt: `Add a parametric HOLE feature. solidops::makeHole(solid, plane,
-center, diameter, depth, through) -> SolidResult: build a cylinder on the work
-plane at the given 2D center and Cut it from the solid (through = pierce the
-whole bounding extent). Add a HOLE command (params: diameter, depth or T for
-through, then center point, then pick the target solid) using
-documentWorkplane(doc). Test: a through hole of d=4 in a 10x10x10 box removes
-about pi*(2^2)*10 of volume; assert the result volume is less than 1000 and the
-hole pierces the box (bbox unchanged).`,
-  },
   {
     name: 'extrude-modes',
     prompt: `Extend EXTRUDE with modes: symmetric (both sides), and cut vs join
