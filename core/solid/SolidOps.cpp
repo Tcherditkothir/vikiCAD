@@ -13,6 +13,7 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -649,6 +650,71 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
     result.ok = true;
     result.shape = out;
     return result;
+}
+
+std::vector<TopoDS_Shape> splitSolid(const TopoDS_Shape& solid,
+                                     const TopoDS_Shape& tool)
+{
+    std::vector<TopoDS_Shape> pieces;
+    if (solid.IsNull() || tool.IsNull())
+        return pieces;
+    try {
+        BRepAlgoAPI_Splitter splitter;
+        TopTools_ListOfShape args, tools;
+        args.Append(solid);
+        tools.Append(tool);
+        splitter.SetArguments(args);
+        splitter.SetTools(tools);
+        splitter.Build();
+        TopoDS_Shape out;
+        try {
+            out = splitter.Shape(); // force the build; don't trust IsDone()
+        } catch (const Standard_Failure&) {
+            out.Nullify();
+        }
+        if (out.IsNull())
+            return pieces;
+        for (TopExp_Explorer exp(out, TopAbs_SOLID); exp.More(); exp.Next())
+            pieces.push_back(exp.Current());
+    } catch (const Standard_Failure&) {
+        pieces.clear();
+    }
+    return pieces;
+}
+
+std::vector<TopoDS_Shape> splitByPlane(const TopoDS_Shape& solid, const gp_Pln& pln)
+{
+    if (solid.IsNull())
+        return {};
+    Bnd_Box bb;
+    BRepBndLib::Add(solid, bb);
+    if (bb.IsVoid())
+        return {};
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    const gp_Pnt centre((xmin + xmax) / 2.0, (ymin + ymax) / 2.0,
+                        (zmin + zmax) / 2.0);
+    // Half-size of the cutting face: the bbox diagonal plus margin guarantees
+    // the bounded face covers the whole solid wherever the plane sits.
+    const double half =
+        gp_Pnt(xmin, ymin, zmin).Distance(gp_Pnt(xmax, ymax, zmax)) + 10.0;
+    // Centre the face under the solid in the plane's own UV frame (the plane's
+    // location can be far away, e.g. a principal plane at the origin).
+    const gp_Ax3 pos = pln.Position();
+    const gp_Vec toCentre(pos.Location(), centre);
+    const double u0 = toCentre.Dot(gp_Vec(pos.XDirection()));
+    const double v0 = toCentre.Dot(gp_Vec(pos.YDirection()));
+    TopoDS_Shape face;
+    try {
+        face = BRepBuilderAPI_MakeFace(pln, u0 - half, u0 + half, v0 - half,
+                                       v0 + half)
+                   .Shape();
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+    if (face.IsNull())
+        return {};
+    return splitSolid(solid, face);
 }
 
 namespace {

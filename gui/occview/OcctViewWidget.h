@@ -56,6 +56,9 @@ signals:
     void pushPullFace(EntityId solid, double distance);
     // Right-click "Sketch on this face": set the work plane to the picked face.
     void sketchOnFace();
+    // Right-click "Split solid by this face's plane": split the owning solid
+    // (pickedSolid) by the plane of the picked face.
+    void splitByFace();
     // Command input was provided from the 3D view (same contract as
     // CanvasWidget::interaction): the main window refreshes prompt + views.
     void interaction();

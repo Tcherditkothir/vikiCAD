@@ -338,6 +338,45 @@ void MainWindow::toggle3D(bool on)
                                               : QStringLiteral("pocket"))
                                 .arg(dist));
                     });
+            connect(m_occtView, &OcctViewWidget::splitByFace, this, [this]() {
+                const EntityId id = m_occtView->pickedSolid();
+                const auto* solid =
+                    dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                if (!solid)
+                    return;
+                const auto wp = solidops::planeFromFace(m_occtView->pickedFace());
+                if (!wp) {
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! split: pick a planar face"));
+                    return;
+                }
+                const auto pieces = solidops::splitByPlane(
+                    solid->shape(), gp_Pln(wp->origin, wp->normal));
+                if (pieces.size() < 2) {
+                    m_commandBar->appendHistory(QStringLiteral(
+                        "! split: the plane missed the solid — nothing split"));
+                    return;
+                }
+                // Every piece inherits the split solid's fields.
+                const int64_t layerId = solid->layerId();
+                const ColorSpec color = solid->color();
+                const QString component = solid->component;
+                const double transparency = solid->transparency;
+                m_doc->beginTransaction(QStringLiteral("SPLIT"));
+                m_doc->removeEntity(id);
+                for (const TopoDS_Shape& piece : pieces) {
+                    auto e = std::make_unique<SolidEntity>(piece);
+                    e->setLayerId(layerId);
+                    e->setColor(color);
+                    e->component = component;
+                    e->transparency = transparency;
+                    m_doc->addEntity(std::move(e));
+                }
+                m_doc->commitTransaction();
+                m_occtView->refreshFrom(*m_doc);
+                m_commandBar->appendHistory(
+                    QStringLiteral("Split: %1 pieces").arg(pieces.size()));
+            });
             m_viewStack->addWidget(m_occtView);
         }
         m_occtView->refreshFrom(*m_doc);

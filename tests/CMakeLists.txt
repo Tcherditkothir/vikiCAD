@@ -17,6 +17,7 @@ add_executable(vikicad-tests
     test_annotations.cpp
     test_m5.cpp
     test_m7_solids.cpp
+    test_split_combine.cpp
     test_interference.cpp
     test_section.cpp
     test_pattern3d.cpp

@@ -455,6 +455,7 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
     QMenu menu(this);
     QAction* pp = menu.addAction(QStringLiteral("Push/Pull face…"));
     QAction* sk = menu.addAction(QStringLiteral("Sketch on this face"));
+    QAction* sp = menu.addAction(QStringLiteral("Split solid by this face's plane"));
     QAction* chosen = menu.exec(event->globalPos());
     if (chosen == pp) {
         bool ok = false;
@@ -466,6 +467,8 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
             emit pushPullFace(m_pickedSolid, d);
     } else if (chosen == sk) {
         emit sketchOnFace();
+    } else if (chosen == sp) {
+        emit splitByFace();
     }
 }
 

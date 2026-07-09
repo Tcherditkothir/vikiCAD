@@ -85,6 +85,21 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
 enum class BoolOp { Union, Subtract, Intersect };
 SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op);
 
+// SPLIT BODY (Fusion "Split Body"): cut `solid` with `tool` — a FACE (planar
+// or curved), a SHELL, or another SOLID — and return the resulting pieces as
+// separate solids (BRepAlgoAPI_Splitter, solid as argument / tool as tool,
+// result compound exploded into its TopAbs_SOLID children). 0 or 1 piece
+// means the tool missed the solid or the split failed; callers should report
+// that instead of replacing anything.
+std::vector<TopoDS_Shape> splitSolid(const TopoDS_Shape& solid,
+                                     const TopoDS_Shape& tool);
+
+// Convenience: split by the infinite plane `pln`, realized as a large bounded
+// planar face spanning the solid's bounding box (with margin) so the cut
+// always covers the whole body.
+std::vector<TopoDS_Shape> splitByPlane(const TopoDS_Shape& solid,
+                                       const gp_Pln& pln);
+
 // Parametric HOLE: drill a cylinder of `diameter` at the 2D `center` on the
 // work plane, boring along the plane normal, and Cut it from `solid`. With
 // `through = true` the bore pierces the whole solid (depth is ignored and the

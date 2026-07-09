@@ -465,6 +465,240 @@ std::unique_ptr<Command> makeIntersect()
     return std::make_unique<BooleanCommand>(solidops::BoolOp::Intersect);
 }
 
+// A SolidEntity clone-with-fields helper for SPLIT/COMBINE: the new piece
+// inherits the source solid's layer, color, component and transparency.
+std::unique_ptr<SolidEntity> solidLike(const TopoDS_Shape& shape,
+                                       int64_t layerId, const ColorSpec& color,
+                                       const QString& component,
+                                       double transparency)
+{
+    auto e = std::make_unique<SolidEntity>(shape);
+    e->setLayerId(layerId);
+    e->setColor(color);
+    e->component = component;
+    e->transparency = transparency;
+    return e;
+}
+
+// SPLIT [XY/XZ/YZ/Solid] offset|tool-id target-id — Fusion "Split Body".
+// Plane modes cut the target by a principal plane at `offset`; Solid mode
+// cuts it by another solid's boundary. The target is replaced by the
+// resulting pieces IN ONE TRANSACTION; every piece inherits the target's
+// layer/color/component/transparency. Numeric/keyword params come BEFORE the
+// entity picks (the greedy EntitySet would eat the offset otherwise).
+class SplitCommand : public Command {
+public:
+    const char* name() const override { return "SPLIT"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::Keyword,
+                          QStringLiteral("Split by [XY/XZ/YZ/Solid] <XY>:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        switch (m_stage) {
+        case 0: // plane keyword (Finish/Enter keeps the default XY)
+            if (v.kind == InputValue::Kind::Keyword) {
+                const QString k = v.text.toUpper();
+                if (k == QLatin1String("XY"))
+                    m_mode = Mode::XY;
+                else if (k == QLatin1String("XZ"))
+                    m_mode = Mode::XZ;
+                else if (k == QLatin1String("YZ"))
+                    m_mode = Mode::YZ;
+                else if (k == QLatin1String("SOLID") || k == QLatin1String("S"))
+                    m_mode = Mode::Solid;
+                else
+                    return Step::cancelled();
+            } else if (v.kind != InputValue::Kind::Finish) {
+                return Step::cancelled();
+            }
+            if (m_mode == Mode::Solid) {
+                m_stage = 2;
+                return Step::cont(
+                    InputKind::EntitySet,
+                    QStringLiteral("Pick tool solid then target solid:"));
+            }
+            m_stage = 1;
+            return Step::cont(InputKind::Number,
+                              QStringLiteral("Plane offset <0>:"));
+        case 1: // plane offset along the plane's normal axis
+            if (v.kind == InputValue::Kind::Number)
+                m_offset = v.number;
+            else if (v.kind != InputValue::Kind::Finish)
+                return Step::cancelled();
+            m_stage = 2;
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Pick solid to split:"));
+        case 2: // entity picks (tool first in Solid mode, then the target)
+            if (v.kind == InputValue::Kind::EntityRef)
+                m_picks.push_back(v.entityRef);
+            else if (v.kind == InputValue::Kind::EntitySet)
+                m_picks.insert(m_picks.end(), v.entitySet.begin(),
+                               v.entitySet.end());
+            else
+                return Step::cancelled();
+            if (m_picks.size() >= picksNeeded())
+                return build(ctx);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Pick solid to split:"));
+        default:
+            return Step::cancelled();
+        }
+    }
+
+private:
+    enum class Mode { XY, XZ, YZ, Solid };
+
+    size_t picksNeeded() const { return m_mode == Mode::Solid ? 2 : 1; }
+
+    gp_Pln plane() const
+    {
+        switch (m_mode) {
+        case Mode::XZ:
+            return gp_Pln(gp_Pnt(0, m_offset, 0), gp_Dir(0, 1, 0));
+        case Mode::YZ:
+            return gp_Pln(gp_Pnt(m_offset, 0, 0), gp_Dir(1, 0, 0));
+        default:
+            return gp_Pln(gp_Pnt(0, 0, m_offset), gp_Dir(0, 0, 1));
+        }
+    }
+
+    Step build(CommandContext& ctx)
+    {
+        const EntityId targetId = m_picks.back();
+        auto* target = dynamic_cast<SolidEntity*>(ctx.doc().entity(targetId));
+        if (!target) {
+            ctx.info(QStringLiteral("SPLIT: target must be a solid"));
+            return Step::cancelled();
+        }
+        std::vector<TopoDS_Shape> pieces;
+        if (m_mode == Mode::Solid) {
+            const EntityId toolId = m_picks.front();
+            auto* tool = dynamic_cast<SolidEntity*>(ctx.doc().entity(toolId));
+            if (!tool || toolId == targetId) {
+                ctx.info(QStringLiteral("SPLIT: tool must be another solid"));
+                return Step::cancelled();
+            }
+            pieces = solidops::splitSolid(target->shape(), tool->shape());
+        } else {
+            pieces = solidops::splitByPlane(target->shape(), plane());
+        }
+        if (pieces.size() < 2) {
+            ctx.info(QStringLiteral(
+                "SPLIT: the tool missed the solid — nothing was split"));
+            return Step::cancelled();
+        }
+        // Copy the inherited fields BEFORE removeEntity invalidates `target`.
+        const int64_t layerId = target->layerId();
+        const ColorSpec color = target->color();
+        const QString component = target->component;
+        const double transparency = target->transparency;
+        ctx.doc().beginTransaction(QStringLiteral("SPLIT"));
+        ctx.doc().removeEntity(targetId);
+        EntityId firstId = 0;
+        for (const TopoDS_Shape& piece : pieces) {
+            const EntityId id = ctx.doc().addEntity(
+                solidLike(piece, layerId, color, component, transparency));
+            if (firstId == 0)
+                firstId = id;
+        }
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("split into %1 pieces (ids from %2)")
+                     .arg(pieces.size())
+                     .arg(firstId));
+        return Step::done();
+    }
+
+    int m_stage = 0;
+    Mode m_mode = Mode::XY;
+    double m_offset = 0.0;
+    std::vector<EntityId> m_picks;
+};
+
+// COMBINE (alias FUSE): union 2+ solids into one body — Fusion "Combine/Join".
+// The result inherits the FIRST solid's layer/color/component/transparency.
+class CombineCommand : public Command {
+public:
+    const char* name() const override { return "COMBINE"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+            if (m_ids.size() >= 2)
+                return build(ctx);
+        }
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select solids to combine (2+):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (v.kind == InputValue::Kind::EntitySet) {
+            m_ids.insert(m_ids.end(), v.entitySet.begin(), v.entitySet.end());
+            return m_ids.size() >= 2 ? build(ctx) : Step::cancelled();
+        }
+        if (v.kind == InputValue::Kind::EntityRef) {
+            m_ids.push_back(v.entityRef);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select more (Finish when done):"));
+        }
+        if (v.kind == InputValue::Kind::Finish)
+            return m_ids.size() >= 2 ? build(ctx) : Step::cancelled();
+        return Step::cancelled();
+    }
+
+private:
+    Step build(CommandContext& ctx)
+    {
+        std::vector<SolidEntity*> solids;
+        for (const EntityId id : m_ids) {
+            auto* s = dynamic_cast<SolidEntity*>(ctx.doc().entity(id));
+            if (!s) {
+                ctx.info(QStringLiteral("COMBINE: id %1 is not a solid").arg(id));
+                return Step::cancelled();
+            }
+            solids.push_back(s);
+        }
+        TopoDS_Shape fused = solids.front()->shape();
+        for (size_t i = 1; i < solids.size(); ++i) {
+            const auto out = solidops::booleanOp(fused, solids[i]->shape(),
+                                                 solidops::BoolOp::Union);
+            if (!out.ok) {
+                ctx.info(out.message);
+                return Step::cancelled();
+            }
+            fused = out.shape;
+        }
+        // The result inherits the FIRST solid's fields (copied before removal).
+        const SolidEntity* first = solids.front();
+        const int64_t layerId = first->layerId();
+        const ColorSpec color = first->color();
+        const QString component = first->component;
+        const double transparency = first->transparency;
+        ctx.doc().beginTransaction(QStringLiteral("COMBINE"));
+        for (const EntityId id : m_ids)
+            ctx.doc().removeEntity(id);
+        const EntityId sid = ctx.doc().addEntity(
+            solidLike(fused, layerId, color, component, transparency));
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("solid %1 created (combine of %2 bodies)")
+                     .arg(sid)
+                     .arg(m_ids.size()));
+        return Step::done();
+    }
+
+    std::vector<EntityId> m_ids;
+};
+
 // MEASURE3D  id-a id-b  — reports the minimum 3D distance (mm) between two
 // solids. Read-only: no transaction, no mutation. The distance is surfaced via
 // ctx.info (picked up by the CLI/GUI message channel).
@@ -762,6 +996,8 @@ void registerSolidCommands(CommandProcessor& p)
     p.registerCommand(&makeUnion);
     p.registerCommand(&makeSubtract, {QStringLiteral("SUB")});
     p.registerCommand(&makeIntersect, {QStringLiteral("INT")});
+    p.registerCommand(&make<SplitCommand>, {QStringLiteral("SPLITBODY")});
+    p.registerCommand(&make<CombineCommand>, {QStringLiteral("FUSE")});
     p.registerCommand(&make<HoleCommand>, {QStringLiteral("HO")});
     p.registerCommand(&make<SweepCommand>, {QStringLiteral("SW")});
     p.registerCommand(&make<LoftCommand>, {QStringLiteral("LO")});
