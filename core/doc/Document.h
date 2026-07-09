@@ -13,6 +13,7 @@
 #include "Layout.h"
 #include "Entity.h"
 #include "Layer.h"
+#include "ParamTable.h"
 
 namespace viki {
 
@@ -101,6 +102,12 @@ public:
     const std::vector<DimStyle>& dimStyles() const { return m_dimStyles; }
     void upsertDimStyle(const DimStyle& style);
 
+    // --- user parameters (named values with expressions; d=10, w=2*d).
+    // Direct edits (not journaled — v1 choice, like dim styles / layers).
+    // Persisted in .vkd. Groundwork for driving dimensions/features later.
+    const ParamTable& params() const { return m_params; }
+    ParamTable& params() { return m_params; }
+
     // --- settings
     DisplayUnits displayUnits() const { return m_displayUnits; }
     void setDisplayUnits(DisplayUnits u) { m_displayUnits = u; }
@@ -147,6 +154,7 @@ private:
     std::vector<Layout> m_layouts;
     int64_t m_nextLayoutId = 1;
     std::vector<DimStyle> m_dimStyles{DimStyle{}};
+    ParamTable m_params;
     LayerId m_currentLayer = 0;
     LayerId m_nextLayerId = 1;
     DisplayUnits m_displayUnits = DisplayUnits::Millimeters;

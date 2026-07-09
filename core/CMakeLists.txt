@@ -16,6 +16,7 @@ add_library(vikicore STATIC
     doc/Block.cpp
     doc/ArrayEntity.cpp
     doc/StickyNote.cpp
+    doc/ParamTable.cpp
     render/HitTest.cpp
     snap/SnapEngine.cpp
     cmd/Input.cpp
@@ -33,6 +34,7 @@ add_library(vikicore STATIC
     cmd/CommandsMeasure.cpp
     cmd/CommandsGear.cpp
     cmd/CommandsAssembly.cpp
+    cmd/CommandsParam.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp

@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS dim_styles (
     name TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS params (
+    name TEXT PRIMARY KEY,
+    expr TEXT NOT NULL,
+    sort INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS entities (
     id         INTEGER PRIMARY KEY,
     owner_kind INTEGER NOT NULL DEFAULT 0,
@@ -104,7 +109,7 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
     if (!exec(db.get(),
                "DELETE FROM meta; DELETE FROM layers; DELETE FROM entities; "
                "DELETE FROM dim_styles; DELETE FROM blocks; "
-               "DELETE FROM layouts; DELETE FROM viewports;",
+               "DELETE FROM layouts; DELETE FROM viewports; DELETE FROM params;",
                error))
         return false;
 
@@ -204,6 +209,20 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         sqlite3_bind_text(stmt, 1, ds.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, data.constData(), data.size(), SQLITE_TRANSIENT);
         sqlite3_step(stmt);
+    }
+    sqlite3_finalize(stmt);
+
+    sqlite3_prepare_v2(db.get(), "INSERT INTO params(name,expr,sort) VALUES(?,?,?);", -1,
+                       &stmt, nullptr);
+    {
+        int psort = 0;
+        for (const Param& pm : doc.params().params()) {
+            sqlite3_reset(stmt);
+            sqlite3_bind_text(stmt, 1, pm.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, pm.expr.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 3, psort++);
+            sqlite3_step(stmt);
+        }
     }
     sqlite3_finalize(stmt);
 
@@ -318,6 +337,20 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
                 DimStyle::fromJson(QJsonDocument::fromJson(data).object()));
         }
         sqlite3_finalize(stmt);
+    }
+
+    // params table may be absent in files written before this feature.
+    if (sqlite3_prepare_v2(db.get(), "SELECT name,expr FROM params ORDER BY sort;", -1,
+                           &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const QString name = QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+            const QString expr = QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            doc->params().restore(name, expr);
+        }
+        sqlite3_finalize(stmt);
+        doc->params().reevaluate();
     }
 
     if (sqlite3_prepare_v2(db.get(),

@@ -74,5 +74,6 @@ void registerSolidFinishCommands(CommandProcessor& processor);
 void registerMeasureCommands(CommandProcessor& processor);
 void registerGearCommands(CommandProcessor& processor);
 void registerAssemblyCommands(CommandProcessor& processor);
+void registerParamCommands(CommandProcessor& processor);
 
 } // namespace viki
