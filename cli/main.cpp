@@ -17,6 +17,7 @@
 #include "io/NativeStore.h"
 #include "io/PdfPlotter.h"
 #include "io/StepIo.h"
+#include "io/StlIo.h"
 #include "io/QueryJson.h"
 #include "script/ScriptRunner.h"
 #include "solid/OcctOps.h"
@@ -64,6 +65,7 @@ int printUsage(FILE* out)
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
         "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
+        "  vikicad-cli export FILE.vkd OUT.stl [--deflection MM] [--ascii]\n"
         "  vikicad-cli import IN.step --save-as OUT.vkd\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
         "All output is JSON on stdout.\n");
@@ -270,6 +272,22 @@ int cmdExport(const QStringList& args)
         return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
                                   {QStringLiteral("solids"), r.solids},
                                   {QStringLiteral("sidecarNotes"), r.notes}});
+    }
+
+    if (outPath.endsWith(QLatin1String(".stl"), Qt::CaseInsensitive)) {
+        double deflection = 0.1;
+        const int di = args.indexOf(QLatin1String("--deflection"));
+        if (di >= 0 && di + 1 < args.size())
+            deflection = args[di + 1].toDouble();
+        const bool ascii = args.contains(QLatin1String("--ascii"));
+        const StlResult r = exportStl(*doc, outPath, deflection, ascii);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_STL"), r.error);
+        return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
+                                  {QStringLiteral("solids"), r.solids},
+                                  {QStringLiteral("format"),
+                                   ascii ? QStringLiteral("ascii")
+                                         : QStringLiteral("binary")}});
     }
 
     if (outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive)) {

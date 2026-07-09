@@ -42,6 +42,7 @@ add_library(vikicore STATIC
     solid/SolidEntity.cpp
     solid/SolidOps.cpp
     io/StepIo.cpp
+    io/StlIo.cpp
 )
 
 if(VIKICAD_HAS_DXF)
@@ -61,6 +62,7 @@ target_link_libraries(vikicore
         TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
         TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset
         TKDESTEP TKXSBase TKShHealing
+        TKMesh TKDESTL
     PRIVATE
         viki_warnings
         SQLite::SQLite3

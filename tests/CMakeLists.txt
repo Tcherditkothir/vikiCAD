@@ -16,6 +16,7 @@ add_executable(vikicad-tests
     test_annotations.cpp
     test_m5.cpp
     test_m7_solids.cpp
+    test_stl_export.cpp
 )
 
 if(VIKICAD_HAS_DXF)
