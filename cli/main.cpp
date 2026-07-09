@@ -18,6 +18,7 @@
 #include "io/PdfPlotter.h"
 #include "io/StepIo.h"
 #include "io/StlIo.h"
+#include "io/ObjIo.h"
 #include "io/QueryJson.h"
 #include "script/ScriptRunner.h"
 #include "solid/OcctOps.h"
@@ -288,6 +289,20 @@ int cmdExport(const QStringList& args)
                                   {QStringLiteral("format"),
                                    ascii ? QStringLiteral("ascii")
                                          : QStringLiteral("binary")}});
+    }
+
+    if (outPath.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive)) {
+        double deflection = 0.1;
+        const int di = args.indexOf(QLatin1String("--deflection"));
+        if (di >= 0 && di + 1 < args.size())
+            deflection = args[di + 1].toDouble();
+        const ObjResult r = exportObj(*doc, outPath, deflection);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_OBJ"), r.error);
+        return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
+                                  {QStringLiteral("solids"), r.solids},
+                                  {QStringLiteral("vertices"), r.vertices},
+                                  {QStringLiteral("faces"), r.faces}});
     }
 
     if (outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive)) {

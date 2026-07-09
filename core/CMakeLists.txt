@@ -47,6 +47,7 @@ add_library(vikicore STATIC
     solid/FeatureTree.cpp
     io/StepIo.cpp
     io/StlIo.cpp
+    io/ObjIo.cpp
 )
 
 if(VIKICAD_HAS_DXF)
