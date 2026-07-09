@@ -6,7 +6,11 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BinTools.hxx>
 #include <Bnd_Box.hxx>
+#include <TopExp_Explorer.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
+
+#include "render/DrawingProjection.h"
 
 namespace viki {
 
@@ -20,6 +24,7 @@ void SolidEntity::updateCache()
 {
     m_bounds2d = BBox2d{};
     m_zmin = m_zmax = 0;
+    m_silhouette.clear();
     if (m_shape.IsNull())
         return;
     Bnd_Box box;
@@ -31,6 +36,22 @@ void SolidEntity::updateCache()
     m_bounds2d = BBox2d{{xmin, ymin}, {xmax, ymax}};
     m_zmin = zmin;
     m_zmax = zmax;
+
+    // Real 2D-canvas representation: the top-view HLR silhouette. Looking along
+    // +Z maps the projection's 2D frame 1:1 onto world XY (right=+X, up=+Y), so
+    // the outline overlays the solid's true footprint (no mirror). Cached so
+    // repaints stay cheap. Guarded by edge count so a huge imported assembly
+    // falls back to the fast bounding box instead of a slow HLR pass.
+    int edges = 0;
+    for (TopExp_Explorer e(m_shape, TopAbs_EDGE); e.More(); e.Next())
+        if (++edges > 4000)
+            break;
+    if (edges > 0 && edges <= 4000) {
+        const auto proj = render::projectToDrawing(m_shape, gp_Dir(0, 0, 1), 0.1);
+        m_silhouette.reserve(proj.visible.size());
+        for (const auto& s : proj.visible)
+            m_silhouette.emplace_back(s.a, s.b);
+    }
 }
 
 BBox2d SolidEntity::bounds() const
@@ -56,10 +77,23 @@ void SolidEntity::transform(const Xform2d& xf)
 
 void SolidEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
 {
-    // 2D canvas representation: the XY footprint box + a "3D" label.
-    // The real display is the OCCT 3D view.
+    // 2D canvas representation: the real top-view silhouette of the solid (the
+    // OCCT 3D view remains the primary display). No more generic "[3D WxHxD]"
+    // placeholder box.
     if (!m_bounds2d.isValid())
         return;
+    if (!m_silhouette.empty()) {
+        for (const auto& seg : m_silhouette) {
+            StrokePrimitive s;
+            s.rgb = ctx.resolvedColor;
+            s.points = {seg.first, seg.second};
+            out.strokes.push_back(std::move(s));
+        }
+        return;
+    }
+
+    // Fallback (HLR unavailable or shape too complex): the plain XY footprint
+    // box — still no label.
     StrokePrimitive box;
     box.rgb = ctx.resolvedColor;
     box.closed = true;
@@ -68,17 +102,6 @@ void SolidEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) 
                   m_bounds2d.max,
                   {m_bounds2d.min.x, m_bounds2d.max.y}};
     out.strokes.push_back(std::move(box));
-
-    TextPrimitive label;
-    label.pos = m_bounds2d.center();
-    label.height = std::min(5.0, m_bounds2d.height() * 0.2 + 1.0);
-    label.text = QStringLiteral("[3D %1x%2x%3]")
-                     .arg(m_bounds2d.width(), 0, 'f', 0)
-                     .arg(m_bounds2d.height(), 0, 'f', 0)
-                     .arg(m_zmax - m_zmin, 0, 'f', 0);
-    label.rgb = ctx.resolvedColor;
-    label.hAlign = TextHAlign::Center;
-    out.texts.push_back(std::move(label));
 }
 
 void SolidEntity::snapPoints(std::vector<SnapPoint>& out) const

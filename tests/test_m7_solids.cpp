@@ -701,3 +701,39 @@ TEST_CASE("DRAFT tapers the side faces of a box", "[m8][draft]")
     CHECK_FALSE(solidops::draftBoxSides(TopoDS_Shape(), pull, neutral, 5.0).ok);
     CHECK_FALSE(solidops::draftFaces(box, {}, pull, neutral, 5.0).ok);
 }
+
+#include <algorithm>
+
+#include "render/Primitives.h"
+
+TEST_CASE("solid renders its real 2D silhouette, no placeholder label", "[m7][silhouette]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 20,20")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 1")));
+    const SolidEntity* solid = firstSolid(rig.doc);
+    REQUIRE(solid);
+
+    RenderContext ctx;
+    PrimitiveList prims;
+    solid->buildPrimitives(ctx, prims);
+
+    // The generic "[3D WxHxD]" placeholder label is gone.
+    CHECK(prims.texts.empty());
+    // A real silhouette is drawn as several stroke segments...
+    REQUIRE(prims.strokes.size() >= 4);
+    // ...aligned 1:1 to world XY (NOT mirrored): the union bbox is the 20x20
+    // footprint at the solid's true position.
+    Vec2d lo{1e9, 1e9}, hi{-1e9, -1e9};
+    for (const auto& s : prims.strokes)
+        for (const auto& p : s.points) {
+            lo.x = std::min(lo.x, p.x);
+            lo.y = std::min(lo.y, p.y);
+            hi.x = std::max(hi.x, p.x);
+            hi.y = std::max(hi.y, p.y);
+        }
+    CHECK(lo.x == Approx(0.0).margin(1e-6));
+    CHECK(lo.y == Approx(0.0).margin(1e-6));
+    CHECK(hi.x == Approx(20.0).margin(1e-6));
+    CHECK(hi.y == Approx(20.0).margin(1e-6));
+}

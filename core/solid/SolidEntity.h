@@ -1,9 +1,13 @@
 #pragma once
 
+#include <utility>
+#include <vector>
+
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
 
 #include "doc/Entity.h"
+#include "geom/Vec2d.h"
 
 namespace viki {
 
@@ -52,6 +56,10 @@ private:
     TopoDS_Shape m_shape;
     BBox2d m_bounds2d;              // XY projection of the 3D box
     double m_zmin = 0, m_zmax = 0;
+    // Cached top-view (HLR) silhouette in world XY — the real 2D-canvas
+    // representation, recomputed on every shape change. Empty => fall back to
+    // the bounding box (HLR failed or the shape was too complex).
+    std::vector<std::pair<Vec2d, Vec2d>> m_silhouette;
 };
 
 } // namespace viki
