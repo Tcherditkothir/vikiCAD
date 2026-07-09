@@ -7,6 +7,7 @@
 #include <TopoDS_Edge.hxx>
 
 #include "solid/SolidEntity.h"
+#include "solid/SolidOps.h"
 
 // M8: FILLET3D / CHAMFER3D. v1 applies to ALL edges of the solid (per-edge
 // picking arrives with AIS selection work in the 3D view — documented).
@@ -89,6 +90,63 @@ private:
     double m_value = 0.0;
 };
 
+// SHELL: hollow a solid to a wall thickness. v1 shells all around (no open
+// face); face-picking to open a side arrives with AIS selection in the 3D view.
+class ShellCommand : public Command {
+public:
+    const char* name() const override { return "SHELL"; }
+
+    Step start(CommandContext&) override
+    {
+        // Thickness first so the EntitySet token gulp cannot swallow it.
+        return Step::cont(InputKind::Distance, QStringLiteral("Wall thickness:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (m_thickness <= 0) {
+            if (v.kind != InputValue::Kind::Number || v.number <= kGeomTol)
+                return Step::cancelled();
+            m_thickness = v.number;
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select solid (id):"));
+        }
+        if (v.kind != InputValue::Kind::EntitySet || v.entitySet.size() != 1)
+            return Step::cancelled();
+        auto* solid = dynamic_cast<SolidEntity*>(ctx.doc().entity(v.entitySet[0]));
+        if (!solid) {
+            ctx.info(QStringLiteral("that id is not a solid"));
+            return Step::cancelled();
+        }
+        m_id = v.entitySet[0];
+
+        const auto out = solidops::shellSolid(solid->shape(), m_thickness);
+        if (!out.ok || out.shape.IsNull()) {
+            ctx.info(out.message.isEmpty() ? QStringLiteral("shell failed")
+                                           : out.message);
+            return Step::cancelled();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("SHELL"));
+        auto* mut = static_cast<SolidEntity*>(ctx.doc().beginModify(m_id));
+        mut->setShape(out.shape);
+        ctx.doc().endModify(m_id);
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("shelled to %1 mm wall").arg(m_thickness));
+        return Step::done();
+    }
+
+private:
+    EntityId m_id = kInvalidEntityId;
+    double m_thickness = 0.0;
+};
+
+std::unique_ptr<Command> makeShell()
+{
+    return std::make_unique<ShellCommand>();
+}
+
 std::unique_ptr<Command> makeFillet3D()
 {
     return std::make_unique<Fillet3DCommand>(false);
@@ -104,6 +162,7 @@ void registerSolidFinishCommands(CommandProcessor& p)
 {
     p.registerCommand(&makeFillet3D, {QStringLiteral("F3D")});
     p.registerCommand(&makeChamfer3D, {QStringLiteral("CH3D")});
+    p.registerCommand(&makeShell, {QStringLiteral("SH")});
 }
 
 } // namespace viki

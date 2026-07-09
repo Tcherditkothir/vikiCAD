@@ -74,6 +74,13 @@ SolidResult makeHole(const TopoDS_Shape& solid, const WorkPlane& plane,
                      const Vec2d& center, double diameter, double depth,
                      bool through);
 
+// SHELL: hollow `solid` out to a wall of `thickness`, leaving a shell. With an
+// `openFace` (a face OF `solid`) that face is removed so the shell is open on
+// that side; otherwise the shell is closed all around (an empty box). Positive
+// thickness hollows inward. Uses BRepOffsetAPI_MakeThickSolid.
+SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
+                       const TopoDS_Shape& openFace = {});
+
 // Push/Pull: extrude `face` (a face OF `solid`) along its outward normal by
 // `distance`, then fuse (distance > 0, a boss) or cut (distance < 0, a pocket)
 // with the solid. This is the direct-modeling "extrude a face" operation.

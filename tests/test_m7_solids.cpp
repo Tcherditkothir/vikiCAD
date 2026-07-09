@@ -457,3 +457,42 @@ TEST_CASE("HOLE command bores a through hole and undoes", "[m7][hole]")
     REQUIRE(rig.run(QStringLiteral("UNDO")));
     REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(4000.0).epsilon(1e-6));
 }
+
+TEST_CASE("SHELL hollows a solid to a wall thickness", "[m8][shell]")
+{
+    using namespace viki;
+    // Direct op: a 10^3 box shelled by 1mm leaves a 1mm wall all around; the
+    // hollow removes an inner 8^3 cavity -> ~1000 - 512 = 488.
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(1000.0).epsilon(1e-9));
+
+    const auto shelled = solidops::shellSolid(box, 1.0);
+    REQUIRE(shelled.ok);
+    REQUIRE_FALSE(shelled.shape.IsNull());
+    const double vol = volumeOf(shelled.shape);
+    CHECK(vol > 0.0);
+    CHECK(vol < 1000.0);                              // clearly less than solid
+    CHECK(vol == Approx(1000.0 - 8.0 * 8.0 * 8.0).epsilon(1e-3)); // ~488
+
+    // Guards.
+    CHECK_FALSE(solidops::shellSolid(box, 0.0).ok);       // zero thickness
+    CHECK_FALSE(solidops::shellSolid(TopoDS_Shape(), 1.0).ok); // null solid
+
+    // SHELL command: thickness first, then pick the solid; mutates in place.
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 10,10")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 1"))); // solid id 2, vol 1000
+    REQUIRE(volumeOf(firstSolid(rig.doc)->shape()) == Approx(1000.0).epsilon(1e-6));
+
+    REQUIRE(rig.run(QStringLiteral("SHELL 1 2")));
+    const SolidEntity* hollow = firstSolid(rig.doc);
+    REQUIRE(hollow);
+    REQUIRE(rig.doc.entityCount() == 1); // shelled in place
+    const double cmdVol = volumeOf(hollow->shape());
+    CHECK(cmdVol > 0.0);
+    CHECK(cmdVol < 1000.0);
+
+    // Undo restores the solid box (BREP in the journal).
+    REQUIRE(rig.run(QStringLiteral("UNDO")));
+    CHECK(volumeOf(firstSolid(rig.doc)->shape()) == Approx(1000.0).epsilon(1e-6));
+}

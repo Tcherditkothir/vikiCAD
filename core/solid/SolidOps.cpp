@@ -13,6 +13,7 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
@@ -20,7 +21,9 @@
 #include <Bnd_Box.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
+#include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
@@ -391,6 +394,69 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
     }
     result.ok = true;
     result.shape = out;
+    return result;
+}
+
+SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
+                       const TopoDS_Shape& openFace)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("shell needs a target solid");
+        return result;
+    }
+    if (thickness <= 1e-9) {
+        result.message = QStringLiteral("shell thickness must be positive");
+        return result;
+    }
+
+    // Faces to open (remove). Empty = closed shell all around.
+    TopTools_ListOfShape toRemove;
+    if (!openFace.IsNull()) {
+        if (openFace.ShapeType() != TopAbs_FACE) {
+            result.message = QStringLiteral("shell open-face must be a face");
+            return result;
+        }
+        toRemove.Append(openFace);
+    }
+
+    // Negative offset hollows inward, leaving a wall of |thickness|. The Join
+    // variant honours the face-removal list; it also produces a fully closed
+    // hollow when the list is empty. Don't trust IsDone() (unreliable before
+    // the shape is realised) — force .Shape() and null-check.
+    try {
+        BRepOffsetAPI_MakeThickSolid op;
+        op.MakeThickSolidByJoin(solid, toRemove, -std::fabs(thickness), 1.0e-3);
+        op.Build();
+        TopoDS_Shape s;
+        try {
+            s = op.Shape(); // don't trust IsDone(); force build + null-check
+        } catch (const Standard_Failure&) {
+            s.Nullify();
+        }
+        if (!s.IsNull()) {
+            if (toRemove.IsEmpty()) {
+                // With no face removed, MakeThickSolidByJoin returns the inner
+                // offset solid (the cavity), not the wall. The closed shell is
+                // then `solid` minus that cavity, leaving the wall all around.
+                const auto cut = booleanOp(solid, s, BoolOp::Subtract);
+                if (cut.ok && !cut.shape.IsNull()) {
+                    result.ok = true;
+                    result.shape = cut.shape;
+                    return result;
+                }
+            } else {
+                // A removed face produces the proper open shell directly.
+                result.ok = true;
+                result.shape = s;
+                return result;
+            }
+        }
+    } catch (const Standard_Failure&) {
+        // OCCT throws on infeasible thickness; fall through to the message.
+    }
+    result.message = QStringLiteral("shell failed — thickness too large for "
+                                    "this geometry?");
     return result;
 }
 
