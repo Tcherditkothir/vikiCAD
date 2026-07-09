@@ -83,10 +83,12 @@ void OcctViewWidget::initViewer()
     }
 }
 
-void OcctViewWidget::attach(Document* doc, CommandProcessor* processor)
+void OcctViewWidget::attach(Document* doc, CommandProcessor* processor,
+                            SelectionSet* selection)
 {
     m_doc = doc;
     m_processor = processor;
+    m_selection = selection;
     m_hoverValid = false;
     m_hoverSolid = kInvalidEntityId;
 }
@@ -121,10 +123,17 @@ void OcctViewWidget::refreshFrom(const Document& doc)
             ais->SetTransparency(Standard_ShortReal(
                 std::min(solid->transparency, 0.95)));
         m_context->Display(ais, AIS_Shaded, 0, false);
-        // Selectable/highlightable on hover: whole solid, faces and edges.
+        // Selectable/highlightable on hover: whole solid, faces, edges and
+        // vertices (vertices feed the placement snap).
         m_context->Activate(ais, 0); // whole shape
         m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
         m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_EDGE));
+        m_context->Activate(ais, AIS_Shape::SelectionMode(TopAbs_VERTEX));
+        // The document selection drives the orange highlight — a solid chosen
+        // in the Assembly panel (or by a 3D click) stays visibly selected
+        // across rebuilds.
+        if (m_selection && m_selection->contains(id))
+            m_context->AddOrRemoveSelected(ais, false);
         ++shown;
     }
     // Fit the camera on the first population only: refreshes now also happen
@@ -212,38 +221,67 @@ bool OcctViewWidget::cursorToPlane(const QPoint& physical, Vec2d& uv)
     if (m_view.IsNull() || m_context.IsNull() || !m_doc)
         return false;
 
-    if (m_context->HasDetected()) {
-        Handle(StdSelect_BRepOwner) owner =
-            Handle(StdSelect_BRepOwner)::DownCast(m_context->DetectedOwner());
-        if (!owner.IsNull() && owner->HasShape() &&
-            owner->Shape().ShapeType() == TopAbs_FACE) {
-            const TopoDS_Shape face = owner->Shape();
-            const auto plane = solidops::planeFromFace(face);
-            const auto sel = m_context->MainSelector();
-            if (plane && !sel.IsNull() && sel->NbPicked() > 0) {
-                documentWorkplane(*m_doc) = *plane;
-                uv = solidops::projectToPlane2d(sel->PickedPoint(1), *plane);
-                // Snap to the face's real features within ~10 px.
-                const double tol = std::max(m_view->Convert(10), 1e-6);
+    // Walk EVERY pick candidate under the cursor, not just the topmost owner:
+    // near an edge or a corner OCCT detects the EDGE/VERTEX first, and only
+    // looking at the top one used to lose the face (no plane, no snap — why
+    // snapping "worked on faces but not on vertices or hole rims").
+    const auto sel = m_context->MainSelector();
+    if (!sel.IsNull() && sel->NbPicked() > 0) {
+        TopoDS_Shape face;
+        gp_Pnt facePoint;
+        bool haveVertex = false;
+        gp_Pnt vertexPoint;
+        Handle(SelectMgr_EntityOwner) faceOwner;
+        for (Standard_Integer i = 1; i <= sel->NbPicked(); ++i) {
+            Handle(StdSelect_BRepOwner) owner =
+                Handle(StdSelect_BRepOwner)::DownCast(sel->Picked(i));
+            if (owner.IsNull() || !owner->HasShape())
+                continue;
+            const TopAbs_ShapeEnum type = owner->Shape().ShapeType();
+            if (type == TopAbs_VERTEX && !haveVertex) {
+                haveVertex = true;
+                vertexPoint = sel->PickedPoint(i); // exact corner snap
+            } else if (type == TopAbs_FACE && face.IsNull()) {
+                face = owner->Shape();
+                facePoint = sel->PickedPoint(i);
+                faceOwner = owner;
+            }
+        }
+        std::optional<WorkPlane> plane;
+        if (!face.IsNull())
+            plane = solidops::planeFromFace(face);
+        if (plane) {
+            documentWorkplane(*m_doc) = *plane;
+            const double tol = std::max(m_view->Convert(16), 1e-6);
+            uv = solidops::projectToPlane2d(facePoint, *plane);
+            if (haveVertex) {
+                // A corner under the cursor wins: snap exactly to it.
+                const Vec2d vuv = solidops::projectToPlane2d(vertexPoint, *plane);
+                if (vuv.distanceTo(uv) <= tol)
+                    uv = vuv;
+            } else {
+                // Otherwise snap to the face's real features (edge vertices,
+                // hole/arc centers) within ~16 px.
                 double best = tol;
-                for (const SnapPoint& s : solidops::faceSnapPoints2d(face, *plane)) {
+                for (const SnapPoint& s :
+                     solidops::faceSnapPoints2d(face, *plane)) {
                     const double d = s.p.distanceTo(uv);
                     if (d < best) {
                         best = d;
                         uv = s.p;
                     }
                 }
-                // Remember the owning solid: a later EntitySet prompt (e.g.
-                // HOLE's target) is answered by the same click.
-                const Handle(AIS_InteractiveObject) io =
-                    Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-                for (const auto& pr : m_shapes)
-                    if (pr.first == io)
-                        m_hoverSolid = pr.second;
-                m_hoverUv = uv;
-                m_hoverValid = true;
-                return true;
             }
+            // Remember the owning solid: a later EntitySet prompt (e.g.
+            // HOLE's target) is answered by the same click.
+            const Handle(AIS_InteractiveObject) io =
+                Handle(AIS_InteractiveObject)::DownCast(faceOwner->Selectable());
+            for (const auto& pr : m_shapes)
+                if (pr.first == io)
+                    m_hoverSolid = pr.second;
+            m_hoverUv = uv;
+            m_hoverValid = true;
+            return true;
         }
     }
 
@@ -343,7 +381,20 @@ QString OcctViewWidget::pickAtPhysical(int px, int py)
     m_pickedFace = TopoDS_Shape();
     m_pickedSolid = kInvalidEntityId;
     int solids = 0, faces = 0, edges = 0, verts = 0;
+    // Resolve the OWNING SOLID for whatever got picked (face, edge, vertex or
+    // whole shape) — plain clicks must always select the entity, not only
+    // when a face happens to win the pick.
+    const auto rememberSolid = [this](const Handle(SelectMgr_EntityOwner)& ow) {
+        if (m_pickedSolid != kInvalidEntityId || ow.IsNull())
+            return;
+        const Handle(AIS_InteractiveObject) io =
+            Handle(AIS_InteractiveObject)::DownCast(ow->Selectable());
+        for (const auto& pr : m_shapes)
+            if (pr.first == io)
+                m_pickedSolid = pr.second;
+    };
     for (m_context->InitSelected(); m_context->MoreSelected(); m_context->NextSelected()) {
+        rememberSolid(m_context->SelectedOwner());
         Handle(StdSelect_BRepOwner) owner =
             Handle(StdSelect_BRepOwner)::DownCast(m_context->SelectedOwner());
         if (owner.IsNull() || !owner->HasShape()) {
@@ -353,14 +404,8 @@ QString OcctViewWidget::pickAtPhysical(int px, int py)
         switch (owner->Shape().ShapeType()) {
         case TopAbs_FACE:
             ++faces;
-            if (m_pickedFace.IsNull()) { // remember the first face for Push/Pull
+            if (m_pickedFace.IsNull()) // remember the first face for Push/Pull
                 m_pickedFace = owner->Shape();
-                const Handle(AIS_InteractiveObject) io =
-                    Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-                for (const auto& pr : m_shapes)
-                    if (pr.first == io)
-                        m_pickedSolid = pr.second;
-            }
             break;
         case TopAbs_EDGE: ++edges; break;
         case TopAbs_VERTEX: ++verts; break;
@@ -434,7 +479,27 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         }
     }
 
-    emit picked(pickAtPhysical(p.x(), p.y()));
+    // No command: a plain click SELECTS the solid (document selection), so the
+    // Properties panel binds to it (hole params…), the Assembly panel row
+    // lights up, and the orange highlight survives refreshes. Empty click =
+    // clear the selection. Ctrl+click adds/removes (multi-select).
+    const QString info = pickAtPhysical(p.x(), p.y());
+    if (m_selection) {
+        const bool ctrl = event->modifiers().testFlag(Qt::ControlModifier);
+        if (m_pickedSolid != kInvalidEntityId) {
+            if (ctrl)
+                m_selection->toggle(m_pickedSolid);
+            else if (!(m_selection->size() == 1 &&
+                       m_selection->contains(m_pickedSolid))) {
+                m_selection->clear();
+                m_selection->add(m_pickedSolid);
+            }
+        } else if (!ctrl) {
+            m_selection->clear();
+        }
+        emit interaction();
+    }
+    emit picked(info);
 }
 
 void OcctViewWidget::wheelEvent(QWheelEvent* event)

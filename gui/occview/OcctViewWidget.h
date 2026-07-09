@@ -12,6 +12,7 @@
 #include <V3d_Viewer.hxx>
 
 #include "doc/Document.h"
+#include "doc/SelectionSet.h"
 
 namespace viki {
 
@@ -30,8 +31,10 @@ class OcctViewWidget : public QWidget {
 public:
     explicit OcctViewWidget(QWidget* parent = nullptr);
 
-    // Wire the document + command processor (same pattern as CanvasWidget).
-    void attach(Document* doc, CommandProcessor* processor);
+    // Wire the document + command processor + shared selection (same pattern
+    // as CanvasWidget). Clicking a solid selects it; refreshFrom() highlights
+    // whatever the document selection holds.
+    void attach(Document* doc, CommandProcessor* processor, SelectionSet* selection);
 
     // (Re)display every solid in the document and fit the view.
     void refreshFrom(const Document& doc);
@@ -99,6 +102,7 @@ private:
 
     Document* m_doc = nullptr;
     CommandProcessor* m_processor = nullptr;
+    SelectionSet* m_selection = nullptr;
 
     // Map each displayed shape back to its document entity, and remember the
     // last picked face + its owning solid (for Push/Pull).

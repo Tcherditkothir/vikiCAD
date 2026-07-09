@@ -92,9 +92,24 @@ MainWindow::MainWindow()
     addDockWidget(Qt::RightDockWidgetArea, asmDock);
     connect(m_assemblyPanel, &AssemblyPanel::selectionChanged, this, [this] {
         m_canvas->markDocumentDirty();
+        m_propsPanel->refresh(); // show the selected solid's properties
         if (m_occtView && m_viewStack->currentWidget() == m_occtView)
-            m_occtView->refreshFrom(*m_doc);
+            m_occtView->refreshFrom(*m_doc); // re-applies the orange highlight
     });
+    // Panel actions (Combine, Move…) run through the shared processor, exactly
+    // as if typed — undo, messages and view refresh come from the same path.
+    connect(m_assemblyPanel, &AssemblyPanel::commandRequested, this,
+            [this](const QString& line) {
+                m_commandBar->appendHistory(QStringLiteral("> %1").arg(line));
+                const auto r = m_processor->submit(line, /*strict=*/false);
+                if (!r.ok)
+                    m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+                refreshPromptAndMessages();
+                m_canvas->markDocumentDirty();
+                if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+                    m_occtView->refreshFrom(*m_doc);
+                m_assemblyPanel->refresh();
+            });
 
     // When a panel is torn off (floating) give it real window chrome so it can
     // be maximized / full-screened, not just a frameless floating box.
@@ -307,7 +322,7 @@ void MainWindow::toggle3D(bool on)
     if (on) {
         if (!m_occtView) {
             m_occtView = new OcctViewWidget(this);
-            m_occtView->attach(m_doc.get(), m_processor.get());
+            m_occtView->attach(m_doc.get(), m_processor.get(), &m_selection);
             connect(m_occtView, &OcctViewWidget::interaction, this,
                     &MainWindow::onInteraction);
             connect(m_occtView, &OcctViewWidget::picked, this,
@@ -561,7 +576,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_commandBar->setCompletions(m_processor->commandNames());
     m_canvas->attach(m_doc.get(), m_processor.get(), &m_selection);
     if (m_occtView)
-        m_occtView->attach(m_doc.get(), m_processor.get());
+        m_occtView->attach(m_doc.get(), m_processor.get(), &m_selection);
     m_layerPanel->attach(m_doc.get());
     m_propsPanel->attach(m_doc.get(), &m_selection);
     m_assemblyPanel->attach(m_doc.get(), &m_selection);
@@ -622,9 +637,12 @@ void MainWindow::onInteraction()
     refreshPromptAndMessages();
     m_propsPanel->refresh();
     // Mouse-driven commands mutate solids too (e.g. HOLE placed by a 3D
-    // click): keep the 3D view in sync when it is the active view.
-    if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+    // click): keep the 3D view in sync when it is the active view, and light
+    // up the selected solid's row in the Assembly tree.
+    if (m_occtView && m_viewStack->currentWidget() == m_occtView) {
         m_occtView->refreshFrom(*m_doc);
+        m_assemblyPanel->refresh();
+    }
 }
 
 void MainWindow::refreshPromptAndMessages()

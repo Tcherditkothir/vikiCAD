@@ -1,5 +1,6 @@
 #include "AssemblyPanel.h"
 
+#include <algorithm>
 #include <functional>
 #include <map>
 
@@ -21,10 +22,14 @@ AssemblyPanel::AssemblyPanel(QWidget* parent) : QWidget(parent)
     m_tree->setColumnCount(1);
     m_tree->setHeaderLabels({QStringLiteral("Components")});
     m_tree->header()->setStretchLastSection(true);
+    // Ctrl/Shift multi-select: pick several solids, then right-click to
+    // Combine / Move / … the whole set.
+    m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(2, 2, 2, 2);
     layout->addWidget(m_tree);
-    connect(m_tree, &QTreeWidget::itemClicked, this, &AssemblyPanel::itemActivated);
+    connect(m_tree, &QTreeWidget::itemSelectionChanged, this,
+            &AssemblyPanel::syncSelectionFromTree);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this,
             &AssemblyPanel::showContextMenu);
@@ -48,14 +53,26 @@ std::vector<EntityId> AssemblyPanel::idsForItem(QTreeWidgetItem* item) const
     return ids;
 }
 
+// Every solid id currently selected in the tree (groups expand to their
+// children), deduplicated, in tree order.
+std::vector<EntityId> AssemblyPanel::selectedIds() const
+{
+    std::vector<EntityId> ids;
+    for (QTreeWidgetItem* item : m_tree->selectedItems())
+        for (const EntityId id : idsForItem(item))
+            if (std::find(ids.begin(), ids.end(), id) == ids.end())
+                ids.push_back(id);
+    return ids;
+}
+
 void AssemblyPanel::showContextMenu(const QPoint& pos)
 {
     if (!m_doc)
         return;
-    QTreeWidgetItem* item = m_tree->itemAt(pos);
-    if (!item)
-        return;
-    const std::vector<EntityId> ids = idsForItem(item);
+    // Act on the multi-selection; fall back to the row under the cursor.
+    std::vector<EntityId> ids = selectedIds();
+    if (ids.empty())
+        ids = idsForItem(m_tree->itemAt(pos));
     if (ids.empty())
         return;
 
@@ -76,7 +93,46 @@ void AssemblyPanel::showContextMenu(const QPoint& pos)
 
     QMenu menu(this);
     connect(menu.addAction(QStringLiteral("Properties")), &QAction::triggered,
-            this, [this, item] { itemActivated(item, 0); }); // select -> panel
+            this, [this] { syncSelectionFromTree(); }); // select -> panel
+
+    // Boolean-join the whole selection into one body (COMBINE command: same
+    // code path as typing it, so undo and messages come for free).
+    if (ids.size() >= 2) {
+        connect(menu.addAction(QStringLiteral("Combine (join) %1 solids")
+                                   .arg(ids.size())),
+                &QAction::triggered, this, [this, ids] {
+                    QStringList line{QStringLiteral("COMBINE")};
+                    for (const EntityId id : ids)
+                        line << QString::number(qlonglong(id));
+                    emit commandRequested(line.join(QLatin1Char(' ')));
+                });
+    }
+
+    connect(menu.addAction(QStringLiteral("Move…")), &QAction::triggered, this,
+            [this, ids] {
+                bool ok = false;
+                const QString text = QInputDialog::getText(
+                    this, QStringLiteral("Move solids"),
+                    QStringLiteral("Displacement dx, dy, dz (mm):"),
+                    QLineEdit::Normal, QStringLiteral("0, 0, 0"), &ok);
+                if (!ok)
+                    return;
+                const QStringList parts =
+                    text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+                if (parts.size() != 3)
+                    return;
+                bool okx = false, oky = false, okz = false;
+                const double dx = parts[0].trimmed().toDouble(&okx);
+                const double dy = parts[1].trimmed().toDouble(&oky);
+                const double dz = parts[2].trimmed().toDouble(&okz);
+                if (!okx || !oky || !okz)
+                    return;
+                QStringList line{QStringLiteral("MOVE3D"), QString::number(dx),
+                                 QString::number(dy), QString::number(dz)};
+                for (const EntityId id : ids)
+                    line << QString::number(qlonglong(id));
+                emit commandRequested(line.join(QLatin1Char(' ')));
+            });
 
     const SolidEntity* first =
         dynamic_cast<const SolidEntity*>(m_doc->entity(ids.front()));
@@ -139,6 +195,9 @@ void AssemblyPanel::attach(Document* doc, SelectionSet* selection)
 
 void AssemblyPanel::refresh()
 {
+    // Rebuilding the tree must not clobber the document selection (clear()
+    // would fire itemSelectionChanged -> sync -> empty selection).
+    const QSignalBlocker blocker(m_tree);
     m_tree->clear();
     if (!m_doc)
         return;
@@ -165,27 +224,24 @@ void AssemblyPanel::refresh()
             auto* child = new QTreeWidgetItem(
                 top, {QStringLiteral("solid #%1").arg(qlonglong(ids[i]))});
             child->setData(0, Qt::UserRole, qlonglong(ids[i]));
+            // Reflect the document selection (e.g. a solid picked in the 3D
+            // view) back into the tree.
+            if (m_selection && m_selection->contains(ids[i]))
+                child->setSelected(true);
         }
     }
     m_tree->expandAll();
 }
 
-void AssemblyPanel::itemActivated(QTreeWidgetItem* item, int)
+// Mirror the tree's (multi-)selection into the document selection: the 2D/3D
+// views highlight it and the Properties panel binds to it.
+void AssemblyPanel::syncSelectionFromTree()
 {
-    if (!m_doc || !m_selection || !item)
+    if (!m_doc || !m_selection)
         return;
     m_selection->clear();
-    const QVariant idVar = item->data(0, Qt::UserRole);
-    if (idVar.isValid()) {
-        m_selection->toggle(EntityId(idVar.toLongLong())); // a single solid
-    } else {
-        // A component group: select every solid under it.
-        for (int i = 0; i < item->childCount(); ++i) {
-            const QVariant childId = item->child(i)->data(0, Qt::UserRole);
-            if (childId.isValid())
-                m_selection->toggle(EntityId(childId.toLongLong()));
-        }
-    }
+    for (const EntityId id : selectedIds())
+        m_selection->add(id);
     emit selectionChanged();
 }
 
