@@ -954,6 +954,15 @@ SolidResult draftBoxSides(const TopoDS_Shape& solid, const gp_Dir& pullDir,
 SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
                        const TopoDS_Shape& openFace)
 {
+    std::vector<TopoDS_Shape> faces;
+    if (!openFace.IsNull())
+        faces.push_back(openFace);
+    return shellSolid(solid, thickness, faces);
+}
+
+SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
+                       const std::vector<TopoDS_Shape>& openFaces)
+{
     SolidResult result;
     if (solid.IsNull()) {
         result.message = QStringLiteral("shell needs a target solid");
@@ -966,12 +975,12 @@ SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
 
     // Faces to open (remove). Empty = closed shell all around.
     TopTools_ListOfShape toRemove;
-    if (!openFace.IsNull()) {
-        if (openFace.ShapeType() != TopAbs_FACE) {
+    for (const TopoDS_Shape& f : openFaces) {
+        if (f.IsNull() || f.ShapeType() != TopAbs_FACE) {
             result.message = QStringLiteral("shell open-face must be a face");
             return result;
         }
-        toRemove.Append(openFace);
+        toRemove.Append(f);
     }
 
     // Negative offset hollows inward, leaving a wall of |thickness|. The Join

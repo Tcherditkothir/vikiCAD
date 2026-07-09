@@ -10,6 +10,7 @@
 #include <QStringList>
 #include <QWheelEvent>
 
+#include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
 #include <Aspect_Window.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -143,18 +144,14 @@ void OcctViewWidget::refreshFrom(const Document& doc)
     }
     // Fit the camera on the first population only: refreshes now also happen
     // after every command (a hole appears in place), and re-fitting each time
-    // would make the camera jump under the user's cursor. BUT a STEP opened at
-    // startup reaches here before the window is laid out — fitting a not-yet-
-    // sized viewport left the model tiny in a corner. Defer the fit until the
-    // widget has a real size (resizeEvent finishes it).
+    // would make the camera jump under the user's cursor. A STEP opened at
+    // startup reaches here BEFORE the final window layout though, so the fit
+    // is re-done on every resize until the user starts navigating (see
+    // resizeEvent) — that is what actually frames the model once the window
+    // reaches its real size.
     if (shown > 0 && !m_fittedOnce) {
-        if (width() >= 200 && height() >= 200) {
-            m_view->FitAll(0.1, false);
-            m_fittedOnce = true;
-            m_pendingFit = false;
-        } else {
-            m_pendingFit = true;
-        }
+        m_view->FitAll(0.1, false);
+        m_fittedOnce = true;
     }
     m_view->Redraw();
 }
@@ -163,6 +160,14 @@ void OcctViewWidget::syncHighlight()
 {
     if (m_context.IsNull() || m_view.IsNull())
         return;
+    // A face/edge was just picked in the view: OCCT already highlights that
+    // precise element — do NOT swap it for a whole-solid highlight (that made
+    // "clicking a hole select the whole solid" visually).
+    if (m_keepPickHighlight) {
+        m_keepPickHighlight = false;
+        m_view->Redraw();
+        return;
+    }
     m_context->ClearSelected(false);
     if (m_selection)
         for (const auto& pr : m_shapes)
@@ -191,11 +196,12 @@ void OcctViewWidget::resizeEvent(QResizeEvent*)
     if (m_view.IsNull())
         return;
     m_view->MustBeResized();
-    // Finish a fit that was deferred because the widget had no real size yet
-    // (STEP opened at startup): now that the viewport is laid out, frame it.
-    if (m_pendingFit && width() >= 200 && height() >= 200) {
-        m_pendingFit = false;
-        m_fittedOnce = true;
+    // A STEP opened at startup gets displayed (and fitted) before the window
+    // reaches its final layout; MustBeResized alone keeps the stale camera and
+    // the model ends up tiny in a corner. Until the user actually navigates
+    // (orbit/pan/zoom), every resize re-frames the scene — after that, resizes
+    // respect the user's camera.
+    if (m_fittedOnce && !m_userNavigated && !m_shapes.empty()) {
         m_view->FitAll(0.1, false);
         m_view->Redraw();
     }
@@ -389,8 +395,12 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
         return;
     const QPoint p = devicePos(event->pos());
     if (event->buttons() & Qt::LeftButton) {
+        // A real drag (not a click) = the user took over the camera.
+        if ((event->pos() - m_pressPos).manhattanLength() >= 4)
+            m_userNavigated = true;
         m_view->Rotation(p.x(), p.y());
     } else if (event->buttons() & Qt::MiddleButton) {
+        m_userNavigated = true;
         const QPoint last = devicePos(m_lastPos);
         m_view->Pan(p.x() - last.x(), last.y() - p.y());
     } else if (!m_context.IsNull()) {
@@ -415,15 +425,20 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
     m_lastPos = event->pos();
 }
 
-QString OcctViewWidget::pickAtPhysical(int px, int py)
+QString OcctViewWidget::pickAtPhysical(int px, int py, bool additive)
 {
     if (m_view.IsNull() || m_context.IsNull())
         return QStringLiteral("3D: no view");
     m_context->MoveTo(px, py, m_view, Standard_False);
-    m_context->SelectDetected();
+    // Plain click replaces the selection; Ctrl+click toggles the element so
+    // several faces/edges can be accumulated for one operation.
+    m_context->SelectDetected(additive ? AIS_SelectionScheme_XOR
+                                       : AIS_SelectionScheme_Replace);
 
     m_pickedFace = TopoDS_Shape();
     m_pickedSolid = kInvalidEntityId;
+    m_pickedFaces.clear();
+    m_pickedEdges.clear();
     int solids = 0, faces = 0, edges = 0, verts = 0;
     // Resolve the OWNING SOLID for whatever got picked (face, edge, vertex or
     // whole shape) — plain clicks must always select the entity, not only
@@ -450,12 +465,19 @@ QString OcctViewWidget::pickAtPhysical(int px, int py)
             ++faces;
             if (m_pickedFace.IsNull()) // remember the first face for Push/Pull
                 m_pickedFace = owner->Shape();
+            m_pickedFaces.push_back(owner->Shape());
             break;
-        case TopAbs_EDGE: ++edges; break;
+        case TopAbs_EDGE:
+            ++edges;
+            m_pickedEdges.push_back(owner->Shape());
+            break;
         case TopAbs_VERTEX: ++verts; break;
         default: ++solids; break;
         }
     }
+    // A sub-shape got highlighted by OCCT itself (the face/edge turns orange,
+    // not the whole solid) — tell the next syncHighlight to leave it alone.
+    m_keepPickHighlight = faces + edges + verts > 0;
     // Show the selection highlight (the SelectionStyle colour) right away.
     m_context->UpdateCurrentViewer();
     QStringList parts;
@@ -523,22 +545,22 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         }
     }
 
-    // No command: a plain click SELECTS the solid (document selection), so the
-    // Properties panel binds to it (hole params…), the Assembly panel row
-    // lights up, and the orange highlight survives refreshes. Empty click =
-    // clear the selection. Ctrl+click adds/removes (multi-select).
-    const QString info = pickAtPhysical(p.x(), p.y());
-    if (m_selection) {
-        const bool ctrl = event->modifiers().testFlag(Qt::ControlModifier);
+    // No command running:
+    // - plain click SELECTS the picked solid (document selection: Properties,
+    //   Assembly row, highlight) while OCCT highlights the precise face/edge;
+    // - Ctrl+click ACCUMULATES faces/edges (XOR) for a multi-element
+    //   operation (fillet, chamfer, shell-open…) without touching the
+    //   document selection. Empty plain click clears everything.
+    const bool ctrl = event->modifiers().testFlag(Qt::ControlModifier);
+    const QString info = pickAtPhysical(p.x(), p.y(), ctrl);
+    if (!ctrl && m_selection) {
         if (m_pickedSolid != kInvalidEntityId) {
-            if (ctrl)
-                m_selection->toggle(m_pickedSolid);
-            else if (!(m_selection->size() == 1 &&
-                       m_selection->contains(m_pickedSolid))) {
+            if (!(m_selection->size() == 1 &&
+                  m_selection->contains(m_pickedSolid))) {
                 m_selection->clear();
                 m_selection->add(m_pickedSolid);
             }
-        } else if (!ctrl) {
+        } else {
             m_selection->clear();
         }
         emit interaction();
@@ -550,6 +572,7 @@ void OcctViewWidget::wheelEvent(QWheelEvent* event)
 {
     if (m_view.IsNull())
         return;
+    m_userNavigated = true;
     const double factor = event->angleDelta().y() > 0 ? 1.2 : 1.0 / 1.2;
     m_view->SetZoom(factor);
 }
@@ -589,28 +612,62 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
 
 void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
 {
-    // Right-click a selected face -> Push/Pull (extrude that face).
-    if (m_pickedFace.IsNull() || m_pickedSolid == kInvalidEntityId) {
+    if (m_pickedSolid == kInvalidEntityId ||
+        (m_pickedFace.IsNull() && m_pickedEdges.empty())) {
         QWidget::contextMenuEvent(event);
         return;
     }
     QMenu menu(this);
-    QAction* pp = menu.addAction(QStringLiteral("Push/Pull face…"));
-    QAction* sk = menu.addAction(QStringLiteral("Sketch on this face"));
-    QAction* sp = menu.addAction(QStringLiteral("Split solid by this face's plane"));
+    QAction* pp = nullptr;
+    QAction* sk = nullptr;
+    QAction* sp = nullptr;
+    QAction* sh = nullptr;
+    if (!m_pickedFace.IsNull()) {
+        pp = menu.addAction(QStringLiteral("Push/Pull face…"));
+        sk = menu.addAction(QStringLiteral("Sketch on this face"));
+        sp = menu.addAction(QStringLiteral("Split solid by this face"));
+        sh = menu.addAction(QStringLiteral("Shell — keep %1 face(s) open…")
+                                .arg(m_pickedFaces.size()));
+    }
+    QAction* fe = nullptr;
+    QAction* ce = nullptr;
+    if (!m_pickedEdges.empty()) {
+        fe = menu.addAction(QStringLiteral("Fillet %1 selected edge(s)…")
+                                .arg(m_pickedEdges.size()));
+        ce = menu.addAction(QStringLiteral("Chamfer %1 selected edge(s)…")
+                                .arg(m_pickedEdges.size()));
+    }
     QAction* chosen = menu.exec(event->globalPos());
-    if (chosen == pp) {
-        bool ok = false;
+    bool ok = false;
+    if (chosen && chosen == pp) {
         const double d = QInputDialog::getDouble(
             this, QStringLiteral("Push / Pull"),
             QStringLiteral("Distance (+ adds a boss, − cuts a pocket):"), 5.0,
             -1.0e6, 1.0e6, 3, &ok);
         if (ok && std::fabs(d) > 1e-9)
             emit pushPullFace(m_pickedSolid, d);
-    } else if (chosen == sk) {
+    } else if (chosen && chosen == sk) {
         emit sketchOnFace();
-    } else if (chosen == sp) {
+    } else if (chosen && chosen == sp) {
         emit splitByFace();
+    } else if (chosen && chosen == sh) {
+        const double t = QInputDialog::getDouble(
+            this, QStringLiteral("Shell"), QStringLiteral("Wall thickness (mm):"),
+            2.0, 0.001, 1.0e6, 3, &ok);
+        if (ok)
+            emit shellOpenFaces(m_pickedSolid, t);
+    } else if (chosen && chosen == fe) {
+        const double r = QInputDialog::getDouble(
+            this, QStringLiteral("Fillet"), QStringLiteral("Radius (mm):"), 1.0,
+            0.001, 1.0e6, 3, &ok);
+        if (ok)
+            emit filletSelectedEdges(m_pickedSolid, r);
+    } else if (chosen && chosen == ce) {
+        const double d = QInputDialog::getDouble(
+            this, QStringLiteral("Chamfer"), QStringLiteral("Distance (mm):"),
+            1.0, 0.001, 1.0e6, 3, &ok);
+        if (ok)
+            emit chamferSelectedEdges(m_pickedSolid, d);
     }
 }
 

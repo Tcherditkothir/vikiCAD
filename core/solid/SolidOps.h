@@ -132,6 +132,10 @@ SolidResult chamferFirstNEdges(const TopoDS_Shape& solid, int n, double distance
 // thickness hollows inward. Uses BRepOffsetAPI_MakeThickSolid.
 SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
                        const TopoDS_Shape& openFace = {});
+// Multi-face variant (Fusion parity): every face in `openFaces` is removed so
+// the shell is open on all of them (Ctrl-picked faces in the 3D view).
+SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
+                       const std::vector<TopoDS_Shape>& openFaces);
 
 // DRAFT (taper) faces for moldability: tilt each face in `faces` (faces OF
 // `solid`) by `angleDeg` about its intersection with `neutralPlane`, using

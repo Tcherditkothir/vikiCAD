@@ -95,6 +95,10 @@ MainWindow::MainWindow()
         m_propsPanel->refresh(); // show the selected solid's properties
         sync3DView();            // cheap highlight sync (rebuild only if dirty)
     });
+    connect(m_assemblyPanel, &AssemblyPanel::featureFocused, this,
+            [this](EntityId, int nodeIndex) {
+                m_propsPanel->focusFeature(nodeIndex);
+            });
     // Panel actions (Combine, Move…) run through the shared processor, exactly
     // as if typed — undo, messages and view refresh come from the same path.
     connect(m_assemblyPanel, &AssemblyPanel::commandRequested, this,
@@ -333,7 +337,27 @@ void MainWindow::toggle3D(bool on)
                             m_commandBar->beginTyping(text);
                     });
             connect(m_occtView, &OcctViewWidget::picked, this,
-                    [this](const QString& info) { m_commandBar->appendHistory(info); });
+                    [this](const QString& info) {
+                        m_commandBar->appendHistory(info);
+                        // Clicking a bore wall selects THE HOLE, not just the
+                        // solid: focus its parameters in Properties and its
+                        // node in the Assembly tree.
+                        const EntityId id = m_occtView->pickedSolid();
+                        const auto* solid =
+                            dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                        if (solid && solid->features) {
+                            const int node = featureForFace(
+                                *solid->features, m_occtView->pickedFace());
+                            if (node >= 0) {
+                                m_propsPanel->focusFeature(node);
+                                m_assemblyPanel->focusFeature(id, node);
+                                m_commandBar->appendHistory(
+                                    QStringLiteral("→ hole %1 selected — edit it "
+                                                   "in Properties")
+                                        .arg(node));
+                            }
+                        }
+                    });
             connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
                     &MainWindow::beginSketchOnFace);
             connect(m_occtView, &OcctViewWidget::pushPullFace, this,
@@ -404,6 +428,71 @@ void MainWindow::toggle3D(bool on)
                 m_commandBar->appendHistory(
                     QStringLiteral("Split: %1 pieces").arg(pieces.size()));
             });
+            // One shared "replace the solid's shape in a transaction" path for
+            // the multi-element context-menu operations.
+            const auto replaceShape = [this](EntityId id,
+                                             const solidops::SolidResult& res,
+                                             const QString& tx,
+                                             const QString& okMsg) {
+                if (!res.ok) {
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! %1").arg(res.message));
+                    return;
+                }
+                m_doc->beginTransaction(tx);
+                if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                    s->setShape(res.shape);
+                    m_doc->endModify(id);
+                }
+                m_doc->commitTransaction();
+                sync3DView();
+                m_commandBar->appendHistory(okMsg);
+            };
+            connect(m_occtView, &OcctViewWidget::filletSelectedEdges, this,
+                    [this, replaceShape](EntityId id, double radius) {
+                        const auto* s =
+                            dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                        if (!s)
+                            return;
+                        replaceShape(
+                            id,
+                            solidops::filletEdges(s->shape(),
+                                                  m_occtView->pickedEdges(), radius),
+                            QStringLiteral("FILLET3D"),
+                            QStringLiteral("Fillet: %1 edge(s), r=%2")
+                                .arg(m_occtView->pickedEdges().size())
+                                .arg(radius));
+                    });
+            connect(m_occtView, &OcctViewWidget::chamferSelectedEdges, this,
+                    [this, replaceShape](EntityId id, double dist) {
+                        const auto* s =
+                            dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                        if (!s)
+                            return;
+                        replaceShape(
+                            id,
+                            solidops::chamferEdges(s->shape(),
+                                                   m_occtView->pickedEdges(), dist),
+                            QStringLiteral("CHAMFER3D"),
+                            QStringLiteral("Chamfer: %1 edge(s), d=%2")
+                                .arg(m_occtView->pickedEdges().size())
+                                .arg(dist));
+                    });
+            connect(m_occtView, &OcctViewWidget::shellOpenFaces, this,
+                    [this, replaceShape](EntityId id, double thickness) {
+                        const auto* s =
+                            dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+                        if (!s)
+                            return;
+                        replaceShape(
+                            id,
+                            solidops::shellSolid(s->shape(), thickness,
+                                                 m_occtView->pickedFaces()),
+                            QStringLiteral("SHELL"),
+                            QStringLiteral("Shell: t=%1, %2 face(s) open")
+                                .arg(thickness)
+                                .arg(m_occtView->pickedFaces().size()));
+                    });
             m_viewStack->addWidget(m_occtView);
         }
         m_occtView->refreshFrom(*m_doc);

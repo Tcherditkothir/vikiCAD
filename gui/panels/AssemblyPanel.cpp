@@ -12,6 +12,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include "solid/FeatureTree.h"
 #include "solid/SolidEntity.h"
 
 namespace viki {
@@ -228,9 +229,59 @@ void AssemblyPanel::refresh()
             // view) back into the tree.
             if (m_selection && m_selection->contains(ids[i]))
                 child->setSelected(true);
+            // Parametric history: one row per feature (the "tree where I can
+            // see the hole"). Selecting one selects the solid AND focuses the
+            // feature's parameters in Properties.
+            const auto* s =
+                dynamic_cast<const SolidEntity*>(m_doc->entity(ids[i]));
+            if (!s || !s->features)
+                continue;
+            for (int n = 0; n < s->features->count(); ++n) {
+                const FeatureNode& node = s->features->nodeAt(n);
+                QString label;
+                switch (node.kind) {
+                case FeatureKind::Hole:
+                    label = QStringLiteral("hole %1  ⌀%2%3")
+                                .arg(n)
+                                .arg(node.diameter)
+                                .arg(node.through
+                                         ? QStringLiteral(" (through)")
+                                         : QStringLiteral(" ×%1").arg(node.depth));
+                    break;
+                case FeatureKind::Shell:
+                    label = QStringLiteral("shell %1  t=%2").arg(n).arg(node.thickness);
+                    break;
+                case FeatureKind::Extrude:
+                    label = QStringLiteral("extrude %1  h=%2").arg(n).arg(node.height);
+                    break;
+                case FeatureKind::BaseShape:
+                case FeatureKind::Sketch:
+                    continue; // structural nodes — nothing to edit
+                }
+                auto* feat = new QTreeWidgetItem(child, {label});
+                feat->setData(0, Qt::UserRole, qlonglong(ids[i])); // owns solid
+                feat->setData(0, Qt::UserRole + 2, n);             // node index
+            }
         }
     }
     m_tree->expandAll();
+}
+
+void AssemblyPanel::focusFeature(EntityId solid, int nodeIndex)
+{
+    for (QTreeWidgetItem* top :
+         m_tree->findItems(QString(), Qt::MatchContains | Qt::MatchRecursive)) {
+        const QVariant id = top->data(0, Qt::UserRole);
+        const QVariant node = top->data(0, Qt::UserRole + 2);
+        if (id.isValid() && node.isValid() &&
+            EntityId(id.toLongLong()) == solid && node.toInt() == nodeIndex) {
+            const QSignalBlocker blocker(m_tree); // selection already correct
+            m_tree->clearSelection();
+            top->setSelected(true);
+            m_tree->scrollToItem(top);
+            return;
+        }
+    }
 }
 
 // Mirror the tree's (multi-)selection into the document selection: the 2D/3D
@@ -243,6 +294,14 @@ void AssemblyPanel::syncSelectionFromTree()
     for (const EntityId id : selectedIds())
         m_selection->add(id);
     emit selectionChanged();
+    // A single feature row selected -> focus its parameters in Properties.
+    const auto items = m_tree->selectedItems();
+    if (items.size() == 1) {
+        const QVariant node = items.front()->data(0, Qt::UserRole + 2);
+        const QVariant id = items.front()->data(0, Qt::UserRole);
+        if (node.isValid() && id.isValid())
+            emit featureFocused(EntityId(id.toLongLong()), node.toInt());
+    }
 }
 
 } // namespace viki

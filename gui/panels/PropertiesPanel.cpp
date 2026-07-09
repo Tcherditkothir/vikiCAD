@@ -306,6 +306,28 @@ void PropertiesPanel::applyFeatureEdit(int paramIndex)
     rebuildGeometryTable();
 }
 
+void PropertiesPanel::focusFeature(int nodeIndex)
+{
+    if (m_featureRowStart < 0)
+        return;
+    m_geomTable->clearSelection();
+    bool first = true;
+    for (size_t i = 0; i < m_featureParams.size(); ++i) {
+        if (m_featureParams[i].nodeIndex != nodeIndex)
+            continue;
+        const int row = m_featureRowStart + int(i);
+        if (auto* item = m_geomTable->item(row, 0)) {
+            item->setSelected(true);
+            if (auto* val = m_geomTable->item(row, 1))
+                val->setSelected(true);
+            if (first) {
+                m_geomTable->scrollToItem(item);
+                first = false;
+            }
+        }
+    }
+}
+
 void PropertiesPanel::applyOriginEdit(int axis)
 {
     if (axis < 0 || axis > 2 || m_originRowStart < 0)

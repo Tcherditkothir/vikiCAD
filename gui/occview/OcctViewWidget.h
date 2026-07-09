@@ -51,9 +51,14 @@ public:
     // The face last clicked (empty if none / a whole solid was picked).
     const TopoDS_Shape& pickedFace() const { return m_pickedFace; }
     EntityId pickedSolid() const { return m_pickedSolid; }
+    // EVERY sub-shape currently picked on the picked solid (Ctrl+click
+    // accumulates): feeds fillet/chamfer (edges) and shell-open (faces).
+    const std::vector<TopoDS_Shape>& pickedFaces() const { return m_pickedFaces; }
+    const std::vector<TopoDS_Shape>& pickedEdges() const { return m_pickedEdges; }
     // Select at physical-pixel coords (shared by the mouse and the pick3d IPC
     // verb); returns a human-readable description of what got selected.
-    QString pickAtPhysical(int px, int py);
+    // `additive` toggles the picked element in/out (Ctrl+click).
+    QString pickAtPhysical(int px, int py, bool additive = false);
     // Pick at the physical centre of the view (for headless verification).
     QString pickCenter();
 
@@ -64,6 +69,11 @@ signals:
     void pushPullFace(EntityId solid, double distance);
     // Right-click "Sketch on this face": set the work plane to the picked face.
     void sketchOnFace();
+    // Right-click actions on the Ctrl-accumulated sub-shape selection (the
+    // shapes are read back via pickedEdges()/pickedFaces()).
+    void filletSelectedEdges(EntityId solid, double radius);
+    void chamferSelectedEdges(EntityId solid, double distance);
+    void shellOpenFaces(EntityId solid, double thickness);
     // Right-click "Split solid by this face's plane": split the owning solid
     // (pickedSolid) by the plane of the picked face.
     void splitByFace();
@@ -108,7 +118,9 @@ private:
     QPoint m_pressPos;
     bool m_initFailed = false;
     bool m_fittedOnce = false;
-    bool m_pendingFit = false; // fit deferred until the widget has a real size
+    // Until the user orbits/pans/zooms, window resizes re-frame the scene
+    // (fixes the tiny-model-in-a-corner startup); afterwards the camera is his.
+    bool m_userNavigated = false;
 
     Document* m_doc = nullptr;
     CommandProcessor* m_processor = nullptr;
@@ -119,6 +131,12 @@ private:
     std::vector<std::pair<Handle(AIS_InteractiveObject), EntityId>> m_shapes;
     TopoDS_Shape m_pickedFace;
     EntityId m_pickedSolid = kInvalidEntityId;
+    std::vector<TopoDS_Shape> m_pickedFaces; // Ctrl-accumulated, one solid
+    std::vector<TopoDS_Shape> m_pickedEdges;
+    // A sub-shape pick just highlighted the face/edge itself: the next
+    // syncHighlight must not replace it with a whole-solid highlight (that
+    // was why "clicking the hole selected the solid").
+    bool m_keepPickHighlight = false;
 
     // Transient ghost of the active command's pending result.
     Handle(AIS_InteractiveObject) m_ghost;

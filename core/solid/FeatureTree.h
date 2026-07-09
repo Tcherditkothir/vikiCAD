@@ -214,4 +214,9 @@ private:
     std::vector<FeatureNode> m_nodes;
 };
 
+// Map a picked 3D FACE back to the feature that created it: a cylindrical
+// face whose radius and axis match a Hole node returns that node's index; -1
+// otherwise. Lets a click on a bore wall select "the hole", Fusion-style.
+int featureForFace(const FeatureTree& tree, const TopoDS_Shape& face);
+
 } // namespace viki

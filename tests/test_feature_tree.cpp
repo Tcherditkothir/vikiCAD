@@ -376,3 +376,44 @@ TEST_CASE("featureparams center x/y MOVES a hole (signed values accepted)",
     CHECK(featureparams::set(tree, hole, QStringLiteral("center x"), -3.0));
     CHECK_FALSE(featureparams::set(tree, hole, QStringLiteral("diameter"), -1.0));
 }
+
+#include <BRepAdaptor_Surface.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <gp_Cylinder.hxx>
+
+TEST_CASE("featureForFace maps a bore wall back to its Hole node",
+          "[features][face-map]")
+{
+    using namespace viki;
+    FeatureTree tree;
+    tree.addNode(FeatureNode::makeBaseShape(
+        BRepPrimAPI_MakeBox(20.0, 20.0, 10.0).Shape()));
+    const int h1 = tree.addNode(FeatureNode::makeHole(
+        WorkPlane{}, Vec2d{5, 5}, 4.0, 0.0, /*through=*/true));
+    const int h2 = tree.addNode(FeatureNode::makeHole(
+        WorkPlane{}, Vec2d{14, 14}, 6.0, 0.0, /*through=*/true));
+    const auto r = tree.regenerate();
+    REQUIRE(r.ok);
+
+    int cylFaces = 0;
+    bool saw1 = false, saw2 = false;
+    for (TopExp_Explorer e(r.shape, TopAbs_FACE); e.More(); e.Next()) {
+        BRepAdaptor_Surface surf(TopoDS::Face(e.Current()));
+        const int node = featureForFace(tree, e.Current());
+        if (surf.GetType() == GeomAbs_Cylinder) {
+            ++cylFaces;
+            REQUIRE(node >= 0); // every bore wall maps to a hole
+            // ...and to the RIGHT hole (radius check is independent).
+            const double rad = surf.Cylinder().Radius();
+            CHECK(rad == Approx(tree.nodeAt(node).diameter / 2.0).margin(1e-9));
+            saw1 = saw1 || node == h1;
+            saw2 = saw2 || node == h2;
+        } else {
+            CHECK(node == -1); // planar faces are nobody's bore
+        }
+    }
+    CHECK(cylFaces >= 2);
+    CHECK(saw1);
+    CHECK(saw2);
+}

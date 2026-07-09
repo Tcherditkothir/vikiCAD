@@ -22,12 +22,16 @@ public:
 
     void attach(Document* doc, SelectionSet* selection);
     void refresh();
+    // Highlight a feature row (e.g. the hole whose wall was clicked in 3D).
+    void focusFeature(EntityId solid, int nodeIndex);
 
 signals:
     void selectionChanged(); // ask the host to repaint / sync the 3D view
     // Run a command line through the shared processor (COMBINE, MOVE3D…): the
     // host submits it exactly as if typed, so undo/refresh come for free.
     void commandRequested(const QString& line);
+    // A feature row (hole/shell/…) was selected in the tree.
+    void featureFocused(EntityId solid, int nodeIndex);
 
 private:
     void syncSelectionFromTree();

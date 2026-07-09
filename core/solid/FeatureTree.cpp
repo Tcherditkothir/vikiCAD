@@ -5,13 +5,18 @@
 #include <QJsonArray>
 #include <QJsonValue>
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BinTools.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <GC_MakeSegment.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <Geom_Circle.hxx>
+#include <TopoDS.hxx>
+#include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 
@@ -553,6 +558,35 @@ bool FeatureTree::fromJson(const QJsonObject& obj)
         m_nodes.push_back(std::move(n));
     }
     return true;
+}
+
+int featureForFace(const FeatureTree& tree, const TopoDS_Shape& face)
+{
+    if (face.IsNull() || face.ShapeType() != TopAbs_FACE)
+        return -1;
+    BRepAdaptor_Surface surf(TopoDS::Face(face));
+    if (surf.GetType() != GeomAbs_Cylinder)
+        return -1; // only bore walls are matched (v1)
+    const gp_Cylinder cyl = surf.Cylinder();
+    const gp_Ax1 axis = cyl.Axis();
+    const gp_Vec axisDir(axis.Direction());
+    for (int i = 0; i < tree.count(); ++i) {
+        const FeatureNode& n = tree.nodeAt(i);
+        if (n.kind != FeatureKind::Hole)
+            continue;
+        if (std::fabs(cyl.Radius() - n.diameter / 2.0) > 1e-6)
+            continue;
+        // Bore axis = plane normal through the 3D centre.
+        if (std::fabs(axisDir.Dot(gp_Vec(n.plane.normal))) < 1.0 - 1e-6)
+            continue;
+        const gp_Pnt c = solidops::planePoint3d(n.holeCenter, n.plane);
+        const double distToAxis =
+            gp_Vec(axis.Location(), c).Crossed(axisDir).Magnitude();
+        if (distToAxis > 1e-6)
+            continue;
+        return i;
+    }
+    return -1;
 }
 
 } // namespace viki

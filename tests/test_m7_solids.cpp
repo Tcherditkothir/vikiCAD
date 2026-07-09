@@ -781,3 +781,22 @@ TEST_CASE("HOLE ghost preview is a red-effect cylinder at the cursor", "[m7][hol
     Preview3d none;
     CHECK_FALSE(fresh.processor.activeCommand()->preview3d(fresh.ctx, Vec2d{0, 0}, none));
 }
+
+TEST_CASE("shellSolid opens SEVERAL picked faces at once", "[m8][shell][multi]")
+{
+    using namespace viki;
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    // Collect the top and bottom faces (normal ±Z).
+    std::vector<TopoDS_Shape> open;
+    for (TopExp_Explorer e(box, TopAbs_FACE); e.More(); e.Next()) {
+        const auto wp = solidops::planeFromFace(e.Current());
+        if (wp && std::abs(wp->normal.Z()) > 0.99)
+            open.push_back(e.Current());
+    }
+    REQUIRE(open.size() == 2);
+    const auto tube = solidops::shellSolid(box, 1.0, open);
+    REQUIRE(tube.ok);
+    // A 10^3 box opened top+bottom with 1mm walls = a square tube:
+    // 10*10*10 - 8*8*10 = 360.
+    CHECK(volumeOf(tube.shape) == Approx(360.0).epsilon(1e-4));
+}

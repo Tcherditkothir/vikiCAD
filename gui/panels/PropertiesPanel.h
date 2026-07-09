@@ -41,6 +41,13 @@ private:
     void applyFeatureEdit(int paramIndex);
     void applyOriginEdit(int axis); // 0=x 1=y 2=z — translates the solid
 
+public:
+    // Scroll to and highlight the parameter rows of one feature node (the
+    // hole whose wall was clicked in 3D / the row picked in the Assembly tree).
+    void focusFeature(int nodeIndex);
+
+private:
+
     Document* m_doc = nullptr;
     SelectionSet* m_selection = nullptr;
     QLabel* m_countLabel = nullptr;
