@@ -43,6 +43,14 @@ public:
     // Cheap counterpart: re-apply the orange highlight from the document
     // selection onto the already-displayed shapes. Call on selection changes.
     void syncHighlight();
+
+    // Standard view orientation (TOP/FRONT/RIGHT/ISO… — views::standardViewDir
+    // names); frames the scene. Returns false for an unknown name / no view.
+    bool setStandardView(const QString& name);
+    // Frame everything (the toolbar "Fit" button).
+    void fitView();
+    // 10 mm reference grid in the 3D view, on/off.
+    void setGridVisible(bool on);
     bool isReady() const { return !m_view.IsNull(); }
     // Dump the 3D framebuffer to an image file (QWidget::grab can't capture
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
@@ -83,6 +91,9 @@ signals:
     // Typing over the 3D view lands in the command bar (same contract as
     // CanvasWidget::typed; empty text = Enter with nothing active).
     void typed(const QString& text);
+    // Run a command line through the shared processor (right-click Move…):
+    // the host submits it exactly as if typed.
+    void commandRequested(const QString& line);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;

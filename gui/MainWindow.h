@@ -10,6 +10,7 @@
 
 class QLabel;
 class QStackedWidget;
+class QToolBar;
 class QToolButton;
 
 namespace viki {
@@ -68,6 +69,7 @@ private:
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
     QToolButton* m_3dButton = nullptr;
+    QToolBar* m_3dViewBar = nullptr; // Top/Front/Right/Iso/Fit/Grid, 3D only
     RpcServer* m_rpc = nullptr;
     OcctViewWidget* m_occtView = nullptr;
     QStackedWidget* m_viewStack = nullptr;

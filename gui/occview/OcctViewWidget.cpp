@@ -5,6 +5,7 @@
 
 #include <QContextMenuEvent>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QStringList>
@@ -26,8 +27,12 @@
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 
+#include <Aspect_GridDrawMode.hxx>
+#include <Aspect_GridType.hxx>
+
 #include "cmd/Command.h"
 #include "cmd/CommandProcessor.h"
+#include "render/StandardViews.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -176,6 +181,47 @@ void OcctViewWidget::syncHighlight()
     m_view->Redraw();
 }
 
+bool OcctViewWidget::setStandardView(const QString& name)
+{
+    if (m_view.IsNull())
+        return false;
+    const auto o = views::standardViewDir(name);
+    if (!o)
+        return false;
+    // OCCT's Proj vector points from the target TOWARD the eye — the reverse
+    // of our look direction.
+    m_view->SetProj(-o->dir.X(), -o->dir.Y(), -o->dir.Z());
+    m_view->SetUp(o->up.X(), o->up.Y(), o->up.Z());
+    m_view->FitAll(0.1, false);
+    m_userNavigated = true; // deliberately placed — resizes keep it now
+    m_view->Redraw();
+    return true;
+}
+
+void OcctViewWidget::fitView()
+{
+    if (m_view.IsNull())
+        return;
+    m_view->FitAll(0.1, false);
+    m_userNavigated = true;
+    m_view->Redraw();
+}
+
+void OcctViewWidget::setGridVisible(bool on)
+{
+    if (m_viewer.IsNull())
+        return;
+    if (on) {
+        // 10 mm reference grid in the XY plane.
+        m_viewer->SetRectangularGridValues(0.0, 0.0, 10.0, 10.0, 0.0);
+        m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
+    } else {
+        m_viewer->DeactivateGrid();
+    }
+    if (!m_view.IsNull())
+        m_view->Redraw();
+}
+
 bool OcctViewWidget::dumpToFile(const QString& path)
 {
     if (m_view.IsNull())
@@ -187,8 +233,16 @@ bool OcctViewWidget::dumpToFile(const QString& path)
 void OcctViewWidget::paintEvent(QPaintEvent*)
 {
     initViewer();
-    if (!m_view.IsNull())
-        m_view->Redraw();
+    if (m_view.IsNull())
+        return;
+    // Expose/paint arrives AFTER the X window truly has its new size, while
+    // resizeEvent can run BEFORE X applied it — leaving a stale GL viewport
+    // that squeezed the whole model into the bottom-left corner at startup.
+    // Re-sync (cheap) and, until the user takes the camera, re-frame here too.
+    m_view->MustBeResized();
+    if (!m_userNavigated && !m_shapes.empty())
+        m_view->FitAll(0.1, false);
+    m_view->Redraw();
 }
 
 void OcctViewWidget::resizeEvent(QResizeEvent*)
@@ -612,12 +666,16 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
 
 void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
 {
-    if (m_pickedSolid == kInvalidEntityId ||
-        (m_pickedFace.IsNull() && m_pickedEdges.empty())) {
+    if (m_pickedSolid == kInvalidEntityId) {
         QWidget::contextMenuEvent(event);
         return;
     }
     QMenu menu(this);
+    // Always available on a picked solid: move it (typed offset or two
+    // picked points — the two-point flow then clicks the solid to move).
+    QAction* mvNum = menu.addAction(QStringLiteral("Move solid… (dx, dy, dz)"));
+    QAction* mvPts = menu.addAction(QStringLiteral("Move by two points"));
+    menu.addSeparator();
     QAction* pp = nullptr;
     QAction* sk = nullptr;
     QAction* sp = nullptr;
@@ -639,6 +697,34 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
     }
     QAction* chosen = menu.exec(event->globalPos());
     bool ok = false;
+    if (chosen == mvNum) {
+        const QString text = QInputDialog::getText(
+            this, QStringLiteral("Move solid"),
+            QStringLiteral("Displacement dx, dy, dz (mm):"), QLineEdit::Normal,
+            QStringLiteral("0, 0, 0"), &ok);
+        if (!ok)
+            return;
+        const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        if (parts.size() != 3)
+            return;
+        bool okx = false, oky = false, okz = false;
+        const double dx = parts[0].trimmed().toDouble(&okx);
+        const double dy = parts[1].trimmed().toDouble(&oky);
+        const double dz = parts[2].trimmed().toDouble(&okz);
+        if (okx && oky && okz)
+            emit commandRequested(QStringLiteral("MOVE3D %1 %2 %3 %4")
+                                      .arg(dx)
+                                      .arg(dy)
+                                      .arg(dz)
+                                      .arg(qlonglong(m_pickedSolid)));
+        return;
+    }
+    if (chosen == mvPts) {
+        // Starts MOVE3D point mode: click the base point, the destination,
+        // then the solid to move (all in the 3D view).
+        emit commandRequested(QStringLiteral("MOVE3D P"));
+        return;
+    }
     if (chosen && chosen == pp) {
         const double d = QInputDialog::getDouble(
             this, QStringLiteral("Push / Pull"),

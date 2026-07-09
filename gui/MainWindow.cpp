@@ -13,6 +13,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QStatusBar>
+#include <QToolBar>
 #include <QToolButton>
 #include <QAction>
 #include <QComboBox>
@@ -493,14 +494,53 @@ void MainWindow::toggle3D(bool on)
                                 .arg(thickness)
                                 .arg(m_occtView->pickedFaces().size()));
                     });
+            // Right-click "Move solid…" / "Move by two points" run through the
+            // shared processor, exactly as if typed.
+            connect(m_occtView, &OcctViewWidget::commandRequested, this,
+                    [this](const QString& line) {
+                        m_commandBar->appendHistory(QStringLiteral("> %1").arg(line));
+                        onCommandEntered(line);
+                    });
             m_viewStack->addWidget(m_occtView);
         }
+        if (!m_3dViewBar) {
+            // Standard views + fit + grid: the poor man's ViewCube, always
+            // reachable while the 3D view is active.
+            m_3dViewBar = addToolBar(QStringLiteral("3D views"));
+            m_3dViewBar->setObjectName(QStringLiteral("viewbar3d"));
+            const auto addView = [this](const QString& label, const QString& name) {
+                QAction* a = m_3dViewBar->addAction(label);
+                connect(a, &QAction::triggered, this, [this, name] {
+                    if (m_occtView)
+                        m_occtView->setStandardView(name);
+                });
+            };
+            addView(QStringLiteral("Top"), QStringLiteral("TOP"));
+            addView(QStringLiteral("Front"), QStringLiteral("FRONT"));
+            addView(QStringLiteral("Right"), QStringLiteral("RIGHT"));
+            addView(QStringLiteral("Iso"), QStringLiteral("ISO"));
+            QAction* fit = m_3dViewBar->addAction(QStringLiteral("Fit"));
+            connect(fit, &QAction::triggered, this, [this] {
+                if (m_occtView)
+                    m_occtView->fitView();
+            });
+            m_3dViewBar->addSeparator();
+            QAction* grid = m_3dViewBar->addAction(QStringLiteral("Grid"));
+            grid->setCheckable(true);
+            connect(grid, &QAction::toggled, this, [this](bool on) {
+                if (m_occtView)
+                    m_occtView->setGridVisible(on);
+            });
+        }
+        m_3dViewBar->setVisible(true);
         m_occtView->refreshFrom(*m_doc);
         m_viewStack->setCurrentWidget(m_occtView);
         if (!m_occtView->isReady())
             m_commandBar->appendHistory(
                 QStringLiteral("3D view unavailable (no OpenGL/X11 in this session)"));
     } else {
+        if (m_3dViewBar)
+            m_3dViewBar->setVisible(false);
         m_viewStack->setCurrentWidget(m_canvas);
         m_canvas->markDocumentDirty();
     }
