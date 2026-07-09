@@ -1,7 +1,10 @@
 #include "CommandProcessor.h"
 
 #include "doc/EntityFactory.h"
+#include "doc/Entities.h"
+#include "render/DrawingProjection.h"
 #include "render/HitTest.h"
+#include "render/StandardViews.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -613,6 +616,106 @@ private:
     std::vector<EntityId> m_ids;
 };
 
+// MAKEVIEW / DRAWINGVIEW  [view]  solid
+// Derives a flat 2D drawing (mise en plan) from a picked solid via Hidden Line
+// Removal, adding the visible projected edges as LineEntity segments in the 2D
+// space. `view` is a standard-view name (TOP/FRONT/RIGHT/... default TOP); it
+// sets the projection direction. Hidden edges are dropped in v1.
+class MakeViewCommand : public Command {
+public:
+    const char* name() const override { return "MAKEVIEW"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+        }
+        return Step::cont(InputKind::Keyword,
+                          QStringLiteral("View [Top/Front/Back/Left/Right/"
+                                         "Bottom/Iso] <Top>:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        switch (m_stage) {
+        case 0: // view name keyword (Finish/Enter keeps default Top)
+            if (v.kind == InputValue::Kind::Keyword) {
+                const QString k = v.text.toUpper();
+                // A bare id here means the user skipped the view: default Top and
+                // this is the solid id (keeps "MAKEVIEW 3" working).
+                bool digits = !k.isEmpty();
+                for (const QChar c : k)
+                    digits = digits && c.isDigit();
+                if (digits) {
+                    m_ids.push_back(k.toLongLong());
+                    return build(ctx);
+                }
+                m_view = k;
+            } else if (v.kind != InputValue::Kind::Finish) {
+                return Step::cancelled();
+            }
+            m_stage = 1;
+            if (!m_ids.empty())
+                return build(ctx);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Pick solid to project:"));
+        case 1: // solid id
+            if (v.kind == InputValue::Kind::EntityRef)
+                m_ids.push_back(v.entityRef);
+            else if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                m_ids.push_back(v.entitySet.front());
+            else
+                return Step::cancelled();
+            return build(ctx);
+        default:
+            return Step::cancelled();
+        }
+    }
+
+private:
+    Step build(CommandContext& ctx)
+    {
+        if (m_ids.empty())
+            return Step::cancelled();
+        auto* solid = dynamic_cast<SolidEntity*>(ctx.doc().entity(m_ids.front()));
+        if (!solid) {
+            ctx.info(QStringLiteral("MAKEVIEW: pick a solid"));
+            return Step::cancelled();
+        }
+        const auto orient = views::standardViewDir(m_view);
+        if (!orient) {
+            ctx.info(QStringLiteral("MAKEVIEW: unknown view '%1'").arg(m_view));
+            return Step::cancelled();
+        }
+        const DrawingProjection proj =
+            render::projectToDrawing(solid->shape(), orient->dir);
+        if (proj.visible.empty()) {
+            ctx.info(QStringLiteral("MAKEVIEW: projection produced no edges"));
+            return Step::cancelled();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("MAKEVIEW"));
+        int n = 0;
+        for (const DrawingSegment& s : proj.visible) {
+            // Skip degenerate chords.
+            if (s.a.distanceTo(s.b) < 1e-7)
+                continue;
+            ctx.doc().addEntity(std::make_unique<LineEntity>(s.a, s.b));
+            ++n;
+        }
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("MAKEVIEW %1: %2 visible edges from solid %3")
+                     .arg(m_view).arg(n).arg(m_ids.front()));
+        return Step::done();
+    }
+
+    int m_stage = 0;
+    QString m_view = QStringLiteral("TOP");
+    std::vector<EntityId> m_ids;
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -633,6 +736,8 @@ void registerSolidCommands(CommandProcessor& p)
     p.registerCommand(&make<SweepCommand>, {QStringLiteral("SW")});
     p.registerCommand(&make<LoftCommand>, {QStringLiteral("LO")});
     p.registerCommand(&make<Measure3DCommand>, {QStringLiteral("M3D")});
+    p.registerCommand(&make<MakeViewCommand>,
+                      {QStringLiteral("DRAWINGVIEW"), QStringLiteral("MV")});
 }
 
 } // namespace viki

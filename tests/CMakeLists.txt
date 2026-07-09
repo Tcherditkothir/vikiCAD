@@ -25,6 +25,7 @@ add_executable(vikicad-tests
     test_params.cpp
     test_feature_tree.cpp
     test_standard_views.cpp
+    test_drawing_view.cpp
 )
 
 if(VIKICAD_HAS_DXF)
