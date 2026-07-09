@@ -6,6 +6,7 @@ add_library(vikicore STATIC
     geom/Xform2d.cpp
     geom/GeomUtil.cpp
     geom/Intersect.cpp
+    geom/Regions.cpp
     geom/GearGeometry.cpp
     doc/Entity.cpp
     doc/Entities.cpp

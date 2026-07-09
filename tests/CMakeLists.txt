@@ -4,6 +4,7 @@ add_executable(vikicad-tests
     test_version.cpp
     test_vec2d.cpp
     test_geom_util.cpp
+    test_regions.cpp
     test_occt_smoke.cpp
     test_document.cpp
     test_commands.cpp
