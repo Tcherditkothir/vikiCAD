@@ -44,6 +44,7 @@ add_library(vikicore STATIC
     solid/OcctOps.cpp
     solid/SolidEntity.cpp
     solid/SolidOps.cpp
+    solid/FeatureTree.cpp
     io/StepIo.cpp
     io/StlIo.cpp
 )

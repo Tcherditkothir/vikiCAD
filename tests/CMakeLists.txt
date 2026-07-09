@@ -22,6 +22,7 @@ add_executable(vikicad-tests
     test_sweep_loft.cpp
     test_stl_export.cpp
     test_params.cpp
+    test_feature_tree.cpp
 )
 
 if(VIKICAD_HAS_DXF)
