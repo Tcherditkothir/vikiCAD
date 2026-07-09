@@ -325,3 +325,54 @@ TEST_CASE("SHELL command records Shell history on the modified solid",
     CHECK(volumeOf(pre->shape()) == Approx(1000.0).epsilon(1e-6));
     CHECK_FALSE(pre->features);
 }
+
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
+
+#include "solid/FeatureParams.h"
+#include "solid/SolidOps.h"
+
+TEST_CASE("featureparams center x/y MOVES a hole (signed values accepted)",
+          "[features][hole-move]")
+{
+    using namespace viki;
+    FeatureTree tree;
+    tree.addNode(FeatureNode::makeBaseShape(
+        BRepPrimAPI_MakeBox(20.0, 20.0, 10.0).Shape()));
+    const int hole = tree.addNode(FeatureNode::makeHole(
+        WorkPlane{}, Vec2d{5, 5}, 4.0, 0.0, /*through=*/true));
+
+    const auto r1 = tree.regenerate();
+    REQUIRE(r1.ok);
+    // A thin probe cylinder through the box at (5,5): the bore is there, so
+    // the probe meets (almost) no material.
+    const auto probeAt = [](double x, double y) {
+        return BRepPrimAPI_MakeCylinder(
+                   gp_Ax2(gp_Pnt(x, y, -1.0), gp_Dir(0, 0, 1)), 1.0, 12.0)
+            .Shape();
+    };
+    CHECK(solidops::interferenceVolume(r1.shape, probeAt(5, 5)) ==
+          Approx(0.0).margin(1e-6));
+
+    // Move the hole via the properties bridge (signed coords must pass).
+    REQUIRE(featureparams::set(tree, hole, QStringLiteral("center x"), 12.0));
+    REQUIRE(featureparams::set(tree, hole, QStringLiteral("center y"), 12.0));
+    const auto r2 = tree.regenerate();
+    REQUIRE(r2.ok);
+    // Material is back at the old centre; the bore is at the new one.
+    CHECK(solidops::interferenceVolume(r2.shape, probeAt(5, 5)) ==
+          Approx(M_PI * 1.0 * 10.0).epsilon(1e-3));
+    CHECK(solidops::interferenceVolume(r2.shape, probeAt(12, 12)) ==
+          Approx(0.0).margin(1e-6));
+
+    // The exposed param list includes the centre.
+    const auto params = featureparams::list(tree);
+    bool sawCx = false;
+    for (const auto& p : params)
+        sawCx = sawCx || p.name == QLatin1String("center x");
+    CHECK(sawCx);
+
+    // Negative coordinates are legal positions (unlike lengths).
+    CHECK(featureparams::set(tree, hole, QStringLiteral("center x"), -3.0));
+    CHECK_FALSE(featureparams::set(tree, hole, QStringLiteral("diameter"), -1.0));
+}

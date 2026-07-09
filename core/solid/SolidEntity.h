@@ -36,6 +36,12 @@ public:
     const TopoDS_Shape& shape() const { return m_shape; }
     void setShape(const TopoDS_Shape& shape);
 
+    // Vertical extent of the shape's bounding box (bounds() gives XY). The
+    // trio (bounds().min, zMin) is the solid's origin corner shown in the
+    // Properties panel.
+    double zMin() const { return m_zmin; }
+    double zMax() const { return m_zmax; }
+
     // Apply a full 3D placement to the shape (MOVE3D/ROTATE3D, assembly
     // positioning). Unlike transform(Xform2d) this is not limited to XY.
     void applyTrsf(const gp_Trsf& t);

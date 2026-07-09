@@ -52,22 +52,27 @@ TEST_CASE("featureparams::list enumerates the editable node parameters",
 
     // BaseShape contributes nothing; blind hole exposes diameter+depth.
     auto params = featureparams::list(tree);
-    REQUIRE(params.size() == 3);
+    REQUIRE(params.size() == 5); // diameter, depth, center x/y, thickness
     CHECK(params[0].label == QStringLiteral("hole 1: diameter"));
     CHECK(params[0].nodeIndex == 1);
     CHECK(params[0].value == Approx(4.0));
     CHECK(params[1].label == QStringLiteral("hole 1: depth"));
     CHECK(params[1].value == Approx(5.0));
-    CHECK(params[2].label == QStringLiteral("shell 2: thickness"));
-    CHECK(params[2].nodeIndex == 2);
-    CHECK(params[2].value == Approx(1.0));
+    CHECK(params[2].label == QStringLiteral("hole 1: center x"));
+    CHECK(params[2].value == Approx(10.0));
+    CHECK(params[3].label == QStringLiteral("hole 1: center y"));
+    CHECK(params[3].value == Approx(10.0));
+    CHECK(params[4].label == QStringLiteral("shell 2: thickness"));
+    CHECK(params[4].nodeIndex == 2);
+    CHECK(params[4].value == Approx(1.0));
 
-    // A through hole hides its (ignored) depth.
+    // A through hole hides its (ignored) depth; the centre stays editable.
     tree.nodeAt(1).through = true;
     params = featureparams::list(tree);
-    REQUIRE(params.size() == 2);
+    REQUIRE(params.size() == 4);
     CHECK(params[0].label == QStringLiteral("hole 1: diameter"));
-    CHECK(params[1].label == QStringLiteral("shell 2: thickness"));
+    CHECK(params[1].label == QStringLiteral("hole 1: center x"));
+    CHECK(params[3].label == QStringLiteral("shell 2: thickness"));
 
     // set() guards: kind mismatch, unknown name, non-positive value.
     CHECK_FALSE(featureparams::set(tree, 0, QStringLiteral("diameter"), 6.0));
@@ -99,11 +104,14 @@ TEST_CASE("Properties-panel core path: a placed hole stays editable, with undo",
     CHECK(volumeOf(s->shape()) == Approx(before).epsilon(1e-4));
     const EntityId id = s->id();
 
-    // The panel lists "hole 1: diameter" (through bore -> no depth row).
+    // The panel lists "hole 1: diameter" plus the centre (through bore -> no
+    // depth row).
     const auto params = featureparams::list(*s->features);
-    REQUIRE(params.size() == 1);
+    REQUIRE(params.size() == 3);
     CHECK(params[0].label == QStringLiteral("hole 1: diameter"));
     CHECK(params[0].value == Approx(4.0));
+    CHECK(params[1].label == QStringLiteral("hole 1: center x"));
+    CHECK(params[2].label == QStringLiteral("hole 1: center y"));
 
     // The panel's edit path: setter + regenerate inside ONE transaction.
     rig.doc.beginTransaction(QStringLiteral("FEATURE EDIT"));

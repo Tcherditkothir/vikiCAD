@@ -1,5 +1,7 @@
 #include "PropertiesPanel.h"
 
+#include <cmath>
+
 #include <QColorDialog>
 #include <QComboBox>
 #include <QFormLayout>
@@ -8,6 +10,9 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
+
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include "solid/SolidEntity.h"
 
@@ -110,6 +115,7 @@ void PropertiesPanel::rebuildGeometryTable()
     m_geomTable->setRowCount(0);
     m_featureParams.clear();
     m_featureRowStart = -1;
+    m_originRowStart = -1;
     if (m_selection && m_selection->size() == 1 && m_doc) {
         const Entity* e = m_doc->entity(m_selection->ids().front());
         if (e) {
@@ -155,6 +161,15 @@ void PropertiesPanel::rebuildGeometryTable()
             // "hole 2: diameter". Edited through the FeatureTree setters +
             // regenerateFeatures, not through the geom JSON.
             if (const auto* solid = dynamic_cast<const SolidEntity*>(e)) {
+                // Where the solid IS: its bounding-box origin corner. Editing
+                // a coordinate translates the solid there (typed move).
+                m_originRowStart = row;
+                addRow(QStringLiteral("origin x"),
+                       QString::number(solid->bounds().min.x, 'f', 4), true);
+                addRow(QStringLiteral("origin y"),
+                       QString::number(solid->bounds().min.y, 'f', 4), true);
+                addRow(QStringLiteral("origin z"),
+                       QString::number(solid->zMin(), 'f', 4), true);
                 if (solid->features && solid->features->count() > 0) {
                     m_featureParams = featureparams::list(*solid->features);
                     if (!m_featureParams.empty())
@@ -175,6 +190,11 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
         return;
     if (m_featureRowStart >= 0 && row >= m_featureRowStart) {
         applyFeatureEdit(row - m_featureRowStart);
+        return;
+    }
+    if (m_originRowStart >= 0 && row >= m_originRowStart &&
+        row < m_originRowStart + 3) {
+        applyOriginEdit(row - m_originRowStart);
         return;
     }
     const EntityId id = m_selection->ids().front();
@@ -248,7 +268,9 @@ void PropertiesPanel::applyFeatureEdit(int paramIndex)
     const QString text = m_geomTable->item(row, 1)->text().trimmed();
     bool numOk = false;
     const double value = text.toDouble(&numOk);
-    if (!numOk || !(value > 0.0)) {
+    // No positivity check here: centre coordinates are legitimately signed.
+    // featureparams::set enforces per-parameter validity (lengths > 0).
+    if (!numOk) {
         rebuildGeometryTable(); // revert display
         return;
     }
@@ -281,6 +303,46 @@ void PropertiesPanel::applyFeatureEdit(int paramIndex)
             error = QStringLiteral("feature edit rejected");
         emit feedback(QStringLiteral("%1 = %2: %3").arg(p.label).arg(value).arg(error));
     }
+    rebuildGeometryTable();
+}
+
+void PropertiesPanel::applyOriginEdit(int axis)
+{
+    if (axis < 0 || axis > 2 || m_originRowStart < 0)
+        return;
+    const int row = m_originRowStart + axis;
+    const QString text = m_geomTable->item(row, 1)->text().trimmed();
+    bool numOk = false;
+    const double target = text.toDouble(&numOk);
+    if (!numOk) {
+        rebuildGeometryTable(); // revert display
+        return;
+    }
+    const EntityId id = m_selection->ids().front();
+    const auto* probe = dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+    if (!probe)
+        return;
+    const double current = axis == 0   ? probe->bounds().min.x
+                           : axis == 1 ? probe->bounds().min.y
+                                       : probe->zMin();
+    const double delta = target - current;
+    if (std::fabs(delta) < 1e-12) {
+        rebuildGeometryTable();
+        return;
+    }
+    // Translate the solid so its bounding-box corner lands on the typed
+    // coordinate — a "move by typing", undoable like any transaction.
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(axis == 0 ? delta : 0.0, axis == 1 ? delta : 0.0,
+                            axis == 2 ? delta : 0.0));
+    m_doc->beginTransaction(QStringLiteral("MOVE"));
+    if (Entity* e = m_doc->beginModify(id)) {
+        if (auto* solid = dynamic_cast<SolidEntity*>(e))
+            solid->applyTrsf(t);
+        m_doc->endModify(id);
+    }
+    m_doc->commitTransaction();
+    emit propertiesApplied();
     rebuildGeometryTable();
 }
 

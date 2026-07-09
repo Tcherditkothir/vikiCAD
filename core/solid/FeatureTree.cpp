@@ -148,6 +148,17 @@ bool FeatureTree::setHoleDepth(int i, double depth)
     return true;
 }
 
+bool FeatureTree::setHoleCenter(int i, const Vec2d& center)
+{
+    if (i < 0 || i >= count())
+        return false;
+    FeatureNode& n = m_nodes[static_cast<size_t>(i)];
+    if (n.kind != FeatureKind::Hole)
+        return false;
+    n.holeCenter = center;
+    return true;
+}
+
 bool FeatureTree::setShellThickness(int i, double thickness)
 {
     if (i < 0 || i >= count())

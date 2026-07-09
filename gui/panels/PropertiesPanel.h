@@ -39,6 +39,7 @@ private:
     void rebuildGeometryTable();
     void geometryCellChanged(int row, int column);
     void applyFeatureEdit(int paramIndex);
+    void applyOriginEdit(int axis); // 0=x 1=y 2=z — translates the solid
 
     Document* m_doc = nullptr;
     SelectionSet* m_selection = nullptr;
@@ -53,6 +54,9 @@ private:
     // is the table row of m_featureParams[0] (-1 = no feature rows).
     std::vector<featureparams::Param> m_featureParams;
     int m_featureRowStart = -1;
+    // "origin x/y/z" rows for a solid (its bounding-box corner). Editing one
+    // TRANSLATES the solid so the corner lands on the typed coordinate.
+    int m_originRowStart = -1;
 };
 
 } // namespace viki

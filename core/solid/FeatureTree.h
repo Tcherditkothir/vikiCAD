@@ -191,6 +191,7 @@ public:
     bool setExtrudeHeight(int i, double height);
     bool setHoleDiameter(int i, double diameter);
     bool setHoleDepth(int i, double depth);
+    bool setHoleCenter(int i, const Vec2d& center); // MOVES the hole
     bool setShellThickness(int i, double thickness);
 
     // Whole-tree JSON round-trip (every node kind, BaseShape brep as base64).

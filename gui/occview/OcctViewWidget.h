@@ -70,6 +70,9 @@ signals:
     // Command input was provided from the 3D view (same contract as
     // CanvasWidget::interaction): the main window refreshes prompt + views.
     void interaction();
+    // Typing over the 3D view lands in the command bar (same contract as
+    // CanvasWidget::typed; empty text = Enter with nothing active).
+    void typed(const QString& text);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -81,6 +84,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
     void initViewer();
@@ -104,6 +108,7 @@ private:
     QPoint m_pressPos;
     bool m_initFailed = false;
     bool m_fittedOnce = false;
+    bool m_pendingFit = false; // fit deferred until the widget has a real size
 
     Document* m_doc = nullptr;
     CommandProcessor* m_processor = nullptr;

@@ -323,6 +323,15 @@ void MainWindow::toggle3D(bool on)
             m_occtView->attach(m_doc.get(), m_processor.get(), &m_selection);
             connect(m_occtView, &OcctViewWidget::interaction, this,
                     &MainWindow::onInteraction);
+            // Type over the 3D view -> characters land in the command bar
+            // (no need to click it first), same contract as the 2D canvas.
+            connect(m_occtView, &OcctViewWidget::typed, this,
+                    [this](const QString& text) {
+                        if (text.isEmpty())
+                            onCommandEntered(QString());
+                        else
+                            m_commandBar->beginTyping(text);
+                    });
             connect(m_occtView, &OcctViewWidget::picked, this,
                     [this](const QString& info) { m_commandBar->appendHistory(info); });
             connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
@@ -359,17 +368,20 @@ void MainWindow::toggle3D(bool on)
                     dynamic_cast<const SolidEntity*>(m_doc->entity(id));
                 if (!solid)
                     return;
+                // Planar face -> split by its (infinite) plane. CURVED face ->
+                // try the face itself as the splitting tool: it works wherever
+                // the surface actually crosses the solid, and we only report
+                // failure when it truly doesn't make sense (undo covers the
+                // rest).
                 const auto wp = solidops::planeFromFace(m_occtView->pickedFace());
-                if (!wp) {
-                    m_commandBar->appendHistory(
-                        QStringLiteral("! split: pick a planar face"));
-                    return;
-                }
-                const auto pieces = solidops::splitByPlane(
-                    solid->shape(), gp_Pln(wp->origin, wp->normal));
+                const auto pieces =
+                    wp ? solidops::splitByPlane(solid->shape(),
+                                                gp_Pln(wp->origin, wp->normal))
+                       : solidops::splitSolid(solid->shape(),
+                                              m_occtView->pickedFace());
                 if (pieces.size() < 2) {
                     m_commandBar->appendHistory(QStringLiteral(
-                        "! split: the plane missed the solid — nothing split"));
+                        "! split: this face does not cut through the solid"));
                     return;
                 }
                 // Every piece inherits the split solid's fields.
@@ -629,6 +641,11 @@ void MainWindow::onCommandEntered(const QString& line)
     // to toggle the view off and on again — but only rebuild if they actually
     // changed the document.
     sync3DView();
+    // Give the focus back to the drawing view: leaving it in the command bar
+    // made its QLineEdit swallow Ctrl+Z as a TEXT undo (so "undo didn't
+    // work"), and typing forwards to the bar from either view anyway.
+    if (m_viewStack && m_viewStack->currentWidget())
+        m_viewStack->currentWidget()->setFocus();
 }
 
 void MainWindow::sync3DView()

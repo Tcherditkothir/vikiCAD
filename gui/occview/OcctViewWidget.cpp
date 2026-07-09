@@ -143,10 +143,18 @@ void OcctViewWidget::refreshFrom(const Document& doc)
     }
     // Fit the camera on the first population only: refreshes now also happen
     // after every command (a hole appears in place), and re-fitting each time
-    // would make the camera jump under the user's cursor.
+    // would make the camera jump under the user's cursor. BUT a STEP opened at
+    // startup reaches here before the window is laid out — fitting a not-yet-
+    // sized viewport left the model tiny in a corner. Defer the fit until the
+    // widget has a real size (resizeEvent finishes it).
     if (shown > 0 && !m_fittedOnce) {
-        m_view->FitAll(0.1, false);
-        m_fittedOnce = true;
+        if (width() >= 200 && height() >= 200) {
+            m_view->FitAll(0.1, false);
+            m_fittedOnce = true;
+            m_pendingFit = false;
+        } else {
+            m_pendingFit = true;
+        }
     }
     m_view->Redraw();
 }
@@ -180,8 +188,17 @@ void OcctViewWidget::paintEvent(QPaintEvent*)
 
 void OcctViewWidget::resizeEvent(QResizeEvent*)
 {
-    if (!m_view.IsNull())
-        m_view->MustBeResized();
+    if (m_view.IsNull())
+        return;
+    m_view->MustBeResized();
+    // Finish a fit that was deferred because the widget had no real size yet
+    // (STEP opened at startup): now that the viewport is laid out, frame it.
+    if (m_pendingFit && width() >= 200 && height() >= 200) {
+        m_pendingFit = false;
+        m_fittedOnce = true;
+        m_view->FitAll(0.1, false);
+        m_view->Redraw();
+    }
 }
 
 void OcctViewWidget::showEvent(QShowEvent*)
@@ -535,6 +552,39 @@ void OcctViewWidget::wheelEvent(QWheelEvent* event)
         return;
     const double factor = event->angleDelta().y() > 0 ? 1.2 : 1.0 / 1.2;
     m_view->SetZoom(factor);
+}
+
+// Same typing contract as the 2D canvas: no need to click the command bar —
+// type anywhere over the 3D view and the characters land in the bar.
+void OcctViewWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Escape) {
+        if (m_processor && m_processor->hasActiveCommand())
+            m_processor->cancelActive();
+        else if (m_selection)
+            m_selection->clear();
+        clearGhost();
+        emit interaction();
+        return;
+    }
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
+        if (m_processor && m_processor->hasActiveCommand()) {
+            m_processor->provideInput(InputValue::makeFinish());
+            if (!m_processor->hasActiveCommand())
+                clearGhost();
+            emit interaction();
+            return;
+        }
+        emit typed(QString()); // empty = repeat-last handled upstream
+        return;
+    }
+    const QString text = event->text();
+    if (!text.isEmpty() && text[0].isPrint()) {
+        emit typed(text);
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)

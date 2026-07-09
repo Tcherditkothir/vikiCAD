@@ -22,6 +22,7 @@ namespace featureparams {
 struct Param {
     int nodeIndex = -1;
     QString name;  // "height" | "diameter" | "depth" | "thickness"
+                   // | "center x" | "center y" (signed — MOVES the hole)
     QString label; // "hole 2: diameter"
     double value = 0.0;
 };
