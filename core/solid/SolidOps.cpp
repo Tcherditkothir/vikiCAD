@@ -20,7 +20,9 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
 #include <Standard_Failure.hxx>
@@ -29,6 +31,7 @@
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
@@ -728,6 +731,45 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)
     if (TopoDS::Face(face).Orientation() == TopAbs_REVERSED)
         wp.normal.Reverse();
     return wp;
+}
+
+std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
+                                     const TopoDS_Shape& faceB)
+{
+    // Both faces must be planar; reuse planeFromFace to get their outward
+    // (orientation-respecting) frames.
+    const auto pa = planeFromFace(faceA);
+    const auto pb = planeFromFace(faceB);
+    if (!pa || !pb)
+        return std::nullopt;
+
+    const gp_Dir nA = pa->normal;
+    const gp_Dir nB = pb->normal;
+
+    // Use the face centroids as the frame origins so that after the mate the
+    // two faces are not only coplanar but overlapping (their centres coincide),
+    // which is the intuitive "snap flat, centred" behaviour.
+    GProp_GProps gpA, gpB;
+    BRepGProp::SurfaceProperties(TopoDS::Face(faceA), gpA);
+    BRepGProp::SurfaceProperties(TopoDS::Face(faceB), gpB);
+    const gp_Pnt cA = gpA.CentreOfMass();
+    const gp_Pnt cB = gpB.CentreOfMass();
+
+    // Source frame: faceA's centroid, its outward normal as Z, its plane xDir.
+    // Target frame: faceB's centroid, with Z along faceB's INWARD direction
+    // (-nB) so that after the move faceA's outward normal ends up opposed to
+    // faceB's outward normal (the two faces face each other) while the two
+    // planes are coincident. xDir/normal come from the planar surface and are
+    // guaranteed perpendicular, a valid gp_Ax3 X reference.
+    const gp_Ax3 src(cA, nA, pa->xDir);
+    const gp_Ax3 dst(cB, gp_Dir(gp_Vec(nB).Reversed()), pb->xDir);
+
+    gp_Trsf t;
+    // Maps the src frame onto the dst frame: any point expressed in src's
+    // coordinates lands at the same coordinates in dst. This rigidly moves the
+    // moving solid so faceA snaps flat against faceB.
+    t.SetDisplacement(src.Ax2(), dst.Ax2());
+    return t;
 }
 
 std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,

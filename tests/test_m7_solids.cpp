@@ -547,3 +547,72 @@ TEST_CASE("filletEdges/chamferEdges round SPECIFIC edges of a solid", "[m8][edge
     CHECK_FALSE(solidops::filletFirstNEdges(box, 1, 0.0).ok);
     CHECK_FALSE(solidops::chamferEdges(box, {}, 1.0).ok);
 }
+
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+
+namespace {
+// Pick the face of `shape` whose outward normal is closest to `want`.
+TopoDS_Shape faceByNormal(const TopoDS_Shape& shape, const gp_Dir& want)
+{
+    TopoDS_Shape best;
+    double bestDot = -2.0;
+    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+        const auto wp = solidops::planeFromFace(e.Current());
+        if (!wp)
+            continue;
+        const double d = gp_Vec(wp->normal).Dot(gp_Vec(want));
+        if (d > bestDot) {
+            bestDot = d;
+            best = e.Current();
+        }
+    }
+    return best;
+}
+} // namespace
+
+TEST_CASE("mateTransform snaps a moving face flat onto a fixed face", "[m7][mate]")
+{
+    using namespace viki;
+    // Fixed box at the origin; its +Z face sits at z=10.
+    const TopoDS_Shape fixed = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    // Moving box translated to (30,30,30) so it starts well apart; its +Z
+    // face sits at z=40.
+    gp_Trsf place;
+    place.SetTranslation(gp_Vec(30.0, 30.0, 30.0));
+    const TopoDS_Shape moving = BRepBuilderAPI_Transform(
+        BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape(), place).Shape();
+
+    const TopoDS_Shape faceA = faceByNormal(moving, gp_Dir(0, 0, 1)); // moving +Z
+    const TopoDS_Shape faceB = faceByNormal(fixed, gp_Dir(0, 0, 1));  // fixed +Z
+    REQUIRE(!faceA.IsNull());
+    REQUIRE(!faceB.IsNull());
+
+    const auto trsf = solidops::mateTransform(faceA, faceB);
+    REQUIRE(trsf.has_value());
+
+    // Apply through SolidEntity::applyTrsf, the documented entry point.
+    SolidEntity ent(moving);
+    ent.applyTrsf(*trsf);
+    const TopoDS_Shape movedFaceA = faceByNormal(ent.shape(), gp_Dir(0, 0, -1));
+    // After the mate faceA's outward normal points opposite faceB's (+Z), so it
+    // now faces -Z; grab the moved solid's -Z-facing face and check coincidence.
+    REQUIRE(!movedFaceA.IsNull());
+
+    // 1) The mated faces are coincident: distance ~0.
+    BRepExtrema_DistShapeShape dist(movedFaceA, faceB);
+    REQUIRE(dist.IsDone());
+    CHECK(dist.Value() == Approx(0.0).margin(1e-6));
+
+    // 2) Their outward normals are opposed.
+    const auto wpMoved = solidops::planeFromFace(movedFaceA);
+    const auto wpFixed = solidops::planeFromFace(faceB);
+    REQUIRE(wpMoved.has_value());
+    REQUIRE(wpFixed.has_value());
+    const double dot = gp_Vec(wpMoved->normal).Dot(gp_Vec(wpFixed->normal));
+    CHECK(dot == Approx(-1.0).margin(1e-6));
+
+    // Guards: non-planar / null faces yield nullopt.
+    CHECK_FALSE(solidops::mateTransform(fixed, faceB).has_value());  // solid, not a face
+    CHECK_FALSE(solidops::mateTransform(faceA, TopoDS_Shape()).has_value());
+}

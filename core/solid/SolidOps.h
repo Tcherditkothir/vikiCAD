@@ -107,6 +107,15 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
 // curved faces.
 std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face);
 
+// Assembly MATE constraint between two PLANAR faces. Returns the gp_Trsf that
+// rigidly moves the solid owning `faceA` so that `faceA` becomes coincident
+// with `faceB` (their planes overlap) and their outward normals are opposed
+// (the two parts sit face-to-face, like two magnets snapping flat). `faceA`
+// belongs to the moving solid; `faceB` to the fixed solid. std::nullopt if
+// either face is missing or non-planar. Apply with SolidEntity::applyTrsf.
+std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
+                                     const TopoDS_Shape& faceB);
+
 // The face's boundary edges projected into the work-plane's 2D (u,v) frame —
 // reference geometry drawn in the 2D canvas so you sketch on the real face
 // outline (holes included), not a blank rectangle. One polyline per edge.
