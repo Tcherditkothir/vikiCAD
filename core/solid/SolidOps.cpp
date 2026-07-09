@@ -11,6 +11,7 @@
 #include <GeomAbs_SurfaceType.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -35,7 +36,12 @@
 #include <GeomLProp_SLProps.hxx>
 #include <Geom_Surface.hxx>
 #include <Standard_Failure.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <Precision.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopExp.hxx>
@@ -1113,6 +1119,70 @@ std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
     // moving solid so faceA snaps flat against faceB.
     t.SetDisplacement(src.Ax2(), dst.Ax2());
     return t;
+}
+
+TopoDS_Shape sectionWires(const TopoDS_Shape& solid, const gp_Pln& pln)
+{
+    if (solid.IsNull())
+        return TopoDS_Shape();
+    try {
+        BRepAlgoAPI_Section sec(solid, pln, Standard_False);
+        sec.ComputePCurveOn1(Standard_True); // pcurves on the solid's faces
+        sec.Approximation(Standard_True);     // approximate the section curves
+        sec.Build();
+        if (!sec.IsDone())
+            return TopoDS_Shape();
+        const TopoDS_Shape edges = sec.Shape();
+        if (edges.IsNull())
+            return TopoDS_Shape();
+        // Reassemble the loose section edges into wires so callers get closed
+        // profiles rather than a bag of edges.
+        Handle(TopTools_HSequenceOfShape) edgeSeq = new TopTools_HSequenceOfShape;
+        for (TopExp_Explorer ex(edges, TopAbs_EDGE); ex.More(); ex.Next())
+            edgeSeq->Append(ex.Current());
+        if (edgeSeq->IsEmpty())
+            return edges; // nothing to connect (e.g. a point touch)
+        Handle(TopTools_HSequenceOfShape) wireSeq;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edgeSeq, Precision::Confusion(),
+                                                      Standard_False, wireSeq);
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        if (!wireSeq.IsNull())
+            for (Standard_Integer i = 1; i <= wireSeq->Length(); ++i)
+                builder.Add(comp, wireSeq->Value(i));
+        return comp;
+    } catch (const Standard_Failure&) {
+        return TopoDS_Shape();
+    }
+}
+
+double sectionArea(const TopoDS_Shape& solid, const gp_Pln& pln)
+{
+    const TopoDS_Shape wires = sectionWires(solid, pln);
+    if (wires.IsNull())
+        return 0.0;
+    try {
+        // Face every closed section wire on the cutting plane and sum the areas.
+        double total = 0.0;
+        for (TopExp_Explorer ex(wires, TopAbs_WIRE); ex.More(); ex.Next()) {
+            const TopoDS_Wire w = TopoDS::Wire(ex.Current());
+            if (!w.Closed())
+                continue;
+            BRepBuilderAPI_MakeFace mkFace(pln, w, Standard_True);
+            if (!mkFace.IsDone())
+                continue;
+            const TopoDS_Face f = mkFace.Face();
+            if (f.IsNull())
+                continue;
+            GProp_GProps props;
+            BRepGProp::SurfaceProperties(f, props);
+            total += std::fabs(props.Mass());
+        }
+        return total;
+    } catch (const Standard_Failure&) {
+        return 0.0;
+    }
 }
 
 double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b)

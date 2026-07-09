@@ -2,6 +2,8 @@
 
 #include <QJsonDocument>
 
+#include <gp_Pln.hxx>
+
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
 #include "geom/GeomUtil.h"
@@ -319,6 +321,99 @@ private:
     }
 };
 
+// SECTION [XY/XZ/YZ] offset id — cut a solid by an axis-aligned plane at the
+// given signed offset (mm along the plane normal) and report the cross-section
+// area. Plane keyword and numeric offset come BEFORE the entity, so the greedy
+// EntitySet does not swallow the offset number.
+class SectionCommand : public Command {
+public:
+    const char* name() const override { return "SECTION"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::Keyword,
+                          QStringLiteral("Section plane [XY / XZ / YZ] <XY>:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        switch (m_stage) {
+        case Stage::Plane: {
+            if (v.kind == InputValue::Kind::Keyword) {
+                const QString kw = v.text.toUpper();
+                if (kw == QLatin1String("XZ"))
+                    m_normal = gp_Dir(0, 1, 0);
+                else if (kw == QLatin1String("YZ"))
+                    m_normal = gp_Dir(1, 0, 0);
+                else
+                    m_normal = gp_Dir(0, 0, 1); // XY / anything else
+            } else if (v.kind == InputValue::Kind::Finish) {
+                m_normal = gp_Dir(0, 0, 1); // default XY
+            } else {
+                return Step::cancelled();
+            }
+            m_stage = Stage::Offset;
+            return Step::cont(InputKind::Distance,
+                              QStringLiteral("Offset along normal <0>:"));
+        }
+        case Stage::Offset: {
+            if (v.kind == InputValue::Kind::Number)
+                m_offset = v.number;
+            else if (v.kind != InputValue::Kind::Finish)
+                return Step::cancelled();
+            m_stage = Stage::Entity;
+            // Honor a pre-existing selection (e.g. GUI pick).
+            const auto sel = ctx.selection().ids();
+            if (!sel.empty())
+                return report(ctx, sel.front());
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select the solid:"));
+        }
+        case Stage::Entity: {
+            EntityId id = 0;
+            if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                id = v.entitySet.front();
+            else if (v.kind == InputValue::Kind::EntityRef)
+                id = v.entityRef;
+            else
+                return Step::cancelled();
+            return report(ctx, id);
+        }
+        }
+        return Step::cancelled();
+    }
+
+private:
+    enum class Stage { Plane, Offset, Entity };
+
+    Step report(CommandContext& ctx, EntityId id)
+    {
+        const auto* s = dynamic_cast<const SolidEntity*>(ctx.doc().entity(id));
+        if (!s) {
+            ctx.info(QStringLiteral("SECTION needs a solid"));
+            return Step::done();
+        }
+        // Plane through offset*normal with the chosen normal.
+        const gp_Pnt origin(m_normal.X() * m_offset, m_normal.Y() * m_offset,
+                            m_normal.Z() * m_offset);
+        const gp_Pln pln(origin, m_normal);
+        const double area = solidops::sectionArea(s->shape(), pln);
+        if (area > 0.0)
+            ctx.info(QStringLiteral("#%1 section area = %2")
+                         .arg(id)
+                         .arg(fmtArea(ctx, area)));
+        else
+            ctx.info(QStringLiteral("#%1: plane does not cut the solid").arg(id));
+        return Step::done();
+    }
+
+    gp_Dir m_normal{0, 0, 1};
+    double m_offset = 0.0;
+    Stage m_stage = Stage::Plane;
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -334,6 +429,7 @@ void registerMeasureCommands(CommandProcessor& p)
     p.registerCommand(&make<AreaCommand>, {QStringLiteral("AA")});
     p.registerCommand(&make<ListCommand>, {QStringLiteral("LI")});
     p.registerCommand(&make<InterfereCommand>, {QStringLiteral("CLASH")});
+    p.registerCommand(&make<SectionCommand>, {QStringLiteral("SEC")});
 }
 
 } // namespace viki

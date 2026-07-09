@@ -154,6 +154,19 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face);
 std::optional<gp_Trsf> mateTransform(const TopoDS_Shape& faceA,
                                      const TopoDS_Shape& faceB);
 
+// SECTION: cut `solid` by the infinite plane `pln` and return the section
+// profile as a compound of the cut edges/wires (BRepAlgoAPI_Section, with the
+// section curves built). Empty (a null-ish compound) when the plane misses the
+// solid. The wires lie in `pln` and bound the exposed cross-section.
+TopoDS_Shape sectionWires(const TopoDS_Shape& solid, const gp_Pln& pln);
+
+// Area of the cross-section produced by cutting `solid` with `pln`, in mm². The
+// section edges are collected into closed wires, faced (BRepBuilderAPI_MakeFace
+// on the section plane), and measured with BRepGProp::SurfaceProperties.
+// Returns 0 when the plane misses the solid or the section is not a closed area
+// (e.g. a tangent touch), and 0 on failure.
+double sectionArea(const TopoDS_Shape& solid, const gp_Pln& pln);
+
 // Minimum 3D distance between two shapes (solids, faces, edges…), in mm, using
 // BRepExtrema_DistShapeShape. Returns 0 when the shapes touch or interpenetrate.
 // Returns -1 on failure (null shapes or the extrema solver not done).
