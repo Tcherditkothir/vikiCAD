@@ -1,10 +1,12 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include <QWidget>
 
 #include "cmd/CommandProcessor.h"
+#include "solid/FeatureParams.h"
 
 class QComboBox;
 class QLabel;
@@ -25,6 +27,9 @@ public:
 
 signals:
     void propertiesApplied();
+    // One-line user feedback (e.g. why a feature edit was refused); routed to
+    // the command bar history by MainWindow.
+    void feedback(const QString& message);
 
 private:
     void layerPicked(int index);
@@ -33,6 +38,7 @@ private:
     void applyToSelection(const std::function<void(Entity&)>& fn, const QString& txName);
     void rebuildGeometryTable();
     void geometryCellChanged(int row, int column);
+    void applyFeatureEdit(int paramIndex);
 
     Document* m_doc = nullptr;
     SelectionSet* m_selection = nullptr;
@@ -42,6 +48,11 @@ private:
     QPushButton* m_byLayerBtn = nullptr;
     QTableWidget* m_geomTable = nullptr;
     bool m_refreshing = false;
+    // Feature-parameter rows appended after the geometry rows when the single
+    // selected entity is a solid with a parametric history. m_featureRowStart
+    // is the table row of m_featureParams[0] (-1 = no feature rows).
+    std::vector<featureparams::Param> m_featureParams;
+    int m_featureRowStart = -1;
 };
 
 } // namespace viki

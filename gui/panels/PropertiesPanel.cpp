@@ -9,6 +9,8 @@
 #include <QPushButton>
 #include <QTableWidget>
 
+#include "solid/SolidEntity.h"
+
 namespace viki {
 
 PropertiesPanel::PropertiesPanel(QWidget* parent)
@@ -106,6 +108,8 @@ void PropertiesPanel::rebuildGeometryTable()
 {
     m_geomTable->blockSignals(true);
     m_geomTable->setRowCount(0);
+    m_featureParams.clear();
+    m_featureRowStart = -1;
     if (m_selection && m_selection->size() == 1 && m_doc) {
         const Entity* e = m_doc->entity(m_selection->ids().front());
         if (e) {
@@ -146,6 +150,19 @@ void PropertiesPanel::rebuildGeometryTable()
                     addRow(it.key(),
                            QStringLiteral("(%1 items)").arg(v.toArray().size()), false);
             }
+            // Feature parameters (Fusion parity): a solid with a parametric
+            // history exposes each node's editable scalars, e.g.
+            // "hole 2: diameter". Edited through the FeatureTree setters +
+            // regenerateFeatures, not through the geom JSON.
+            if (const auto* solid = dynamic_cast<const SolidEntity*>(e)) {
+                if (solid->features && solid->features->count() > 0) {
+                    m_featureParams = featureparams::list(*solid->features);
+                    if (!m_featureParams.empty())
+                        m_featureRowStart = row;
+                    for (const auto& p : m_featureParams)
+                        addRow(p.label, QString::number(p.value, 'f', 4), true);
+                }
+            }
         }
     }
     m_geomTable->blockSignals(false);
@@ -156,6 +173,10 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
     if (m_refreshing || column != 1 || !m_doc || !m_selection ||
         m_selection->size() != 1)
         return;
+    if (m_featureRowStart >= 0 && row >= m_featureRowStart) {
+        applyFeatureEdit(row - m_featureRowStart);
+        return;
+    }
     const EntityId id = m_selection->ids().front();
     Entity* probe = m_doc->entity(id);
     if (!probe)
@@ -209,6 +230,57 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
     }
     m_doc->commitTransaction();
     emit propertiesApplied();
+    rebuildGeometryTable();
+}
+
+// One feature-parameter edit: set the param via the FeatureTree setter and
+// replay the history, all inside a single journaled transaction. If the
+// regeneration fails the param is reverted and the transaction rolled back —
+// the solid never adopts a broken shape.
+void PropertiesPanel::applyFeatureEdit(int paramIndex)
+{
+    if (paramIndex < 0 ||
+        paramIndex >= static_cast<int>(m_featureParams.size()))
+        return;
+    const featureparams::Param p =
+        m_featureParams[static_cast<size_t>(paramIndex)];
+    const int row = m_featureRowStart + paramIndex;
+    const QString text = m_geomTable->item(row, 1)->text().trimmed();
+    bool numOk = false;
+    const double value = text.toDouble(&numOk);
+    if (!numOk || !(value > 0.0)) {
+        rebuildGeometryTable(); // revert display
+        return;
+    }
+    const EntityId id = m_selection->ids().front();
+
+    m_doc->beginTransaction(QStringLiteral("FEATURE EDIT"));
+    bool applied = false;
+    QString error;
+    if (Entity* e = m_doc->beginModify(id)) {
+        auto* solid = dynamic_cast<SolidEntity*>(e);
+        if (solid && solid->features &&
+            featureparams::set(*solid->features, p.nodeIndex, p.name, value)) {
+            if (solid->regenerateFeatures()) {
+                applied = true;
+            } else {
+                // Grab the replay's reason, then put the old value back.
+                error = solid->features->regenerate().message;
+                featureparams::set(*solid->features, p.nodeIndex, p.name,
+                                   p.value);
+            }
+        }
+        m_doc->endModify(id);
+    }
+    if (applied) {
+        m_doc->commitTransaction();
+        emit propertiesApplied();
+    } else {
+        m_doc->rollbackTransaction();
+        if (error.isEmpty())
+            error = QStringLiteral("feature edit rejected");
+        emit feedback(QStringLiteral("%1 = %2: %3").arg(p.label).arg(value).arg(error));
+    }
     rebuildGeometryTable();
 }
 

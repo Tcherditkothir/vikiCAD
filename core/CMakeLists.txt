@@ -48,6 +48,7 @@ add_library(vikicore STATIC
     solid/SolidEntity.cpp
     solid/SolidOps.cpp
     solid/FeatureTree.cpp
+    solid/FeatureParams.cpp
     io/StepIo.cpp
     io/StlIo.cpp
     io/ObjIo.cpp

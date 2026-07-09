@@ -283,6 +283,8 @@ MainWindow::MainWindow()
         if (m_occtView && m_viewStack->currentWidget() == m_occtView)
             m_occtView->refreshFrom(*m_doc);
     });
+    connect(m_propsPanel, &PropertiesPanel::feedback, this,
+            [this](const QString& msg) { m_commandBar->appendHistory(msg); });
 
     adoptDocument(std::make_unique<Document>());
 
