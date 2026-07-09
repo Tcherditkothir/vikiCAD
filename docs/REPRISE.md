@@ -33,7 +33,7 @@ sont réutilisables/relançables (idempotents) pour de futurs lots.
 
 ## État global
 
-- Plan M0→M8 livré, tags git `m0`…`m8`. **172 cas de tests verts / 1256 assertions**
+- Plan M0→M8 livré, tags git `m0`…`m8`. **191 cas de tests verts / 1506 assertions**
   (dont la nuit autonome du 2026-07-09, +21 features 3D/paramétriques).
 - Phase actuelle : **M6-usage** — Lex utilise VikiCAD sur ses vrais fichiers
   (clé USB TRANSCEND, `/dev/sda1`, monter via `udisksctl mount -b /dev/sda1`)

@@ -288,3 +288,58 @@ contraintes de sketch (H/V/parallèle/tangent…) et cotes pilotantes ; gizmo de
 déplacement 3D à la souris ; matériaux/apparences réalistes ; câblage de
 `FeatureTree` dans SolidEntity/.vkd (refonte du modèle de données). Voir
 `docs/FUSION_GAP.md` (items cochés).
+
+## 2026-07-09 (suite) — Revue + UX 3D souris façon Fusion + GPLv3
+
+Retour de Lex : la souris doit servir à placer les features 3D (trou…), avec
+aperçu coloré ajout/retrait comme Fusion ; il faut scinder/fusionner des
+solides (plan OU surface courbe) ; et « ça manque de fini » → revue générale
+avant correctifs, en vue d'une distribution open source.
+
+**Revue (3 agents lecture seule)** : (a) pipelines 2D/3D disjoints — la vue 3D
+n'alimentait aucune commande ; (b) FeatureTree fonctionnel mais déconnecté du
+document ; (c) **libdxfrw est GPLv2+ → binaire distribué = GPL ; MIT/Apache
+impossible avec le DXF lié**. Décisions Lex : **tout GPLv3**, UX 3D d'abord,
+câbler le FeatureTree.
+
+**UX 3D (fait à la main, `2b5fa35`)** : la vue 3D devient un périphérique
+d'entrée de commandes. `Command::preview3d()` (fantôme TopoDS + effet
+Add/Remove/Neutral) ; HOLE le fournit (cylindre ROUGE translucide qui suit le
+curseur). OcctViewWidget::attach(doc, processor) ; au survol pendant un prompt
+Point : la face plane survolée devient le plan de travail, le point de surface
+OCCT est projeté en UV (`projectToPlane2d`/`planePoint3d`, nouveaux publics),
+snappé sur les features réelles de la face (faceSnapPoints2d, ~10 px), envoyé
+en pointerHint, et le fantôme suit. Clic = le point ; si la commande demande
+ensuite une entité, le solide du même clic répond : **HOLE 6 T + UN clic sur
+une face = trou percé perpendiculairement à cette face**. Fini trouvés en
+passant : les commandes 3D tapées ne rafraîchissaient jamais la vue 3D
+(corrigé : onInteraction + barre de commande) ; FitAll ne se fait plus qu'au
+premier affichage (la caméra ne saute plus).
+
+**Lot 4 (workflow séquentiel, 5/5 commités)** :
+- `763c5cd` **SPLIT/COMBINE** : splitSolid (BRepAlgoAPI_Splitter, outil = plan
+  OU face courbe OU solide), splitByPlane ; commande SPLIT [XY/XZ/YZ/Solid]
+  (héritage layer/couleur/composant), COMBINE/FUSE n solides ; clic droit 3D
+  « Split solid by this face's plane ».
+- `644e8c7` **FeatureTree câblé** : nœuds BaseShape/Hole/Shell + setters ;
+  JSON round-trip ; SolidEntity::features (deep-copy, sérialisé dans
+  geomToJson → .vkd + undo) ; regenerateFeatures() ; HOLE et SHELL enregistrent
+  leur historique.
+- `e746bde` **Panneau Propriétés paramétrique** : « hole 1: diameter » etc.
+  éditables → régénération + transaction (undo OK).
+- `841b63f` **MOVE3D P** : déplacement par 2 points cliqués (UV du plan de
+  travail → vrai gp_Vec 3D), forme dx/dy/dz intacte.
+- `cef6ea0` **GPLv3** : LICENSE (texte intégral gnu.org), section licences du
+  README (tableau des deps), .desktop portable (Exec=vikicad, Comment anglais
+  + [fr]), cibles cmake --install (bin, .desktop, icône, MIME), CONTRIBUTING,
+  CHANGELOG 0.1.0, CI GitHub Actions.
+
+Vérifié CLI : SPLIT XY 4 → 2 pièces ; COMBINE → 1 solide ; trou paramétrique
+persistant dans le .vkd (« features » présent) ; cmake --install stage les 5
+fichiers. **Suite : 1506 assertions / 191 cas verts.**
+
+Reste à valider par Lex en GUI : ressenti du fantôme rouge + snap au survol,
+clic-unique HOLE, Split par clic droit, édition du diamètre dans Propriétés,
+MOVE3D P à la souris. Backlog suivant (avec son pilotage) : solveur de
+contraintes 2D, vue de sketch réorientée, gizmo 3D, ViewCube widget,
+enregistrement EXTRUDE dans l'historique paramétrique.
