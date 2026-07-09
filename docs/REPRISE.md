@@ -3,6 +3,34 @@
 Document de reprise pour continuer les corrections. À lire AVANT toute action,
 avec DEVLOG.md (historique) et LESSONS.md (pièges connus).
 
+## ⚡ TRAVAIL NOCTURNE AUTONOME — À FAIRE EN PREMIER APRÈS COMPACTION
+
+Lex dort ~5-6 h et m'a explicitement autorisé à travailler seul sans son input
+pendant ce temps. Objectif : implémenter + tester (au mieux, headless) les
+améliorations « écart Fusion » de `docs/FUSION_GAP.md`.
+
+**Procédure (boucle) :**
+1. Vérifier le repo propre : `cd /home/lex/computer/vikicad && git status`.
+   Le dernier commit doit être « Sketch on face v2 … » ou plus récent. Suite
+   verte : `./build/debug/tests/vikicad-tests` (attendu 102 cas / 814 assert).
+2. **Lancer le workflow** :
+   `Workflow({ scriptPath: "/home/lex/computer/vikicad/scripts/overnight-workflow.mjs" })`.
+   Il implémente **en séquence** (jamais en parallèle — arbre de travail
+   partagé) chaque feature : build + test Catch2 + commit-si-vert / revert-si-
+   rouge. Il tourne en arrière-plan et me notifie à la fin.
+3. À la notification : lire le rapport, `git log --oneline` pour voir ce qui a
+   été commité, relancer la suite complète pour confirmer le vert. Jeter (git
+   revert) tout commit qui casse.
+4. **Relancer** le workflow (ou en écrire un nouveau à partir des items
+   `FUSION_GAP.md` non encore faits) pour un nouveau lot, tant que Lex n'est pas
+   revenu. Ne PAS `git push`. Ne PAS lancer la GUI (fauchée par le sandbox).
+5. Au réveil de Lex : lui résumer ce qui a été fait, testé, commité, et ce qui
+   reste / a échoué. Honnêteté sur ce qui n'a pas pu être validé visuellement.
+
+Le workflow commite lui-même (Lex l'a autorisé). Garder chaque commit atomique
+et vert. Si un item est trop gros/instable, poser les fondations + tests et
+passer au suivant plutôt que de laisser l'arbre cassé.
+
 ## État global
 
 - Plan M0→M8 livré, tags git `m0`…`m8`. **99 cas de tests verts / 786 assertions**.

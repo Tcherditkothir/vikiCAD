@@ -226,3 +226,8 @@ Suite : contrainte d'assemblage (mate/align), highlight persistant de la sélect
 - Tests : extrude sur plan non-XY (cylindre selon +X, bbox vérifiée), planeFromFace sur les faces d'une boîte, push/pull (bossage/poche). 101 cas verts, ASan propre.
 
 **Limite connue (à améliorer pour l'ergonomie Fusion)** : on dessine le profil dans le canevas 2D abstrait (pas visuellement posé sur la face à l'écran) ; la vue ne se réoriente pas encore face à la face. Prochain pas : environnement de sketch réorienté + silhouette de la face en référence.
+
+## 2026-07-08 (suite 7) — Sketch-sur-face v2 + prépa nuit autonome
+
+- **Sketch-sur-face v2** : `solidops::faceOutline2d` projette les arêtes de la face (contour + trous + découpes) dans le repère 2D du plan de sketch ; le canevas les dessine en bleu pointillé (référence) et zoome dessus, et masque les placeholders `[3D LxlxH]` pendant le sketch. On dessine enfin SUR la face réelle. Verbe IPC `sketchface` (extraction de `beginSketchOnFace`) pour piloter/vérifier. Validé sur MOTOR_FIX (trous + découpe + arête courbe visibles ; cercle dessiné au bon endroit).
+- **Prépa nuit** : `docs/FUSION_GAP.md` = liste priorisée de l'écart avec Fusion (sketch/features/assemblage/nav/paramétrique), taguée [AUTO]/[GUI]. `scripts/overnight-workflow.mjs` = workflow qui implémente ces features EN SÉQUENCE (jamais en parallèle : arbre partagé), chaque agent build+test Catch2+commit-si-vert/revert-si-rouge. REPRISE.md a une section « TRAVAIL NOCTURNE AUTONOME » en tête. Lex dort ~5-6 h et m'a autorisé à poursuivre seul : lancer le workflow après compaction, relancer par lots jusqu'à son retour.
