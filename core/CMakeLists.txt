@@ -18,6 +18,7 @@ add_library(vikicore STATIC
     doc/StickyNote.cpp
     doc/ParamTable.cpp
     render/HitTest.cpp
+    render/StandardViews.cpp
     snap/SnapEngine.cpp
     cmd/Input.cpp
     cmd/CommandProcessor.cpp
