@@ -464,6 +464,154 @@ public:
     }
 };
 
+// SWEEP: pick the profile entities, then a path entity. The profile is swept
+// along the open path spine into a solid.
+class SweepCommand : public Command {
+public:
+    const char* name() const override { return "SWEEP"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_profileIds = ctx.selection().ids();
+            ctx.selection().clear();
+        }
+        if (!m_profileIds.empty()) {
+            m_stage = 1; // profiles came from the pre-selection; ask for the path
+            return Step::cont(InputKind::EntitySet, QStringLiteral("Select path:"));
+        }
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select profile entities:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (m_stage == 0) { // profile entities
+            if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+                m_profileIds = v.entitySet;
+            else if (v.kind == InputValue::Kind::EntityRef)
+                m_profileIds.push_back(v.entityRef);
+            else if (v.kind != InputValue::Kind::Finish || m_profileIds.empty())
+                return Step::cancelled();
+            m_stage = 1;
+            return Step::cont(InputKind::EntitySet, QStringLiteral("Select path:"));
+        }
+        // stage 1: path entity/entities
+        std::vector<EntityId> pathIds;
+        if (v.kind == InputValue::Kind::EntitySet && !v.entitySet.empty())
+            pathIds = v.entitySet;
+        else if (v.kind == InputValue::Kind::EntityRef)
+            pathIds.push_back(v.entityRef);
+        else
+            return Step::cancelled();
+        return build(ctx, pathIds);
+    }
+
+private:
+    Step build(CommandContext& ctx, const std::vector<EntityId>& pathIds)
+    {
+        const WorkPlane plane = documentWorkplane(ctx.doc());
+        const auto profiles = solidops::wiresFromEntities(ctx.doc(), m_profileIds, plane);
+        if (!profiles.ok) {
+            ctx.info(profiles.message);
+            return Step::cancelled();
+        }
+        const auto path = solidops::pathWireFromEntities(ctx.doc(), pathIds, plane);
+        if (!path.ok) {
+            ctx.info(path.message);
+            return Step::cancelled();
+        }
+        const auto solid = solidops::sweepProfile(profiles.wires, path.wires.front());
+        if (!solid.ok) {
+            ctx.info(solid.message);
+            return Step::cancelled();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("SWEEP"));
+        for (const EntityId id : m_profileIds)
+            ctx.doc().removeEntity(id);
+        for (const EntityId id : pathIds)
+            ctx.doc().removeEntity(id);
+        const EntityId sid =
+            ctx.doc().addEntity(std::make_unique<SolidEntity>(solid.shape));
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("solid %1 created (sweep)").arg(sid));
+        return Step::done();
+    }
+
+    int m_stage = 0;
+    std::vector<EntityId> m_profileIds;
+};
+
+// LOFT: pick 2+ profile entities in order; skin a solid through them.
+class LoftCommand : public Command {
+public:
+    const char* name() const override { return "LOFT"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+            if (m_ids.size() >= 2)
+                return build(ctx);
+        }
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select cross-sections in order (2+):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (v.kind == InputValue::Kind::EntitySet) {
+            m_ids.insert(m_ids.end(), v.entitySet.begin(), v.entitySet.end());
+            return m_ids.size() >= 2 ? build(ctx) : Step::cancelled();
+        }
+        if (v.kind == InputValue::Kind::EntityRef) {
+            m_ids.push_back(v.entityRef);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select more (Finish when done):"));
+        }
+        if (v.kind == InputValue::Kind::Finish)
+            return m_ids.size() >= 2 ? build(ctx) : Step::cancelled();
+        return Step::cancelled();
+    }
+
+private:
+    Step build(CommandContext& ctx)
+    {
+        const WorkPlane plane = documentWorkplane(ctx.doc());
+        // Each cross-section is a single closed wire; build them one id at a time
+        // so the loft section order matches the pick order.
+        std::vector<TopoDS_Wire> sections;
+        for (const EntityId id : m_ids) {
+            const auto w = solidops::wiresFromEntities(ctx.doc(), {id}, plane);
+            if (!w.ok || w.wires.empty()) {
+                ctx.info(w.ok ? QStringLiteral("empty section") : w.message);
+                return Step::cancelled();
+            }
+            sections.push_back(w.wires.front());
+        }
+        const auto solid = solidops::loftProfiles(sections, /*solid=*/true);
+        if (!solid.ok) {
+            ctx.info(solid.message);
+            return Step::cancelled();
+        }
+        ctx.doc().beginTransaction(QStringLiteral("LOFT"));
+        for (const EntityId id : m_ids)
+            ctx.doc().removeEntity(id);
+        const EntityId sid =
+            ctx.doc().addEntity(std::make_unique<SolidEntity>(solid.shape));
+        ctx.doc().commitTransaction();
+        ctx.info(QStringLiteral("solid %1 created (loft)").arg(sid));
+        return Step::done();
+    }
+
+    std::vector<EntityId> m_ids;
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -481,6 +629,8 @@ void registerSolidCommands(CommandProcessor& p)
     p.registerCommand(&makeSubtract, {QStringLiteral("SUB")});
     p.registerCommand(&makeIntersect, {QStringLiteral("INT")});
     p.registerCommand(&make<HoleCommand>, {QStringLiteral("HO")});
+    p.registerCommand(&make<SweepCommand>, {QStringLiteral("SW")});
+    p.registerCommand(&make<LoftCommand>, {QStringLiteral("LO")});
     p.registerCommand(&make<Measure3DCommand>, {QStringLiteral("M3D")});
 }
 

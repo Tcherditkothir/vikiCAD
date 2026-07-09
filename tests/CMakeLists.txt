@@ -18,6 +18,7 @@ add_executable(vikicad-tests
     test_m7_solids.cpp
     test_interference.cpp
     test_pattern3d.cpp
+    test_sweep_loft.cpp
     test_stl_export.cpp
     test_params.cpp
 )

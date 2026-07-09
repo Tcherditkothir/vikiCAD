@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 
+#include <BRepAdaptor_CompCurve.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_CurveType.hxx>
@@ -17,7 +18,9 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
@@ -28,6 +31,8 @@
 #include <GProp_GProps.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
+#include <GeomLProp_SLProps.hxx>
+#include <Geom_Surface.hxx>
 #include <Standard_Failure.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp_Explorer.hxx>
@@ -234,6 +239,103 @@ WireResult wiresFromEntities(const Document& doc, const std::vector<EntityId>& i
 
 namespace {
 
+// Order a bag of open pieces into a single connected path (tolerance 1e-6),
+// reversing pieces as needed. Returns false if they don't form one chain.
+bool chainPath(std::vector<ProfilePiece> open, std::vector<ProfilePiece>& out)
+{
+    constexpr double tol = 1e-6;
+    if (open.empty())
+        return false;
+    out.clear();
+    out.push_back(open.front());
+    open.erase(open.begin());
+    bool grew = true;
+    while (grew && !open.empty()) {
+        grew = false;
+        for (size_t i = 0; i < open.size(); ++i) {
+            ProfilePiece p = open[i];
+            if (nearEqual(out.back().b, p.a, tol)) {
+                out.push_back(p);
+            } else if (nearEqual(out.back().b, p.b, tol)) {
+                std::swap(p.a, p.b);
+                out.push_back(p);
+            } else if (nearEqual(out.front().a, p.b, tol)) {
+                out.insert(out.begin(), p);
+            } else if (nearEqual(out.front().a, p.a, tol)) {
+                std::swap(p.a, p.b);
+                out.insert(out.begin(), p);
+            } else {
+                continue;
+            }
+            open.erase(open.begin() + long(i));
+            grew = true;
+            break;
+        }
+    }
+    return open.empty();
+}
+
+// Build an OPEN wire from an ordered chain of pieces (does not close the loop).
+TopoDS_Wire openWireFromChain(const std::vector<ProfilePiece>& chain,
+                              const WorkPlane& plane)
+{
+    BRepBuilderAPI_MakeWire maker;
+    for (const ProfilePiece& p : chain) {
+        if (p.isArc) {
+            const auto arc = GC_MakeArcOfCircle(to3d(p.a, plane), to3d(p.mid, plane),
+                                                to3d(p.b, plane));
+            maker.Add(BRepBuilderAPI_MakeEdge(arc.Value()).Edge());
+        } else {
+            if (p.a.distanceTo(p.b) < 1e-9)
+                continue;
+            const auto seg = GC_MakeSegment(to3d(p.a, plane), to3d(p.b, plane));
+            maker.Add(BRepBuilderAPI_MakeEdge(seg.Value()).Edge());
+        }
+    }
+    return maker.IsDone() ? maker.Wire() : TopoDS_Wire();
+}
+
+} // namespace
+
+WireResult pathWireFromEntities(const Document& doc, const std::vector<EntityId>& ids,
+                                const WorkPlane& plane)
+{
+    WireResult result;
+    std::vector<std::vector<ProfilePiece>> loops; // closed entities (circle/closed pl)
+    std::vector<ProfilePiece> open;
+    for (const EntityId id : ids) {
+        const Entity* e = doc.entity(id);
+        if (!e) {
+            result.message = QStringLiteral("entity %1 not found").arg(id);
+            return result;
+        }
+        piecesFromEntity(*e, loops, open);
+    }
+    // A closed loop makes no sense as a sweep spine.
+    for (auto& loop : loops)
+        open.insert(open.end(), loop.begin(), loop.end());
+    if (open.empty()) {
+        result.message = QStringLiteral("no path geometry (need lines/arcs/polyline)");
+        return result;
+    }
+    std::vector<ProfilePiece> chain;
+    if (!chainPath(std::move(open), chain)) {
+        result.message =
+            QStringLiteral("path is not a single chain (connect the segments)");
+        return result;
+    }
+    const TopoDS_Wire wire = openWireFromChain(chain, plane);
+    if (wire.IsNull()) {
+        result.message = QStringLiteral("failed to build the path wire");
+        return result;
+    }
+    result.wires.push_back(wire);
+    result.ok = true;
+    return result;
+}
+
+namespace {
+
 // Build the prism(s) for `wires`, extruding by `dir` from `base` (a point on the
 // starting plane; the faces are moved there first so a symmetric extrude can
 // start below the work plane). Multiple wires are fused into one solid.
@@ -370,6 +472,138 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
     }
     result.ok = true;
     result.shape = acc;
+    return result;
+}
+
+SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
+                         const TopoDS_Wire& pathWire)
+{
+    SolidResult result;
+    if (profileWires.empty()) {
+        result.message = QStringLiteral("sweep needs a profile");
+        return result;
+    }
+    if (pathWire.IsNull()) {
+        result.message = QStringLiteral("sweep needs a path");
+        return result;
+    }
+    // Path start point and start tangent (the spine's initial direction). The
+    // profile is reoriented so its plane is perpendicular to this tangent and
+    // its centre sits at the path start, so the sweep encloses a real volume
+    // even when the profile was sketched coplanar with the path (the usual 2D
+    // workflow). MakePipe itself keeps the profile rigid along the spine.
+    gp_Pnt startPnt;
+    gp_Vec startTan;
+    try {
+        BRepAdaptor_CompCurve spine(pathWire);
+        const double u0 = spine.FirstParameter();
+        spine.D1(u0, startPnt, startTan);
+    } catch (const Standard_Failure& e) {
+        result.message = QStringLiteral("bad sweep path: %1")
+                             .arg(QString::fromUtf8(e.GetMessageString()));
+        return result;
+    }
+    if (startTan.Magnitude() < 1e-9) {
+        result.message = QStringLiteral("degenerate sweep path");
+        return result;
+    }
+    const gp_Dir tangent(startTan);
+
+    TopoDS_Shape acc;
+    for (const TopoDS_Wire& wire : profileWires) {
+        BRepBuilderAPI_MakeFace face(wire);
+        if (!face.IsDone()) {
+            result.message = QStringLiteral("profile wire does not bound a face");
+            return result;
+        }
+        // Reorient the profile face: rotate its plane normal onto the path
+        // tangent and translate its centroid onto the path start point.
+        TopoDS_Shape profShape = face.Face();
+        GProp_GProps sprops;
+        BRepGProp::SurfaceProperties(profShape, sprops);
+        const gp_Pnt centroid = sprops.CentreOfMass();
+        gp_Dir profNormal(0, 0, 1);
+        {
+            const Handle(Geom_Surface) surf = BRep_Tool::Surface(TopoDS::Face(profShape));
+            GeomLProp_SLProps sl(surf, 0.0, 0.0, 1, 1e-7);
+            if (sl.IsNormalDefined())
+                profNormal = sl.Normal();
+        }
+        gp_Trsf orient;
+        const double dotv = profNormal.Dot(tangent);
+        if (dotv < 1.0 - 1e-9) {
+            gp_Dir rotAxis;
+            if (dotv <= -1.0 + 1e-9) {
+                // Antiparallel: pick any axis perpendicular to the normal.
+                gp_Vec seed = std::fabs(profNormal.Z()) < 0.9 ? gp_Vec(0, 0, 1)
+                                                              : gp_Vec(1, 0, 0);
+                rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(seed));
+            } else {
+                rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(gp_Vec(tangent)));
+            }
+            const double ang = gp_Vec(profNormal).Angle(gp_Vec(tangent));
+            orient.SetRotation(gp_Ax1(centroid, rotAxis), ang);
+        }
+        gp_Trsf move;
+        move.SetTranslation(gp_Vec(centroid, startPnt));
+        profShape = BRepBuilderAPI_Transform(profShape, move.Multiplied(orient), true)
+                        .Shape();
+        try {
+            BRepOffsetAPI_MakePipe pipe(pathWire, TopoDS::Face(profShape));
+            pipe.Build();
+            if (pipe.Shape().IsNull()) {
+                result.message = QStringLiteral("sweep failed");
+                return result;
+            }
+            const TopoDS_Shape swept = pipe.Shape();
+            if (acc.IsNull()) {
+                acc = swept;
+            } else {
+                BRepAlgoAPI_Fuse fuse(acc, swept);
+                if (!fuse.IsDone()) {
+                    result.message = QStringLiteral("fusing swept profiles failed");
+                    return result;
+                }
+                acc = fuse.Shape();
+            }
+        } catch (const Standard_Failure& e) {
+            result.message = QStringLiteral("sweep failed: %1")
+                                 .arg(QString::fromUtf8(e.GetMessageString()));
+            return result;
+        }
+    }
+    result.ok = true;
+    result.shape = acc;
+    return result;
+}
+
+SolidResult loftProfiles(const std::vector<TopoDS_Wire>& sections, bool solid)
+{
+    SolidResult result;
+    if (sections.size() < 2) {
+        result.message = QStringLiteral("loft needs at least two sections");
+        return result;
+    }
+    try {
+        BRepOffsetAPI_ThruSections gen(solid ? Standard_True : Standard_False);
+        for (const TopoDS_Wire& wire : sections) {
+            if (wire.IsNull()) {
+                result.message = QStringLiteral("null loft section");
+                return result;
+            }
+            gen.AddWire(wire);
+        }
+        gen.Build();
+        if (gen.Shape().IsNull()) {
+            result.message = QStringLiteral("loft failed");
+            return result;
+        }
+        result.ok = true;
+        result.shape = gen.Shape();
+    } catch (const Standard_Failure& e) {
+        result.message =
+            QStringLiteral("loft failed: %1").arg(QString::fromUtf8(e.GetMessageString()));
+    }
     return result;
 }
 

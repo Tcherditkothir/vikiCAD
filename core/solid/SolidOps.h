@@ -40,9 +40,29 @@ struct SolidResult {
     TopoDS_Shape shape;
 };
 
+// Builds an OPEN path wire (a spine to sweep along) from 2D line/arc/polyline
+// entities on the work plane. Unlike wiresFromEntities the chain need NOT close.
+// The result has ok=false if the entities don't chain end-to-end into a single
+// path. Used by SWEEP.
+WireResult pathWireFromEntities(const Document& doc, const std::vector<EntityId>& ids,
+                                const WorkPlane& plane);
+
 // Prism along the work-plane normal (negative height extrudes the other way).
 SolidResult extrudeWires(const std::vector<TopoDS_Wire>& wires, double height,
                          const WorkPlane& plane = {});
+
+// SWEEP: sweep the closed `profileWires` along the open `pathWire` spine,
+// producing a solid (BRepOffsetAPI_MakePipe over a face per profile, fused).
+// The profile is used as-is (its position relative to the path start matters):
+// place it at the path's starting point for a clean sweep. Volume of a circle
+// of radius r swept along a straight length L is ~= pi*r^2*L.
+SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
+                         const TopoDS_Wire& pathWire);
+
+// LOFT: skin a solid (or shell, when `solid=false`) through the ordered cross-
+// section wires (BRepOffsetAPI_ThruSections). Needs 2+ sections. Each section is
+// one closed wire; sections are usually on parallel work planes at different Z.
+SolidResult loftProfiles(const std::vector<TopoDS_Wire>& sections, bool solid);
 
 // EXTRUDE modes. NewBody = a standalone prism (default, same as extrudeWires).
 // Join = fuse the prism onto `target`. Cut = subtract the prism from `target`.
