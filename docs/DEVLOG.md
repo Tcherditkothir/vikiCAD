@@ -210,3 +210,9 @@ Suite : contrainte d'assemblage (mate/align), highlight persistant de la sélect
 - **Surbrillance de sélection** : couleurs vives distinctes — cyan au survol, orange à la sélection (le gris par défaut était invisible sur une pièce métal ombrée).
 - **Couleur + transparence des solides** : champ `transparency` sur SolidEntity (persisté) ; la vue OCCT applique la couleur résolue de l'entité + la transparence ; commande **TRANSPARENCY** (alias TRANS, %) ; le panneau Propriétés édite `transparency` et `component` (le blob BREP base64 est masqué) ; les éditions de couleur/transparence rafraîchissent la 3D. Validé : pièce à 40 % laisse voir l'intérieur.
 - **Autocomplétion** : `CommandProcessor::commandNames()` alimente un QCompleter (MatchContains, insensible à la casse) dans la barre de commande — taper « 3D » liste MOVE3D/ROTATE3D/FILLET3D, etc. Découvrabilité des commandes (dont 3D) réglée.
+
+## 2026-07-08 (suite 5) — Menu Assembly + Push/Pull (extruder une face)
+
+- **Menu contextuel du panneau Assembly** (clic droit) : Propriétés, Couleur…, Transparence…, Renommer le composant…, Supprimer — chaque action en transaction annulable, répercutée en 2D et 3D.
+- **Malentendu commande éclairci** : `EXTRUDE` = profil 2D fermé → solide (sketch → solide), PAS l'extrusion d'une face de solide. D'où « rien ne se produit » quand Lex sélectionnait une face 3D. La sélection 3D (OCCT) n'alimente pas non plus le système de commandes 2D.
+- **Push/Pull (le vrai « extruder une face »)** : clic droit sur une face sélectionnée dans la vue 3D → « Push/Pull face… » → distance. `solidops::pushPullFace` prisme la face selon sa normale sortante puis fusionne (>0, bossage) ou coupe (<0, poche) avec le solide parent. La vue OCCT retient la face + le solide propriétaire ; MainWindow applique en transaction et rafraîchit. Testé sur une boîte (1000 → bossage 1500 → poche 700).
