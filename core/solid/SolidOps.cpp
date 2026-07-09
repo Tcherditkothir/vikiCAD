@@ -13,6 +13,8 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -395,6 +397,140 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
     result.ok = true;
     result.shape = out;
     return result;
+}
+
+namespace {
+
+// Collect the first `n` edges of `solid` in TopExp order. n <= 0 or n beyond
+// the edge count takes them all.
+std::vector<TopoDS_Shape> firstNEdges(const TopoDS_Shape& solid, int n)
+{
+    std::vector<TopoDS_Shape> edges;
+    for (TopExp_Explorer exp(solid, TopAbs_EDGE); exp.More(); exp.Next()) {
+        if (n > 0 && static_cast<int>(edges.size()) >= n)
+            break;
+        edges.push_back(exp.Current());
+    }
+    return edges;
+}
+
+} // namespace
+
+SolidResult filletEdges(const TopoDS_Shape& solid,
+                        const std::vector<TopoDS_Shape>& edges, double radius)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("fillet needs a target solid");
+        return result;
+    }
+    if (radius <= 1e-9) {
+        result.message = QStringLiteral("fillet radius must be positive");
+        return result;
+    }
+    if (edges.empty()) {
+        result.message = QStringLiteral("fillet needs at least one edge");
+        return result;
+    }
+    try {
+        BRepFilletAPI_MakeFillet op(solid);
+        int added = 0;
+        for (const TopoDS_Shape& e : edges) {
+            if (e.IsNull() || e.ShapeType() != TopAbs_EDGE)
+                continue;
+            op.Add(radius, TopoDS::Edge(e));
+            ++added;
+        }
+        if (added == 0) {
+            result.message = QStringLiteral("no valid edges to fillet");
+            return result;
+        }
+        op.Build();
+        TopoDS_Shape s;
+        try {
+            s = op.Shape(); // don't trust IsDone(); force build + null-check
+        } catch (const Standard_Failure&) {
+            s.Nullify();
+        }
+        if (!s.IsNull()) {
+            result.ok = true;
+            result.shape = s;
+            return result;
+        }
+    } catch (const Standard_Failure&) {
+        // OCCT throws on infeasible radii; fall through to the message.
+    }
+    result.message = QStringLiteral("fillet failed — radius too large for this geometry?");
+    return result;
+}
+
+SolidResult chamferEdges(const TopoDS_Shape& solid,
+                         const std::vector<TopoDS_Shape>& edges, double distance)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("chamfer needs a target solid");
+        return result;
+    }
+    if (distance <= 1e-9) {
+        result.message = QStringLiteral("chamfer distance must be positive");
+        return result;
+    }
+    if (edges.empty()) {
+        result.message = QStringLiteral("chamfer needs at least one edge");
+        return result;
+    }
+    try {
+        BRepFilletAPI_MakeChamfer op(solid);
+        int added = 0;
+        for (const TopoDS_Shape& e : edges) {
+            if (e.IsNull() || e.ShapeType() != TopAbs_EDGE)
+                continue;
+            op.Add(distance, TopoDS::Edge(e));
+            ++added;
+        }
+        if (added == 0) {
+            result.message = QStringLiteral("no valid edges to chamfer");
+            return result;
+        }
+        op.Build();
+        TopoDS_Shape s;
+        try {
+            s = op.Shape(); // don't trust IsDone(); force build + null-check
+        } catch (const Standard_Failure&) {
+            s.Nullify();
+        }
+        if (!s.IsNull()) {
+            result.ok = true;
+            result.shape = s;
+            return result;
+        }
+    } catch (const Standard_Failure&) {
+        // OCCT throws on infeasible distances; fall through to the message.
+    }
+    result.message =
+        QStringLiteral("chamfer failed — distance too large for this geometry?");
+    return result;
+}
+
+SolidResult filletFirstNEdges(const TopoDS_Shape& solid, int n, double radius)
+{
+    if (solid.IsNull()) {
+        SolidResult r;
+        r.message = QStringLiteral("fillet needs a target solid");
+        return r;
+    }
+    return filletEdges(solid, firstNEdges(solid, n), radius);
+}
+
+SolidResult chamferFirstNEdges(const TopoDS_Shape& solid, int n, double distance)
+{
+    if (solid.IsNull()) {
+        SolidResult r;
+        r.message = QStringLiteral("chamfer needs a target solid");
+        return r;
+    }
+    return chamferEdges(solid, firstNEdges(solid, n), distance);
 }
 
 SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,

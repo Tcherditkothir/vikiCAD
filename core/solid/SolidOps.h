@@ -74,6 +74,22 @@ SolidResult makeHole(const TopoDS_Shape& solid, const WorkPlane& plane,
                      const Vec2d& center, double diameter, double depth,
                      bool through);
 
+// FILLET/CHAMFER on SPECIFIC edges (not all). `edges` are edges OF `solid`
+// (TopoDS_Edge, as picked in the 3D view). filletEdges rounds each by `radius`;
+// chamferEdges bevels each by `distance`. Empty `edges` is a no-op failure.
+// Uses BRepFilletAPI_Make{Fillet,Chamfer}; OCCT throws on infeasible sizes, so
+// force .Shape() and null-check rather than trusting IsDone().
+SolidResult filletEdges(const TopoDS_Shape& solid,
+                        const std::vector<TopoDS_Shape>& edges, double radius);
+SolidResult chamferEdges(const TopoDS_Shape& solid,
+                         const std::vector<TopoDS_Shape>& edges, double distance);
+
+// Headless-driveable variants for tests/scripting: fillet/chamfer the first `n`
+// edges of `solid` in TopExp exploration order (n <= 0 or beyond the edge count
+// takes all edges). No GUI edge-picking needed.
+SolidResult filletFirstNEdges(const TopoDS_Shape& solid, int n, double radius);
+SolidResult chamferFirstNEdges(const TopoDS_Shape& solid, int n, double distance);
+
 // SHELL: hollow `solid` out to a wall of `thickness`, leaving a shell. With an
 // `openFace` (a face OF `solid`) that face is removed so the shell is open on
 // that side; otherwise the shell is closed all around (an empty box). Positive

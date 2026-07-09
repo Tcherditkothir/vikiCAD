@@ -496,3 +496,54 @@ TEST_CASE("SHELL hollows a solid to a wall thickness", "[m8][shell]")
     REQUIRE(rig.run(QStringLiteral("UNDO")));
     CHECK(volumeOf(firstSolid(rig.doc)->shape()) == Approx(1000.0).epsilon(1e-6));
 }
+
+TEST_CASE("filletEdges/chamferEdges round SPECIFIC edges of a solid", "[m8][edges]")
+{
+    using namespace viki;
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(1000.0).epsilon(1e-9));
+
+    // A box has 12 geometric edges. TopExp lists each face's boundary, so the
+    // raw explorer count is higher (edges are shared between adjacent faces).
+    // Filleting ALL of them by r=1 shaves a small amount off every convex edge
+    // — the result stays a valid solid, strictly less than the original 1000
+    // but well above zero (the spec's 0 < newVol < 1000 assertion).
+    int edgeCount = 0;
+    for (TopExp_Explorer e(box, TopAbs_EDGE); e.More(); e.Next())
+        ++edgeCount;
+    REQUIRE(edgeCount >= 12);
+
+    const auto allFillet = solidops::filletFirstNEdges(box, 0, 1.0);
+    REQUIRE(allFillet.ok);
+    REQUIRE_FALSE(allFillet.shape.IsNull());
+    const double allVol = volumeOf(allFillet.shape);
+    CHECK(allVol > 0.0);
+    CHECK(allVol < 1000.0);
+
+    // Filleting only the FIRST edge removes less material than filleting all 12.
+    const auto oneFillet = solidops::filletFirstNEdges(box, 1, 1.0);
+    REQUIRE(oneFillet.ok);
+    const double oneVol = volumeOf(oneFillet.shape);
+    CHECK(oneVol < 1000.0);
+    CHECK(oneVol > allVol); // one edge shaves less than twelve
+
+    // filletEdges with an explicit edge vector (as the GUI picker would supply).
+    std::vector<TopoDS_Shape> picked;
+    for (TopExp_Explorer e(box, TopAbs_EDGE); e.More() && picked.size() < 3; e.Next())
+        picked.push_back(e.Current());
+    const auto some = solidops::filletEdges(box, picked, 1.0);
+    REQUIRE(some.ok);
+    CHECK(volumeOf(some.shape) < 1000.0);
+
+    // Chamfer the first edge too (bevels rather than rounds).
+    const auto oneCham = solidops::chamferFirstNEdges(box, 1, 1.0);
+    REQUIRE(oneCham.ok);
+    CHECK(volumeOf(oneCham.shape) < 1000.0);
+    CHECK(volumeOf(oneCham.shape) > 0.0);
+
+    // Guards: null solid, empty edge set, non-positive size.
+    CHECK_FALSE(solidops::filletEdges(TopoDS_Shape(), picked, 1.0).ok);
+    CHECK_FALSE(solidops::filletEdges(box, {}, 1.0).ok);
+    CHECK_FALSE(solidops::filletFirstNEdges(box, 1, 0.0).ok);
+    CHECK_FALSE(solidops::chamferEdges(box, {}, 1.0).ok);
+}

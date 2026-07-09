@@ -1,11 +1,5 @@
 #include "CommandProcessor.h"
 
-#include <BRepFilletAPI_MakeChamfer.hxx>
-#include <BRepFilletAPI_MakeFillet.hxx>
-#include <TopExp_Explorer.hxx>
-#include <TopoDS.hxx>
-#include <TopoDS_Edge.hxx>
-
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -47,37 +41,21 @@ public:
         m_id = v.entitySet[0];
 
         auto* solid = dynamic_cast<SolidEntity*>(ctx.doc().entity(m_id));
-        TopoDS_Shape result;
-        try {
-            if (m_chamfer) {
-                BRepFilletAPI_MakeChamfer op(solid->shape());
-                for (TopExp_Explorer exp(solid->shape(), TopAbs_EDGE); exp.More();
-                     exp.Next())
-                    op.Add(m_value, TopoDS::Edge(exp.Current()));
-                op.Build();
-                if (op.IsDone())
-                    result = op.Shape();
-            } else {
-                BRepFilletAPI_MakeFillet op(solid->shape());
-                for (TopExp_Explorer exp(solid->shape(), TopAbs_EDGE); exp.More();
-                     exp.Next())
-                    op.Add(m_value, TopoDS::Edge(exp.Current()));
-                op.Build();
-                if (op.IsDone())
-                    result = op.Shape();
-            }
-        } catch (...) {
-            // OCCT throws on infeasible radii; fall through to the message.
-        }
-        if (result.IsNull()) {
-            ctx.info(QStringLiteral("%1 failed — radius/distance too large for "
-                                    "this geometry?")
-                         .arg(QLatin1String(name())));
+        // v1 applies to ALL edges (n <= 0 = all in TopExp order). Per-edge
+        // picking rides in via `solidops::filletEdges`/`chamferEdges` once the
+        // 3D view exposes a picked-edge selection.
+        const auto out = m_chamfer
+                             ? solidops::chamferFirstNEdges(solid->shape(), 0, m_value)
+                             : solidops::filletFirstNEdges(solid->shape(), 0, m_value);
+        if (!out.ok || out.shape.IsNull()) {
+            ctx.info(out.message.isEmpty()
+                         ? QStringLiteral("%1 failed").arg(QLatin1String(name()))
+                         : out.message);
             return Step::cancelled();
         }
         ctx.doc().beginTransaction(QLatin1String(name()));
         auto* mut = static_cast<SolidEntity*>(ctx.doc().beginModify(m_id));
-        mut->setShape(result);
+        mut->setShape(out.shape);
         ctx.doc().endModify(m_id);
         ctx.doc().commitTransaction();
         ctx.info(QStringLiteral("%1 applied to all edges").arg(QLatin1String(name())));
