@@ -2,6 +2,8 @@
 
 #include <sstream>
 
+#include <QJsonValue>
+
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BinTools.hxx>
@@ -13,6 +15,31 @@
 #include "render/DrawingProjection.h"
 
 namespace viki {
+
+SolidEntity::SolidEntity(const SolidEntity& other)
+    : Entity(other),
+      component(other.component),
+      transparency(other.transparency),
+      m_shape(other.m_shape),
+      m_bounds2d(other.m_bounds2d),
+      m_zmin(other.m_zmin),
+      m_zmax(other.m_zmax),
+      m_silhouette(other.m_silhouette)
+{
+    if (other.features)
+        features = std::make_unique<FeatureTree>(*other.features);
+}
+
+bool SolidEntity::regenerateFeatures()
+{
+    if (!features)
+        return false;
+    const RegenResult r = features->regenerate();
+    if (!r.ok || r.shape.IsNull())
+        return false;
+    setShape(r.shape);
+    return true;
+}
 
 void SolidEntity::setShape(const TopoDS_Shape& shape)
 {
@@ -148,6 +175,9 @@ void SolidEntity::geomToJson(QJsonObject& obj) const
     // default values (empty component / 0 transparency).
     obj[QStringLiteral("component")] = component;
     obj[QStringLiteral("transparency")] = transparency;
+    // Parametric history rides the same JSON (undo journal + .vkd file).
+    if (features)
+        obj[QStringLiteral("features")] = features->toJson();
 }
 
 void SolidEntity::geomFromJson(const QJsonObject& obj)
@@ -158,6 +188,15 @@ void SolidEntity::geomFromJson(const QJsonObject& obj)
         setShape(shapeFromBytes(bytes));
     component = obj[QStringLiteral("component")].toString();
     transparency = obj[QStringLiteral("transparency")].toDouble(0.0);
+    // Reset first: geomFromJson can re-populate a live entity (undo restore),
+    // and an absent key must clear any stale tree.
+    features.reset();
+    const QJsonValue fv = obj[QStringLiteral("features")];
+    if (fv.isObject()) {
+        auto tree = std::make_unique<FeatureTree>();
+        if (tree->fromJson(fv.toObject()))
+            features = std::move(tree);
+    }
 }
 
 } // namespace viki

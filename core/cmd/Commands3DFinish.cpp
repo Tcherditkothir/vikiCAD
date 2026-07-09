@@ -1,5 +1,6 @@
 #include "CommandProcessor.h"
 
+#include "solid/FeatureTree.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -106,8 +107,18 @@ public:
                                            : out.message);
             return Step::cancelled();
         }
+        // The pre-shell body seeds the history when the solid has none yet
+        // (TopoDS_Shape is a handle: this copy survives the setShape below).
+        const TopoDS_Shape preShape = solid->shape();
+
         ctx.doc().beginTransaction(QStringLiteral("SHELL"));
         auto* mut = static_cast<SolidEntity*>(ctx.doc().beginModify(m_id));
+        // Parametric history: the wall thickness stays EDITABLE afterwards.
+        if (!mut->features) {
+            mut->features = std::make_unique<FeatureTree>();
+            mut->features->addNode(FeatureNode::makeBaseShape(preShape));
+        }
+        mut->features->addNode(FeatureNode::makeShell(m_thickness));
         mut->setShape(out.shape);
         ctx.doc().endModify(m_id);
         ctx.doc().commitTransaction();

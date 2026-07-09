@@ -1,6 +1,12 @@
 #include "solid/FeatureTree.h"
 
+#include <sstream>
+
+#include <QJsonArray>
+#include <QJsonValue>
+
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BinTools.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <GC_MakeSegment.hxx>
 #include <Geom_Circle.hxx>
@@ -120,6 +126,39 @@ bool FeatureTree::setExtrudeHeight(int i, double height)
     return true;
 }
 
+bool FeatureTree::setHoleDiameter(int i, double diameter)
+{
+    if (i < 0 || i >= count())
+        return false;
+    FeatureNode& n = m_nodes[static_cast<size_t>(i)];
+    if (n.kind != FeatureKind::Hole)
+        return false;
+    n.diameter = diameter;
+    return true;
+}
+
+bool FeatureTree::setHoleDepth(int i, double depth)
+{
+    if (i < 0 || i >= count())
+        return false;
+    FeatureNode& n = m_nodes[static_cast<size_t>(i)];
+    if (n.kind != FeatureKind::Hole)
+        return false;
+    n.depth = depth;
+    return true;
+}
+
+bool FeatureTree::setShellThickness(int i, double thickness)
+{
+    if (i < 0 || i >= count())
+        return false;
+    FeatureNode& n = m_nodes[static_cast<size_t>(i)];
+    if (n.kind != FeatureKind::Shell)
+        return false;
+    n.thickness = thickness;
+    return true;
+}
+
 bool FeatureTree::wiresForSketch(const FeatureNode& sketch,
                                  std::vector<TopoDS_Wire>& out, QString& err)
 {
@@ -208,6 +247,38 @@ RegenResult FeatureTree::regenerate() const
             lastSolid = i;
             break;
         }
+        case FeatureKind::BaseShape:
+            if (node.baseShape.IsNull()) {
+                result.message = QStringLiteral("base shape node is empty");
+                return result;
+            }
+            shapes[static_cast<size_t>(i)] = node.baseShape;
+            lastSolid = i;
+            break;
+        case FeatureKind::Hole:
+        case FeatureKind::Shell: {
+            // Both transform the CURRENT body (the last solid-producing node).
+            if (lastSolid < 0) {
+                result.message =
+                    QStringLiteral("hole/shell has no solid to act on");
+                return result;
+            }
+            const TopoDS_Shape& current = shapes[static_cast<size_t>(lastSolid)];
+            const solidops::SolidResult sr =
+                node.kind == FeatureKind::Hole
+                    ? solidops::makeHole(current, node.plane, node.holeCenter,
+                                         node.diameter, node.depth, node.through)
+                    : solidops::shellSolid(current, node.thickness);
+            if (!sr.ok || sr.shape.IsNull()) {
+                result.message = sr.message.isEmpty()
+                                     ? QStringLiteral("feature replay failed")
+                                     : sr.message;
+                return result;
+            }
+            shapes[static_cast<size_t>(i)] = sr.shape;
+            lastSolid = i;
+            break;
+        }
         }
     }
 
@@ -218,6 +289,259 @@ RegenResult FeatureTree::regenerate() const
     result.ok = true;
     result.shape = shapes[static_cast<size_t>(lastSolid)];
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// JSON round-trip. Node kinds/extrude modes as short strings, work planes as
+// nine full-precision doubles (same layout as the .vkd workplane meta), the
+// BaseShape brep as BinTools base64 (same stream SolidEntity persists).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+QJsonArray planeToJson(const WorkPlane& wp)
+{
+    return QJsonArray{wp.origin.X(), wp.origin.Y(), wp.origin.Z(),
+                      wp.normal.X(), wp.normal.Y(), wp.normal.Z(),
+                      wp.xDir.X(),   wp.xDir.Y(),   wp.xDir.Z()};
+}
+
+bool planeFromJson(const QJsonValue& v, WorkPlane& out)
+{
+    const QJsonArray a = v.toArray();
+    if (a.size() != 9)
+        return false;
+    double c[9];
+    for (int i = 0; i < 9; ++i)
+        c[i] = a.at(i).toDouble();
+    // gp_Dir throws on zero-magnitude vectors; guard before constructing.
+    if (c[3] * c[3] + c[4] * c[4] + c[5] * c[5] <= 1e-18 ||
+        c[6] * c[6] + c[7] * c[7] + c[8] * c[8] <= 1e-18)
+        return false;
+    out = WorkPlane{gp_Pnt(c[0], c[1], c[2]), gp_Dir(c[3], c[4], c[5]),
+                    gp_Dir(c[6], c[7], c[8])};
+    return true;
+}
+
+QString shapeToBase64(const TopoDS_Shape& shape)
+{
+    std::ostringstream stream;
+    BinTools::Write(shape, stream);
+    const std::string data = stream.str();
+    return QString::fromLatin1(
+        QByteArray(data.data(), int(data.size())).toBase64());
+}
+
+TopoDS_Shape shapeFromBase64(const QString& b64)
+{
+    const QByteArray bytes = QByteArray::fromBase64(b64.toLatin1());
+    TopoDS_Shape shape;
+    if (!bytes.isEmpty()) {
+        std::istringstream stream(
+            std::string(bytes.constData(), size_t(bytes.size())));
+        BinTools::Read(shape, stream);
+    }
+    return shape;
+}
+
+QJsonObject profileToJson(const SketchProfile& p)
+{
+    QJsonObject o;
+    switch (p.kind) {
+    case ProfileKind::Rectangle:
+        o[QStringLiteral("kind")] = QStringLiteral("rect");
+        o[QStringLiteral("min")] = QJsonArray{p.rectMin.x, p.rectMin.y};
+        o[QStringLiteral("max")] = QJsonArray{p.rectMax.x, p.rectMax.y};
+        break;
+    case ProfileKind::Circle:
+        o[QStringLiteral("kind")] = QStringLiteral("circle");
+        o[QStringLiteral("center")] = QJsonArray{p.circleCenter.x, p.circleCenter.y};
+        o[QStringLiteral("radius")] = p.circleRadius;
+        break;
+    case ProfileKind::Polygon: {
+        o[QStringLiteral("kind")] = QStringLiteral("poly");
+        QJsonArray pts;
+        for (const Vec2d& v : p.polygon) {
+            pts.append(v.x);
+            pts.append(v.y);
+        }
+        o[QStringLiteral("pts")] = pts;
+        break;
+    }
+    }
+    return o;
+}
+
+bool vec2FromJson(const QJsonValue& v, Vec2d& out)
+{
+    const QJsonArray a = v.toArray();
+    if (a.size() != 2)
+        return false;
+    out = {a.at(0).toDouble(), a.at(1).toDouble()};
+    return true;
+}
+
+bool profileFromJson(const QJsonObject& o, SketchProfile& out)
+{
+    const QString kind = o[QStringLiteral("kind")].toString();
+    if (kind == QLatin1String("rect")) {
+        Vec2d lo, hi;
+        if (!vec2FromJson(o[QStringLiteral("min")], lo) ||
+            !vec2FromJson(o[QStringLiteral("max")], hi))
+            return false;
+        out = SketchProfile::rectangle(lo, hi);
+        return true;
+    }
+    if (kind == QLatin1String("circle")) {
+        Vec2d c;
+        if (!vec2FromJson(o[QStringLiteral("center")], c))
+            return false;
+        out = SketchProfile::circle(c, o[QStringLiteral("radius")].toDouble());
+        return true;
+    }
+    if (kind == QLatin1String("poly")) {
+        const QJsonArray pts = o[QStringLiteral("pts")].toArray();
+        if (pts.size() < 6 || pts.size() % 2 != 0)
+            return false;
+        std::vector<Vec2d> verts;
+        verts.reserve(size_t(pts.size()) / 2);
+        for (int i = 0; i + 1 < pts.size(); i += 2)
+            verts.push_back({pts.at(i).toDouble(), pts.at(i + 1).toDouble()});
+        out = SketchProfile::polygonFrom(std::move(verts));
+        return true;
+    }
+    return false;
+}
+
+QString modeToString(solidops::ExtrudeMode m)
+{
+    switch (m) {
+    case solidops::ExtrudeMode::NewBody: return QStringLiteral("new");
+    case solidops::ExtrudeMode::Join: return QStringLiteral("join");
+    case solidops::ExtrudeMode::Cut: return QStringLiteral("cut");
+    case solidops::ExtrudeMode::Symmetric: return QStringLiteral("symmetric");
+    }
+    return QStringLiteral("new");
+}
+
+bool modeFromString(const QString& s, solidops::ExtrudeMode& out)
+{
+    if (s == QLatin1String("new")) out = solidops::ExtrudeMode::NewBody;
+    else if (s == QLatin1String("join")) out = solidops::ExtrudeMode::Join;
+    else if (s == QLatin1String("cut")) out = solidops::ExtrudeMode::Cut;
+    else if (s == QLatin1String("symmetric")) out = solidops::ExtrudeMode::Symmetric;
+    else return false;
+    return true;
+}
+
+} // namespace
+
+QJsonObject FeatureTree::toJson() const
+{
+    QJsonArray nodes;
+    for (const FeatureNode& n : m_nodes) {
+        QJsonObject o;
+        switch (n.kind) {
+        case FeatureKind::Sketch: {
+            o[QStringLiteral("kind")] = QStringLiteral("sketch");
+            o[QStringLiteral("plane")] = planeToJson(n.plane);
+            QJsonArray profiles;
+            for (const SketchProfile& p : n.profiles)
+                profiles.append(profileToJson(p));
+            o[QStringLiteral("profiles")] = profiles;
+            break;
+        }
+        case FeatureKind::Extrude:
+            o[QStringLiteral("kind")] = QStringLiteral("extrude");
+            o[QStringLiteral("height")] = n.height;
+            o[QStringLiteral("sketch")] = n.sketchIndex;
+            o[QStringLiteral("mode")] = modeToString(n.mode);
+            o[QStringLiteral("target")] = n.targetIndex;
+            break;
+        case FeatureKind::BaseShape:
+            o[QStringLiteral("kind")] = QStringLiteral("base");
+            o[QStringLiteral("brep")] = shapeToBase64(n.baseShape);
+            break;
+        case FeatureKind::Hole:
+            o[QStringLiteral("kind")] = QStringLiteral("hole");
+            o[QStringLiteral("plane")] = planeToJson(n.plane);
+            o[QStringLiteral("center")] = QJsonArray{n.holeCenter.x, n.holeCenter.y};
+            o[QStringLiteral("diameter")] = n.diameter;
+            o[QStringLiteral("depth")] = n.depth;
+            o[QStringLiteral("through")] = n.through;
+            break;
+        case FeatureKind::Shell:
+            o[QStringLiteral("kind")] = QStringLiteral("shell");
+            o[QStringLiteral("thickness")] = n.thickness;
+            break;
+        }
+        nodes.append(o);
+    }
+    QJsonObject root;
+    root[QStringLiteral("nodes")] = nodes;
+    return root;
+}
+
+bool FeatureTree::fromJson(const QJsonObject& obj)
+{
+    m_nodes.clear();
+    const QJsonValue nv = obj[QStringLiteral("nodes")];
+    if (!nv.isArray())
+        return false;
+    for (const QJsonValue& v : nv.toArray()) {
+        const QJsonObject o = v.toObject();
+        const QString kind = o[QStringLiteral("kind")].toString();
+        FeatureNode n;
+        if (kind == QLatin1String("sketch")) {
+            n.kind = FeatureKind::Sketch;
+            if (!planeFromJson(o[QStringLiteral("plane")], n.plane)) {
+                m_nodes.clear();
+                return false;
+            }
+            for (const QJsonValue& pv : o[QStringLiteral("profiles")].toArray()) {
+                SketchProfile p;
+                if (!profileFromJson(pv.toObject(), p)) {
+                    m_nodes.clear();
+                    return false;
+                }
+                n.profiles.push_back(std::move(p));
+            }
+        } else if (kind == QLatin1String("extrude")) {
+            n.kind = FeatureKind::Extrude;
+            n.height = o[QStringLiteral("height")].toDouble();
+            n.sketchIndex = o[QStringLiteral("sketch")].toInt(-1);
+            n.targetIndex = o[QStringLiteral("target")].toInt(-1);
+            if (!modeFromString(o[QStringLiteral("mode")].toString(), n.mode)) {
+                m_nodes.clear();
+                return false;
+            }
+        } else if (kind == QLatin1String("base")) {
+            n.kind = FeatureKind::BaseShape;
+            n.baseShape = shapeFromBase64(o[QStringLiteral("brep")].toString());
+            if (n.baseShape.IsNull()) {
+                m_nodes.clear();
+                return false;
+            }
+        } else if (kind == QLatin1String("hole")) {
+            n.kind = FeatureKind::Hole;
+            if (!planeFromJson(o[QStringLiteral("plane")], n.plane) ||
+                !vec2FromJson(o[QStringLiteral("center")], n.holeCenter)) {
+                m_nodes.clear();
+                return false;
+            }
+            n.diameter = o[QStringLiteral("diameter")].toDouble();
+            n.depth = o[QStringLiteral("depth")].toDouble();
+            n.through = o[QStringLiteral("through")].toBool();
+        } else if (kind == QLatin1String("shell")) {
+            n.kind = FeatureKind::Shell;
+            n.thickness = o[QStringLiteral("thickness")].toDouble();
+        } else {
+            m_nodes.clear();
+            return false;
+        }
+        m_nodes.push_back(std::move(n));
+    }
+    return true;
 }
 
 } // namespace viki

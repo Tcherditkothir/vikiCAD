@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 
+#include <QJsonObject>
 #include <QString>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Wire.hxx>
@@ -28,8 +29,11 @@ namespace viki {
 // The kinds of feature a node can be. Kept small on purpose; the model is
 // meant to grow node kinds without changing the replay contract.
 enum class FeatureKind {
-    Sketch,  // a 2D profile on a work plane -> closed wires
-    Extrude, // turns the referenced sketch's wires into a prism
+    Sketch,    // a 2D profile on a work plane -> closed wires
+    Extrude,   // turns the referenced sketch's wires into a prism
+    BaseShape, // a non-parametric starting body (imported STEP, boolean result…)
+    Hole,      // parametric bore -> replays solidops::makeHole on the current body
+    Shell,     // hollow to a wall thickness -> replays solidops::shellSolid
 };
 
 // A 2D profile inside a Sketch feature. Only the shapes the replay engine can
@@ -83,11 +87,11 @@ struct SketchProfile {
 
 // One feature node. A single struct with a `kind` tag plays the role of the
 // FeatureNode variant: only the fields relevant to `kind` are meaningful. This
-// keeps the type trivially copyable/serialisable for the future .vkd wiring.
+// keeps the type plainly copyable/serialisable for the .vkd wiring.
 struct FeatureNode {
     FeatureKind kind = FeatureKind::Sketch;
 
-    // --- Sketch fields ---
+    // --- Sketch fields (Hole reuses `plane` as its bore plane) ---
     WorkPlane plane;                      // work plane the profiles live on
     std::vector<SketchProfile> profiles;  // the closed profiles
 
@@ -100,6 +104,20 @@ struct FeatureNode {
     // For Join/Cut: index of the node whose regenerated shape is the target.
     // Negative means "the most recent solid-producing node before this one".
     int targetIndex = -1;
+
+    // --- BaseShape fields ---
+    // The starting body of a tree whose origin is not (yet) parametric.
+    // Serialized as a BinTools base64 blob, exactly like SolidEntity's brep.
+    TopoDS_Shape baseShape;
+
+    // --- Hole fields (the bore plane is `plane` above) ---
+    Vec2d holeCenter;      // 2D centre on the bore plane
+    double diameter = 5.0; // bore diameter (mm)
+    double depth = 10.0;   // bore depth (mm); ignored when `through`
+    bool through = false;  // true = pierce the whole body
+
+    // --- Shell fields ---
+    double thickness = 1.0; // wall thickness (mm), hollowed all-around
 
     static FeatureNode makeSketch(std::vector<SketchProfile> profiles,
                                   const WorkPlane& plane = {})
@@ -122,6 +140,32 @@ struct FeatureNode {
         n.targetIndex = targetIndex;
         return n;
     }
+    static FeatureNode makeBaseShape(const TopoDS_Shape& shape)
+    {
+        FeatureNode n;
+        n.kind = FeatureKind::BaseShape;
+        n.baseShape = shape;
+        return n;
+    }
+    static FeatureNode makeHole(const WorkPlane& plane, const Vec2d& center,
+                                double diameter, double depth, bool through)
+    {
+        FeatureNode n;
+        n.kind = FeatureKind::Hole;
+        n.plane = plane;
+        n.holeCenter = center;
+        n.diameter = diameter;
+        n.depth = depth;
+        n.through = through;
+        return n;
+    }
+    static FeatureNode makeShell(double thickness)
+    {
+        FeatureNode n;
+        n.kind = FeatureKind::Shell;
+        n.thickness = thickness;
+        return n;
+    }
 };
 
 struct RegenResult {
@@ -137,12 +181,23 @@ public:
     // callers mutate nodeAt(i) and re-run regenerate().
     int addNode(FeatureNode node);            // returns the node's index
     int count() const { return static_cast<int>(m_nodes.size()); }
+    int nodeCount() const { return count(); } // wiring-facing alias
     FeatureNode& nodeAt(int i) { return m_nodes.at(static_cast<size_t>(i)); }
     const FeatureNode& nodeAt(int i) const { return m_nodes.at(static_cast<size_t>(i)); }
     void clear() { m_nodes.clear(); }
 
-    // Convenience for the extrude case: set the height of an Extrude node.
+    // Convenience parameter setters: each checks the node kind and returns
+    // false on a mismatch (callers then re-run regenerate()).
     bool setExtrudeHeight(int i, double height);
+    bool setHoleDiameter(int i, double diameter);
+    bool setHoleDepth(int i, double depth);
+    bool setShellThickness(int i, double thickness);
+
+    // Whole-tree JSON round-trip (every node kind, BaseShape brep as base64).
+    // fromJson replaces the tree's contents; false = malformed input (the tree
+    // is left empty in that case).
+    QJsonObject toJson() const;
+    bool fromJson(const QJsonObject& obj);
 
     // Replay every node from scratch and return the shape of the final
     // solid-producing node. Idempotent: calling it repeatedly (or after a

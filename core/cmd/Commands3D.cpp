@@ -8,6 +8,7 @@
 #include "render/DrawingProjection.h"
 #include "render/HitTest.h"
 #include "render/StandardViews.h"
+#include "solid/FeatureTree.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -436,10 +437,23 @@ private:
             ctx.info(out.message);
             return Step::cancelled();
         }
+        // Parametric history: the hole stays EDITABLE after placement. The
+        // new solid inherits the target's tree when it has one; otherwise the
+        // history starts from the target's brep. Built BEFORE removeEntity —
+        // `solid` dies with the target.
+        auto tree = std::make_unique<FeatureTree>();
+        if (solid->features)
+            *tree = *solid->features;
+        else
+            tree->addNode(FeatureNode::makeBaseShape(solid->shape()));
+        tree->addNode(
+            FeatureNode::makeHole(plane, m_center, m_diameter, m_depth, m_through));
+
         ctx.doc().beginTransaction(QStringLiteral("HOLE"));
         ctx.doc().removeEntity(target);
-        const EntityId sid =
-            ctx.doc().addEntity(std::make_unique<SolidEntity>(out.shape));
+        auto holed = std::make_unique<SolidEntity>(out.shape);
+        holed->features = std::move(tree);
+        const EntityId sid = ctx.doc().addEntity(std::move(holed));
         ctx.doc().commitTransaction();
         ctx.info(QStringLiteral("hole (d=%1) in solid %2").arg(m_diameter).arg(sid));
         return Step::done();

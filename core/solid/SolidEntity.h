@@ -8,6 +8,7 @@
 
 #include "doc/Entity.h"
 #include "geom/Vec2d.h"
+#include "solid/FeatureTree.h"
 
 namespace viki {
 
@@ -18,6 +19,9 @@ class SolidEntity : public Entity {
 public:
     SolidEntity() = default;
     explicit SolidEntity(const TopoDS_Shape& shape) { setShape(shape); }
+    // Deep-copies `features` (unique_ptr deletes the implicit copy ctor,
+    // which clone() below relies on).
+    SolidEntity(const SolidEntity& other);
 
     const char* typeName() const override { return "solid"; }
     std::unique_ptr<Entity> clone() const override
@@ -41,6 +45,15 @@ public:
     // 3D appearance: 0 = opaque, 1 = fully transparent. Color uses the base
     // Entity color (ByLayer or explicit rgb).
     double transparency = 0.0;
+
+    // Parametric history (nullable — most solids are still plain breps).
+    // When present it is serialized as "features" next to the brep, so it
+    // rides the .vkd file and the undo journal automatically.
+    std::unique_ptr<FeatureTree> features;
+
+    // Replay the feature tree and adopt its result as the new shape.
+    // Returns false (shape untouched) when there is no tree or replay fails.
+    bool regenerateFeatures();
 
     // Serialized BREP (BinTools binary stream).
     static QByteArray shapeToBytes(const TopoDS_Shape& shape);
