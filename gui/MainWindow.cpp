@@ -524,6 +524,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
         m_assemblyPanel->refresh();
     });
     m_canvas->clearSketchReference();
+    m_doc->clearExtraSnapPoints();
     m_canvas->zoomExtents();
     updateWindowTitle();
     updateUnitsButton();
@@ -771,6 +772,10 @@ void MainWindow::beginSketchOnFace()
     // the face (holes and all), not a blank box.
     m_canvas->setSketchReference(
         solidops::faceOutline2d(m_occtView->pickedFace(), *wp));
+    // Feed the face's vertices + arc/circle centers to the snap engine so the
+    // profile can snap to real face features (see Document::extraSnapPoints).
+    m_doc->setExtraSnapPoints(
+        solidops::faceSnapPoints2d(m_occtView->pickedFace(), *wp));
     setView3D(false); // back to the 2D canvas to draw the profile
     m_commandBar->appendHistory(QStringLiteral(
         "Sketching on the face (blue dashed outline). Draw a closed profile, "

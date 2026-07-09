@@ -27,13 +27,17 @@
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
 #include <Standard_Failure.hxx>
+#include <BRep_Tool.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopExp.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
@@ -813,6 +817,36 @@ std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,
         loops.push_back(std::move(poly));
     }
     return loops;
+}
+
+std::vector<SnapPoint> faceSnapPoints2d(const TopoDS_Shape& face,
+                                        const WorkPlane& plane)
+{
+    std::vector<SnapPoint> pts;
+    if (face.IsNull() || face.ShapeType() != TopAbs_FACE)
+        return pts;
+    const gp_Vec xv(plane.xDir);
+    const gp_Vec yv(plane.normal.Crossed(plane.xDir));
+    const auto to2d = [&](const gp_Pnt& p) {
+        const gp_Vec d(plane.origin, p);
+        return Vec2d{d.Dot(xv), d.Dot(yv)};
+    };
+    // Vertices → Endpoint targets (deduplicated: shared edge vertices appear once).
+    TopTools_IndexedMapOfShape verts;
+    TopExp::MapShapes(face, TopAbs_VERTEX, verts);
+    for (int i = 1; i <= verts.Extent(); ++i) {
+        const TopoDS_Vertex v = TopoDS::Vertex(verts(i));
+        pts.push_back({to2d(BRep_Tool::Pnt(v)), SnapKind::Endpoint});
+    }
+    // Circular / elliptical edges → Center targets.
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+        if (curve.GetType() == GeomAbs_Circle)
+            pts.push_back({to2d(curve.Circle().Location()), SnapKind::Center});
+        else if (curve.GetType() == GeomAbs_Ellipse)
+            pts.push_back({to2d(curve.Ellipse().Location()), SnapKind::Center});
+    }
+    return pts;
 }
 
 } // namespace solidops

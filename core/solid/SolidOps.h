@@ -127,6 +127,13 @@ double minDistance(const TopoDS_Shape& a, const TopoDS_Shape& b);
 std::vector<std::vector<Vec2d>> faceOutline2d(const TopoDS_Shape& face,
                                               const WorkPlane& plane);
 
+// Object-snap targets on the face outline, in the work-plane's 2D frame, so a
+// sketch profile can snap to real face features. Emits an Endpoint at every
+// edge vertex and a Center at every circular/elliptical edge's center. Feed the
+// result into Document::setExtraSnapPoints while sketching on the face.
+std::vector<SnapPoint> faceSnapPoints2d(const TopoDS_Shape& face,
+                                        const WorkPlane& plane);
+
 } // namespace solidops
 
 // The current work plane, per document (small registry, v1). Set by WORKPLANE

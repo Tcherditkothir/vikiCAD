@@ -42,6 +42,7 @@ public:
             return Step::cont(InputKind::Distance, QStringLiteral("Z offset:"));
         }
         documentWorkplane(ctx.doc()) = WorkPlane{}; // world XY
+        ctx.doc().clearExtraSnapPoints(); // drop any sketch-on-face reference snaps
         ctx.info(QStringLiteral("work plane: XY at Z=0"));
         return Step::done();
     }

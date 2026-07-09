@@ -155,3 +155,98 @@ TEST_CASE("snap reaches nested block inserts", "[snap][block]")
     REQUIRE(center->point.x == Approx(75.0));
     REQUIRE(center->point.y == Approx(50.0));
 }
+
+// --- sketch-ref-snap: extra reference snap points fed by the front-end -------
+
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
+
+#include "solid/SolidOps.h"
+
+TEST_CASE("extra snap points are returned by snapQuery", "[snap][sketch-ref]")
+{
+    // Empty document: no entity would ever produce a snap here.
+    Document doc;
+    SnapSettings s;
+    REQUIRE_FALSE(snapQuery(doc, {40, 30}, 5.0, s, std::nullopt));
+
+    // Feed a reference target (a face vertex) and a center.
+    doc.setExtraSnapPoints({{Vec2d{40, 30}, SnapKind::Endpoint},
+                            {Vec2d{-10, 0}, SnapKind::Center}});
+
+    const auto near = snapQuery(doc, {42, 31}, 5.0, s, std::nullopt);
+    REQUIRE(near);
+    REQUIRE(near->kind == SnapKind::Endpoint);
+    REQUIRE(near->point.x == Approx(40.0));
+    REQUIRE(near->point.y == Approx(30.0));
+    REQUIRE(near->entity == kInvalidEntityId);
+
+    const auto ctr = snapQuery(doc, {-11, 1}, 5.0, s, std::nullopt);
+    REQUIRE(ctr);
+    REQUIRE(ctr->kind == SnapKind::Center);
+    REQUIRE(ctr->point.x == Approx(-10.0));
+
+    // Out of tolerance: nothing.
+    REQUIRE_FALSE(snapQuery(doc, {60, 60}, 5.0, s, std::nullopt));
+
+    // Clearing drops them again.
+    doc.clearExtraSnapPoints();
+    REQUIRE_FALSE(snapQuery(doc, {42, 31}, 5.0, s, std::nullopt));
+}
+
+TEST_CASE("faceSnapPoints2d yields box corners and hole center", "[snap][sketch-ref]")
+{
+    using namespace viki;
+    // 20x20x10 box; drill a hole on the top face so it carries a circular edge.
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(20.0, 20.0, 10.0).Shape();
+    const WorkPlane top{gp_Pnt(0, 0, 10), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
+    const auto bored =
+        solidops::makeHole(box, top, Vec2d{10, 10}, 6.0, 4.0, false);
+    REQUIRE(bored.ok);
+
+    // Grab the top face (z==10, outward normal +Z).
+    TopoDS_Shape topFace;
+    for (TopExp_Explorer e(bored.shape, TopAbs_FACE); e.More(); e.Next()) {
+        BRepAdaptor_Surface surf(TopoDS::Face(e.Current()));
+        // pick the planar face whose normal is ~+Z at z=10
+        const gp_Pnt c = surf.Value((surf.FirstUParameter() + surf.LastUParameter()) / 2,
+                                    (surf.FirstVParameter() + surf.LastVParameter()) / 2);
+        if (surf.GetType() == GeomAbs_Plane && std::fabs(c.Z() - 10.0) < 1e-6) {
+            topFace = e.Current();
+            break;
+        }
+    }
+    REQUIRE_FALSE(topFace.IsNull());
+
+    const auto pts = solidops::faceSnapPoints2d(topFace, top);
+    REQUIRE_FALSE(pts.empty());
+
+    // There must be a Center target at the hole center (10,10) in-plane, and an
+    // Endpoint at a face corner (0,0).
+    bool hasHoleCenter = false, hasCorner = false;
+    for (const SnapPoint& sp : pts) {
+        if (sp.kind == SnapKind::Center &&
+            std::hypot(sp.p.x - 10.0, sp.p.y - 10.0) < 1e-6)
+            hasHoleCenter = true;
+        if (sp.kind == SnapKind::Endpoint &&
+            std::hypot(sp.p.x - 0.0, sp.p.y - 0.0) < 1e-6)
+            hasCorner = true;
+    }
+    REQUIRE(hasHoleCenter);
+    REQUIRE(hasCorner);
+
+    // And they are queryable through the Document hook + SnapEngine.
+    Document doc;
+    doc.setExtraSnapPoints(pts);
+    SnapSettings s;
+    const auto r = snapQuery(doc, {10.3, 9.8}, 1.0, s, std::nullopt);
+    REQUIRE(r);
+    REQUIRE(r->kind == SnapKind::Center);
+    REQUIRE(r->point.x == Approx(10.0));
+    REQUIRE(r->point.y == Approx(10.0));
+}

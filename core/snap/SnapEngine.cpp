@@ -168,6 +168,12 @@ std::optional<SnapResult> snapQuery(const Document& doc, const Vec2d& cursor,
             consider(sp.p, sp.kind, c.e->id());
     }
 
+    // Extra reference targets (e.g. the sketch-on-face outline): vertices and
+    // arc/circle centers fed in by the front-end so the profile can snap to
+    // real face features. They belong to no entity (kInvalidEntityId).
+    for (const SnapPoint& sp : doc.extraSnapPoints())
+        consider(sp.p, sp.kind, kInvalidEntityId);
+
     // Intersections: pairwise over flattened candidates near the cursor.
     if (settings.intersection && cands.size() >= 2) {
         const BBox2d flattenBox = probe.inflated(tolerance * 4);

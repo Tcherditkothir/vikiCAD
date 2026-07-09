@@ -107,6 +107,14 @@ public:
     QString filePath() const { return m_filePath; }
     void setFilePath(const QString& p) { m_filePath = p; }
 
+    // --- extra snap points (transient reference targets, e.g. the sketch-on-
+    // face outline). Not journaled, not persisted; SnapEngine also considers
+    // them so the profile can snap to real face features. Cleared when the
+    // sketch reference is dropped.
+    const std::vector<SnapPoint>& extraSnapPoints() const { return m_extraSnapPoints; }
+    void setExtraSnapPoints(std::vector<SnapPoint> pts) { m_extraSnapPoints = std::move(pts); }
+    void clearExtraSnapPoints() { m_extraSnapPoints.clear(); }
+
     // Change notification (any entity/undo mutation). GUI repaints on this.
     void addChangeListener(std::function<void()> fn) { m_listeners.push_back(std::move(fn)); }
 
@@ -125,6 +133,7 @@ private:
     std::unordered_map<EntityId, std::unique_ptr<Entity>> m_entities;
     std::vector<EntityId> m_drawOrder;
     EntityId m_nextId = 1;
+    std::vector<SnapPoint> m_extraSnapPoints; // transient reference snap targets
 
     std::unique_ptr<Transaction> m_openTransaction;
     QJsonObject m_modifyBefore;
