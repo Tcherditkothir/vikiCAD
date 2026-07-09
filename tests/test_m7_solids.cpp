@@ -664,3 +664,40 @@ TEST_CASE("MEASURE3D command reports two boxes 5mm apart", "[m7][measure3d]")
     // The reported number is 5.
     CHECK(msg.contains(QStringLiteral("5")));
 }
+
+#include <gp_Dir.hxx>
+#include <gp_Pln.hxx>
+
+TEST_CASE("DRAFT tapers the side faces of a box", "[m8][draft]")
+{
+    using namespace viki;
+    // A 10^3 box, pull +Z, neutral plane at z=0 (its bottom face). Drafting the
+    // four side faces by a few degrees tips them inward/outward, moving the
+    // volume away from 1000 while keeping a valid, sane solid.
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
+    REQUIRE(volumeOf(box) == Approx(1000.0).epsilon(1e-9));
+
+    const gp_Dir pull(0.0, 0.0, 1.0);
+    const gp_Pln neutral(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+
+    const auto drafted = solidops::draftBoxSides(box, pull, neutral, 5.0);
+    REQUIRE(drafted.ok);
+    REQUIRE_FALSE(drafted.shape.IsNull());
+    const double vol = volumeOf(drafted.shape);
+    CHECK(vol > 0.0);
+    CHECK(vol != Approx(1000.0).epsilon(1e-3)); // taper changed the volume
+    CHECK(vol > 700.0);
+    CHECK(vol < 1300.0);
+
+    // A negative angle drafts the other way; still a valid solid in-band.
+    const auto draftedNeg = solidops::draftBoxSides(box, pull, neutral, -5.0);
+    REQUIRE(draftedNeg.ok);
+    const double volNeg = volumeOf(draftedNeg.shape);
+    CHECK(volNeg > 700.0);
+    CHECK(volNeg < 1300.0);
+    CHECK(volNeg != Approx(1000.0).epsilon(1e-3));
+
+    // Guards.
+    CHECK_FALSE(solidops::draftBoxSides(TopoDS_Shape(), pull, neutral, 5.0).ok);
+    CHECK_FALSE(solidops::draftFaces(box, {}, pull, neutral, 5.0).ok);
+}

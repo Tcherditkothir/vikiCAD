@@ -6,6 +6,7 @@
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Dir.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 
 #include "doc/Document.h"
@@ -116,6 +117,23 @@ SolidResult chamferFirstNEdges(const TopoDS_Shape& solid, int n, double distance
 // thickness hollows inward. Uses BRepOffsetAPI_MakeThickSolid.
 SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
                        const TopoDS_Shape& openFace = {});
+
+// DRAFT (taper) faces for moldability: tilt each face in `faces` (faces OF
+// `solid`) by `angleDeg` about its intersection with `neutralPlane`, using
+// `pullDir` as the mold-pull direction. Positive angle adds material away from
+// the pull direction (the classic draft that lets a part release from a mold).
+// Uses BRepOffsetAPI_DraftAngle; OCCT throws on infeasible angles, so force
+// .Shape() and null-check rather than trusting IsDone().
+SolidResult draftFaces(const TopoDS_Shape& solid,
+                       const std::vector<TopoDS_Shape>& faces, const gp_Dir& pullDir,
+                       const gp_Pln& neutralPlane, double angleDeg);
+
+// Headless-driveable variant for tests/scripting: draft the four SIDE faces of
+// an axis-aligned box (the faces whose outward normal is perpendicular to
+// `pullDir`), tilting them by `angleDeg` about `neutralPlane`. No GUI face
+// picking needed. Returns ok=false if `solid` has no such side faces.
+SolidResult draftBoxSides(const TopoDS_Shape& solid, const gp_Dir& pullDir,
+                          const gp_Pln& neutralPlane, double angleDeg);
 
 // Push/Pull: extrude `face` (a face OF `solid`) along its outward normal by
 // `distance`, then fuse (distance > 0, a boss) or cut (distance < 0, a pocket)

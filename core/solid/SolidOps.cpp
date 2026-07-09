@@ -18,6 +18,7 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -776,6 +777,106 @@ SolidResult chamferFirstNEdges(const TopoDS_Shape& solid, int n, double distance
         return r;
     }
     return chamferEdges(solid, firstNEdges(solid, n), distance);
+}
+
+// Outward unit normal at the centre of a planar-ish face (orientation-aware).
+// Returns false if the normal is degenerate.
+static bool faceOutwardNormal(const TopoDS_Face& f, gp_Dir& outNormal)
+{
+    BRepAdaptor_Surface surf(f);
+    const Standard_Real u = 0.5 * (surf.FirstUParameter() + surf.LastUParameter());
+    const Standard_Real v = 0.5 * (surf.FirstVParameter() + surf.LastVParameter());
+    gp_Pnt p;
+    gp_Vec du, dv;
+    surf.D1(u, v, p, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (n.Magnitude() < 1e-12)
+        return false;
+    n.Normalize();
+    if (f.Orientation() == TopAbs_REVERSED)
+        n.Reverse();
+    outNormal = gp_Dir(n);
+    return true;
+}
+
+SolidResult draftFaces(const TopoDS_Shape& solid,
+                       const std::vector<TopoDS_Shape>& faces, const gp_Dir& pullDir,
+                       const gp_Pln& neutralPlane, double angleDeg)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("draft needs a target solid");
+        return result;
+    }
+    if (faces.empty()) {
+        result.message = QStringLiteral("draft needs at least one face");
+        return result;
+    }
+    const double angleRad = angleDeg * M_PI / 180.0;
+    try {
+        BRepOffsetAPI_DraftAngle op(solid);
+        int added = 0;
+        for (const TopoDS_Shape& fShape : faces) {
+            if (fShape.IsNull() || fShape.ShapeType() != TopAbs_FACE)
+                continue;
+            const TopoDS_Face face = TopoDS::Face(fShape);
+            op.Add(face, pullDir, angleRad, neutralPlane);
+            if (!op.AddDone()) {
+                // OCCT rejected this face (e.g. perpendicular to the pull dir);
+                // remove it and skip so the rest can still be drafted.
+                op.Remove(face);
+                continue;
+            }
+            ++added;
+        }
+        if (added == 0) {
+            result.message = QStringLiteral("no valid faces to draft");
+            return result;
+        }
+        op.Build();
+        TopoDS_Shape s;
+        try {
+            s = op.Shape(); // don't trust IsDone(); force build + null-check
+        } catch (const Standard_Failure&) {
+            s.Nullify();
+        }
+        if (!s.IsNull()) {
+            result.ok = true;
+            result.shape = s;
+            return result;
+        }
+    } catch (const Standard_Failure&) {
+        // OCCT throws on infeasible angles; fall through to the message.
+    }
+    result.message =
+        QStringLiteral("draft failed — angle too large for this geometry?");
+    return result;
+}
+
+SolidResult draftBoxSides(const TopoDS_Shape& solid, const gp_Dir& pullDir,
+                          const gp_Pln& neutralPlane, double angleDeg)
+{
+    SolidResult result;
+    if (solid.IsNull()) {
+        result.message = QStringLiteral("draft needs a target solid");
+        return result;
+    }
+    // Side faces = those whose outward normal is perpendicular to the pull
+    // direction (top/bottom caps are parallel/antiparallel and get skipped).
+    std::vector<TopoDS_Shape> sideFaces;
+    for (TopExp_Explorer exp(solid, TopAbs_FACE); exp.More(); exp.Next()) {
+        const TopoDS_Face f = TopoDS::Face(exp.Current());
+        gp_Dir n;
+        if (!faceOutwardNormal(f, n))
+            continue;
+        if (std::abs(n.Dot(pullDir)) < 1e-4)
+            sideFaces.push_back(f);
+    }
+    if (sideFaces.empty()) {
+        result.message = QStringLiteral("no side faces perpendicular to the pull direction");
+        return result;
+    }
+    return draftFaces(solid, sideFaces, pullDir, neutralPlane, angleDeg);
 }
 
 SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
