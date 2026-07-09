@@ -93,8 +93,7 @@ MainWindow::MainWindow()
     connect(m_assemblyPanel, &AssemblyPanel::selectionChanged, this, [this] {
         m_canvas->markDocumentDirty();
         m_propsPanel->refresh(); // show the selected solid's properties
-        if (m_occtView && m_viewStack->currentWidget() == m_occtView)
-            m_occtView->refreshFrom(*m_doc); // re-applies the orange highlight
+        sync3DView();            // cheap highlight sync (rebuild only if dirty)
     });
     // Panel actions (Combine, Move…) run through the shared processor, exactly
     // as if typed — undo, messages and view refresh come from the same path.
@@ -106,8 +105,7 @@ MainWindow::MainWindow()
                     m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
                 refreshPromptAndMessages();
                 m_canvas->markDocumentDirty();
-                if (m_occtView && m_viewStack->currentWidget() == m_occtView)
-                    m_occtView->refreshFrom(*m_doc);
+                sync3DView();
                 m_assemblyPanel->refresh();
             });
 
@@ -294,9 +292,9 @@ MainWindow::MainWindow()
     });
     connect(m_propsPanel, &PropertiesPanel::propertiesApplied, this, [this] {
         m_canvas->markDocumentDirty();
-        // Colour / transparency edits must reflect in the 3D view too.
-        if (m_occtView && m_viewStack->currentWidget() == m_occtView)
-            m_occtView->refreshFrom(*m_doc);
+        // Colour / transparency / feature edits must reflect in the 3D view
+        // too (they change the document, so this is a real rebuild).
+        sync3DView();
     });
     connect(m_propsPanel, &PropertiesPanel::feedback, this,
             [this](const QString& msg) { m_commandBar->appendHistory(msg); });
@@ -581,6 +579,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_propsPanel->attach(m_doc.get(), &m_selection);
     m_assemblyPanel->attach(m_doc.get(), &m_selection);
     m_doc->addChangeListener([this] {
+        m_docDirty3d = true; // the 3D scene needs a real rebuild on next sync
         m_layerPanel->refresh();
         m_assemblyPanel->refresh();
     });
@@ -627,9 +626,21 @@ void MainWindow::onCommandEntered(const QString& line)
     refreshPromptAndMessages();
     m_canvas->markDocumentDirty(); // typed points can land mid-transaction too
     // Typed 3D commands (HOLE, SHELL, PATTERN3D…) must show up without having
-    // to toggle the view off and on again.
-    if (m_occtView && m_viewStack->currentWidget() == m_occtView)
+    // to toggle the view off and on again — but only rebuild if they actually
+    // changed the document.
+    sync3DView();
+}
+
+void MainWindow::sync3DView()
+{
+    if (!m_occtView || m_viewStack->currentWidget() != m_occtView)
+        return;
+    if (m_docDirty3d) {
+        m_docDirty3d = false;
         m_occtView->refreshFrom(*m_doc);
+    } else {
+        m_occtView->syncHighlight();
+    }
 }
 
 void MainWindow::onInteraction()
@@ -640,7 +651,7 @@ void MainWindow::onInteraction()
     // click): keep the 3D view in sync when it is the active view, and light
     // up the selected solid's row in the Assembly tree.
     if (m_occtView && m_viewStack->currentWidget() == m_occtView) {
-        m_occtView->refreshFrom(*m_doc);
+        sync3DView();
         m_assemblyPanel->refresh();
     }
 }

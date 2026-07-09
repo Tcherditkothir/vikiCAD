@@ -40,6 +40,11 @@ OcctViewWidget::OcctViewWidget(QWidget* parent)
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    // Define an explicit cursor on this NATIVE window: with no cursor of its
+    // own, X falls back to an inherited one, and a busy moment can leave the
+    // pointer invisible over the GL surface. A crosshair also reads as
+    // "placement" (Fusion-like).
+    setCursor(Qt::CrossCursor);
 }
 
 void OcctViewWidget::initViewer()
@@ -143,6 +148,18 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         m_view->FitAll(0.1, false);
         m_fittedOnce = true;
     }
+    m_view->Redraw();
+}
+
+void OcctViewWidget::syncHighlight()
+{
+    if (m_context.IsNull() || m_view.IsNull())
+        return;
+    m_context->ClearSelected(false);
+    if (m_selection)
+        for (const auto& pr : m_shapes)
+            if (m_selection->contains(pr.second))
+                m_context->AddOrRemoveSelected(pr.first, false);
     m_view->Redraw();
 }
 
@@ -306,13 +323,19 @@ bool OcctViewWidget::cursorToPlane(const QPoint& physical, Vec2d& uv)
 void OcctViewWidget::updateGhost(const Vec2d& uv)
 {
     if (m_context.IsNull() || !m_processor || !m_processor->hasActiveCommand()) {
+        const bool had = !m_ghost.IsNull();
         clearGhost();
+        if (!had && !m_view.IsNull())
+            m_view->Redraw(); // still flush the hover highlight
         return;
     }
     Preview3d preview;
     if (!m_processor->activeCommand()->preview3d(m_processor->ctx(), uv, preview) ||
         preview.shape.IsNull()) {
+        const bool had = !m_ghost.IsNull();
         clearGhost();
+        if (!had && !m_view.IsNull())
+            m_view->Redraw();
         return;
     }
     if (!m_ghost.IsNull())
@@ -355,14 +378,18 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
         m_view->Pan(p.x() - last.x(), last.y() - p.y());
     } else if (!m_context.IsNull()) {
         // No button: dynamic hover highlight of the face/edge under the cursor.
-        m_context->MoveTo(p.x(), p.y(), m_view, Standard_True);
-        // Command input mode: the 3D cursor feeds the running command with a
-        // live position (pointer hint) and a ghost of the pending result.
-        if (commandWantsPoint()) {
+        // In command-input mode we redraw ONCE ourselves (ghost included) —
+        // two full GL redraws per mouse move made big parts feel frozen.
+        const bool wantPoint = commandWantsPoint();
+        m_context->MoveTo(p.x(), p.y(), m_view,
+                          wantPoint ? Standard_False : Standard_True);
+        if (wantPoint) {
             Vec2d uv;
             if (cursorToPlane(p, uv)) {
                 m_processor->ctx().setPointerHint(uv);
-                updateGhost(uv);
+                updateGhost(uv); // redraws
+            } else {
+                m_view->Redraw(); // flush the MoveTo highlight
             }
         } else if (!m_ghost.IsNull()) {
             clearGhost(); // the command ended some other way

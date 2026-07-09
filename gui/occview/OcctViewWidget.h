@@ -36,8 +36,13 @@ public:
     // whatever the document selection holds.
     void attach(Document* doc, CommandProcessor* processor, SelectionSet* selection);
 
-    // (Re)display every solid in the document and fit the view.
+    // (Re)display every solid in the document and fit the view. EXPENSIVE on
+    // real parts (recomputes every shape's selection structures) — call it
+    // when the DOCUMENT changed, never for a mere selection change.
     void refreshFrom(const Document& doc);
+    // Cheap counterpart: re-apply the orange highlight from the document
+    // selection onto the already-displayed shapes. Call on selection changes.
+    void syncHighlight();
     bool isReady() const { return !m_view.IsNull(); }
     // Dump the 3D framebuffer to an image file (QWidget::grab can't capture
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.

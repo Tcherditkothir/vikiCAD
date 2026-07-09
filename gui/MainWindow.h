@@ -75,6 +75,13 @@ private:
 
     void toggle3D(bool on);
     void setView3D(bool on);  // programmatic switch (keeps the button in sync)
+    // Bring the 3D view up to date CHEAPLY: full scene rebuild only when the
+    // document changed since the last sync (m_docDirty3d, set by the change
+    // listener); a mere selection change just re-applies the highlight.
+    // Rebuilding on every click recomputes every shape's selection structures
+    // and froze the GUI on real STEP parts.
+    void sync3DView();
+    bool m_docDirty3d = false;
     bool documentIsSolidsOnly() const;
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);
     void loadShortcuts();
