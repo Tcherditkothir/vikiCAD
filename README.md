@@ -56,6 +56,24 @@ vikicad-cli connect exec "LINE 0,0 100,0"   # drive the running GUI
 
 All output is single-line JSON: `{"ok":true,"result":{...}}`.
 
+## License
+
+VikiCAD is free software, released under the **GNU General Public License,
+version 3 or (at your option) any later version** (GPLv3-or-later). See
+[LICENSE](LICENSE) for the full text.
+
+The combined work is distributed under GPLv3 because the vendored DXF library
+(libdxfrw) is GPLv2-or-later. Dependency licenses:
+
+| Dependency | License | Linkage |
+|---|---|---|
+| libdxfrw (vendored, patched) | GPL-2.0-or-later | statically linked |
+| OpenCASCADE (OCCT) | LGPL-2.1 with OCCT exception | dynamically linked |
+| Qt 6 | LGPL-3.0 | dynamically linked |
+| SQLite | Public domain | dynamically linked |
+| Catch2 | BSL-1.0 | tests only |
+| LibreDWG (`dwg2dxf`) | GPL-3.0 | external binary invoked at runtime, not linked |
+
 ## Docs
 
 - `docs/DEVLOG.md` — development journal (one entry per milestone).

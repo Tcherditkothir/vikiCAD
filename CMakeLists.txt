@@ -47,3 +47,22 @@ if(VIKICAD_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# --- Installation -----------------------------------------------------------
+include(GNUInstallDirs)
+
+if(VIKICAD_BUILD_GUI)
+    install(TARGETS vikicad
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES packaging/vikicad.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES packaging/vikicad.svg
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+    install(FILES packaging/vikicad.xml
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
+endif()
+
+if(VIKICAD_BUILD_CLI)
+    install(TARGETS vikicad-cli
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()

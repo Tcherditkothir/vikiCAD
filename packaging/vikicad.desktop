@@ -2,8 +2,9 @@
 Type=Application
 Name=VikiCAD
 GenericName=CAD 2D/3D
-Comment=Dessin technique 2D et solides 3D
-Exec=/home/lex/.local/bin/vikicad %f
+Comment=2D drafting and 3D solid CAD
+Comment[fr]=Dessin technique 2D et solides 3D
+Exec=vikicad %f
 Icon=vikicad
 Terminal=false
 Categories=Graphics;Engineering;

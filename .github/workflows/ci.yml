@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build \
+            qt6-base-dev \
+            libocct-foundation-dev libocct-modeling-algorithms-dev \
+            libocct-modeling-data-dev libocct-data-exchange-dev \
+            libocct-visualization-dev libocct-ocaf-dev \
+            catch2 libzstd-dev libsqlite3-dev
+
+      - name: Configure
+        run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/ci -j"$(nproc)"
+
+      - name: Run tests
+        run: ./build/ci/tests/vikicad-tests
