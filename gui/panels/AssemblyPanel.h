@@ -32,6 +32,9 @@ signals:
     void commandRequested(const QString& line);
     // A feature row (hole/shell/…) was selected in the tree.
     void featureFocused(EntityId solid, int nodeIndex);
+    // One-line user feedback (e.g. why a context-menu action was refused);
+    // routed to the command bar history by the host.
+    void feedback(const QString& message);
 
 private:
     void syncSelectionFromTree();

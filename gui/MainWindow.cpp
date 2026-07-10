@@ -101,6 +101,10 @@ MainWindow::MainWindow()
             [this](EntityId, int nodeIndex) {
                 m_propsPanel->focusFeature(nodeIndex);
             });
+    // Every refused panel action gets a one-liner in the history — no silent
+    // failures (same contract as PropertiesPanel::feedback).
+    connect(m_assemblyPanel, &AssemblyPanel::feedback, this,
+            [this](const QString& msg) { m_commandBar->appendHistory(msg); });
     // Panel actions (Combine, Move…) run through the shared processor, exactly
     // as if typed — undo, messages and view refresh come from the same path.
     connect(m_assemblyPanel, &AssemblyPanel::commandRequested, this,
@@ -423,12 +427,20 @@ void MainWindow::toggle3D(bool on)
                     });
             connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
                     &MainWindow::beginSketchOnFace);
+            // Refused context-menu actions explain themselves in the history.
+            connect(m_occtView, &OcctViewWidget::feedback, this,
+                    [this](const QString& msg) {
+                        m_commandBar->appendHistory(msg);
+                    });
             connect(m_occtView, &OcctViewWidget::pushPullFace, this,
                     [this](EntityId id, double dist) {
                         const auto* solid =
                             dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-                        if (!solid)
+                        if (!solid) {
+                            m_commandBar->appendHistory(QStringLiteral(
+                                "! push/pull: the picked solid no longer exists"));
                             return;
+                        }
                         const auto res = solidops::pushPullFace(
                             solid->shape(), m_occtView->pickedFace(), dist);
                         if (!res.ok) {
@@ -461,8 +473,11 @@ void MainWindow::toggle3D(bool on)
                 const EntityId id = m_occtView->pickedSolid();
                 const auto* solid =
                     dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-                if (!solid)
+                if (!solid) {
+                    m_commandBar->appendHistory(QStringLiteral(
+                        "! split: the picked solid no longer exists"));
                     return;
+                }
                 // Planar face -> split by its (infinite) plane. CURVED face ->
                 // try the face itself as the splitting tool: it works wherever
                 // the surface actually crosses the solid, and we only report
@@ -537,8 +552,11 @@ void MainWindow::toggle3D(bool on)
                     [this, replaceShape](EntityId id, double radius) {
                         const auto* s =
                             dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-                        if (!s)
+                        if (!s) {
+                            m_commandBar->appendHistory(QStringLiteral(
+                                "! fillet: the picked solid no longer exists"));
                             return;
+                        }
                         replaceShape(
                             id,
                             solidops::filletEdges(s->shape(),
@@ -552,8 +570,11 @@ void MainWindow::toggle3D(bool on)
                     [this, replaceShape](EntityId id, double dist) {
                         const auto* s =
                             dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-                        if (!s)
+                        if (!s) {
+                            m_commandBar->appendHistory(QStringLiteral(
+                                "! chamfer: the picked solid no longer exists"));
                             return;
+                        }
                         replaceShape(
                             id,
                             solidops::chamferEdges(s->shape(),
@@ -567,8 +588,11 @@ void MainWindow::toggle3D(bool on)
                     [this, replaceShape](EntityId id, double thickness) {
                         const auto* s =
                             dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-                        if (!s)
+                        if (!s) {
+                            m_commandBar->appendHistory(QStringLiteral(
+                                "! shell: the picked solid no longer exists"));
                             return;
+                        }
                         replaceShape(
                             id,
                             solidops::shellSolid(s->shape(), thickness,
@@ -820,8 +844,13 @@ void MainWindow::loadShortcuts()
             file.write(QJsonDocument(defaults).toJson(QJsonDocument::Indented));
         file.close();
     }
-    if (!file.open(QIODevice::ReadOnly))
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_commandBar->appendHistory(
+            QStringLiteral("! shortcuts: cannot read %1 — custom shortcuts "
+                           "not loaded")
+                .arg(path));
         return;
+    }
     // Rebuildable: Preferences edits drop the old bindings and re-run this.
     for (QShortcut* sc : m_userShortcuts)
         sc->deleteLater();
@@ -1288,8 +1317,11 @@ void MainWindow::editEntity(EntityId id)
     if (!m_doc)
         return;
     Entity* probe = m_doc->entity(id);
-    if (!probe)
+    if (!probe) {
+        m_commandBar->appendHistory(QStringLiteral(
+            "! edit: entity %1 no longer exists").arg(qlonglong(id)));
         return;
+    }
     // Only text has a bespoke editor; other types fall back to the panel.
     QJsonObject full = probe->toJson();
     if (full[QStringLiteral("type")].toString() != QLatin1String("text")) {

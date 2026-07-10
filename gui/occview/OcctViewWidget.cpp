@@ -805,15 +805,18 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
             QLineEdit::Normal,
             QStringLiteral("%1, %2").arg(cur.x).arg(cur.y), &ok);
         if (!ok)
-            return;
+            return; // user cancelled
         const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
-        if (parts.size() != 2)
-            return;
         bool okx = false, oky = false;
-        const double cx = parts[0].trimmed().toDouble(&okx);
-        const double cy = parts[1].trimmed().toDouble(&oky);
-        if (okx && oky)
-            emit moveHoleRequested(m_pickedSolid, holeNode, cx, cy);
+        const double cx = parts.value(0).trimmed().toDouble(&okx);
+        const double cy = parts.value(1).trimmed().toDouble(&oky);
+        if (parts.size() != 2 || !okx || !oky) {
+            emit feedback(QStringLiteral(
+                              "! move hole: expected two numbers \"x, y\" — got \"%1\"")
+                              .arg(text));
+            return;
+        }
+        emit moveHoleRequested(m_pickedSolid, holeNode, cx, cy);
         return;
     }
     if (holeNode >= 0 && chosen == diaHole && tree) {
@@ -831,20 +834,24 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
             QStringLiteral("Displacement dx, dy, dz (mm):"), QLineEdit::Normal,
             QStringLiteral("0, 0, 0"), &ok);
         if (!ok)
-            return;
+            return; // user cancelled
         const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
-        if (parts.size() != 3)
-            return;
         bool okx = false, oky = false, okz = false;
-        const double dx = parts[0].trimmed().toDouble(&okx);
-        const double dy = parts[1].trimmed().toDouble(&oky);
-        const double dz = parts[2].trimmed().toDouble(&okz);
-        if (okx && oky && okz)
-            emit commandRequested(QStringLiteral("MOVE3D %1 %2 %3 %4")
-                                      .arg(dx)
-                                      .arg(dy)
-                                      .arg(dz)
-                                      .arg(qlonglong(m_pickedSolid)));
+        const double dx = parts.value(0).trimmed().toDouble(&okx);
+        const double dy = parts.value(1).trimmed().toDouble(&oky);
+        const double dz = parts.value(2).trimmed().toDouble(&okz);
+        if (parts.size() != 3 || !okx || !oky || !okz) {
+            emit feedback(
+                QStringLiteral(
+                    "! move solid: expected three numbers \"dx, dy, dz\" — got \"%1\"")
+                    .arg(text));
+            return;
+        }
+        emit commandRequested(QStringLiteral("MOVE3D %1 %2 %3 %4")
+                                  .arg(dx)
+                                  .arg(dy)
+                                  .arg(dz)
+                                  .arg(qlonglong(m_pickedSolid)));
         return;
     }
     if (chosen == mvPts) {
@@ -860,6 +867,9 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
             -1.0e6, 1.0e6, 3, &ok);
         if (ok && std::fabs(d) > 1e-9)
             emit pushPullFace(m_pickedSolid, d);
+        else if (ok)
+            emit feedback(
+                QStringLiteral("push/pull: distance 0 — nothing to do"));
     } else if (chosen && chosen == sk) {
         emit sketchOnFace();
     } else if (chosen && chosen == sp) {

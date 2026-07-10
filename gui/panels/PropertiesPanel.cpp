@@ -199,15 +199,21 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
     }
     const EntityId id = m_selection->ids().front();
     Entity* probe = m_doc->entity(id);
-    if (!probe)
+    if (!probe) {
+        emit feedback(
+            QStringLiteral("property edit ignored: the entity no longer exists"));
         return;
+    }
     const QString key = m_geomTable->item(row, 0)->text();
     const QString text = m_geomTable->item(row, 1)->text().trimmed();
 
     QJsonObject full = probe->toJson();
     QJsonObject geom = full[QStringLiteral("geom")].toObject();
-    if (!geom.contains(key))
+    if (!geom.contains(key)) {
+        emit feedback(QStringLiteral("'%1' is not an editable property").arg(key));
+        rebuildGeometryTable(); // revert display
         return;
+    }
     const QJsonValue old = geom[key];
     QJsonValue next = old;
     bool ok = false;
@@ -237,6 +243,10 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
         }
     }
     if (!ok) {
+        emit feedback(QStringLiteral("%1: \"%2\" is not a valid value — edit "
+                                     "reverted")
+                          .arg(key)
+                          .arg(text));
         rebuildGeometryTable(); // revert display
         return;
     }
@@ -279,6 +289,9 @@ void PropertiesPanel::applyFeatureEdit(int paramIndex)
     // No positivity check here: centre coordinates are legitimately signed.
     // featureparams::set enforces per-parameter validity (lengths > 0).
     if (!numOk) {
+        emit feedback(QStringLiteral("%1: \"%2\" is not a number — edit reverted")
+                          .arg(p.label)
+                          .arg(text));
         rebuildGeometryTable(); // revert display
         return;
     }
@@ -350,13 +363,20 @@ void PropertiesPanel::applyOriginEdit(int axis)
     bool numOk = false;
     const double target = text.toDouble(&numOk);
     if (!numOk) {
+        emit feedback(
+            QStringLiteral("origin %1: \"%2\" is not a number — edit reverted")
+                .arg(QChar(u"XYZ"[axis]))
+                .arg(text));
         rebuildGeometryTable(); // revert display
         return;
     }
     const EntityId id = m_selection->ids().front();
     const auto* probe = dynamic_cast<const SolidEntity*>(m_doc->entity(id));
-    if (!probe)
+    if (!probe) {
+        emit feedback(QStringLiteral(
+            "origin edit ignored: the selected entity is not a solid"));
         return;
+    }
     const double current = axis == 0   ? probe->bounds().min.x
                            : axis == 1 ? probe->bounds().min.y
                                        : probe->zMin();

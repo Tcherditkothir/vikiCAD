@@ -102,6 +102,9 @@ signals:
     // Right-click on a bore wall: edit THAT hole (parametric, undoable).
     void moveHoleRequested(EntityId solid, int nodeIndex, double cx, double cy);
     void holeDiameterRequested(EntityId solid, int nodeIndex, double diameter);
+    // One-line user feedback (e.g. why a context-menu action was refused);
+    // routed to the command bar history by the host.
+    void feedback(const QString& message);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;

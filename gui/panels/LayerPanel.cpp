@@ -107,10 +107,17 @@ void LayerPanel::addLayerClicked()
 {
     if (!m_doc)
         return;
+    bool ok = false;
     const QString name = QInputDialog::getText(this, QStringLiteral("New layer"),
-                                               QStringLiteral("Layer name:"));
-    if (name.trimmed().isEmpty())
+                                               QStringLiteral("Layer name:"),
+                                               QLineEdit::Normal, {}, &ok);
+    if (!ok)
+        return; // user cancelled
+    if (name.trimmed().isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("No name"),
+                                 QStringLiteral("Layer name cannot be empty."));
         return;
+    }
     if (m_doc->layerByName(name)) {
         QMessageBox::information(this, QStringLiteral("Layer exists"),
                                  QStringLiteral("A layer named '%1' already exists.").arg(name));
@@ -126,8 +133,12 @@ void LayerPanel::removeLayerClicked()
     if (!m_doc)
         return;
     const int row = m_table->currentRow();
-    if (row < 0)
+    if (row < 0) {
+        QMessageBox::information(
+            this, QStringLiteral("No layer selected"),
+            QStringLiteral("Click a layer in the list first, then −."));
         return;
+    }
     const LayerId id = m_table->item(row, ColCurrent)->data(Qt::UserRole).toLongLong();
     if (!m_doc->removeLayer(id)) {
         QMessageBox::information(
@@ -183,9 +194,22 @@ void LayerPanel::cellChanged(int row, int column)
         emit layersChanged();
     } else if (column == ColName && id != 0) {
         const QString newName = m_table->item(row, ColName)->text().trimmed();
-        if (!newName.isEmpty() && !m_doc->layerByName(newName))
+        if (newName == l->name) {
+            refresh(); // no-op rename (or whitespace trim): just redisplay
+        } else if (newName.isEmpty()) {
+            refresh(); // revert display BEFORE the modal box re-fires signals
+            QMessageBox::information(
+                this, QStringLiteral("Rename cancelled"),
+                QStringLiteral("Layer name cannot be empty."));
+        } else if (m_doc->layerByName(newName)) {
+            refresh();
+            QMessageBox::information(
+                this, QStringLiteral("Rename cancelled"),
+                QStringLiteral("A layer named '%1' already exists.").arg(newName));
+        } else {
             l->name = newName;
-        refresh();
+            refresh();
+        }
         emit layersChanged();
     }
 }

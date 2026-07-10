@@ -102,7 +102,11 @@ public:
 private:
     static long long key(long x, long y)
     {
-        return (static_cast<long long>(x) << 32) ^ (static_cast<long long>(y) & 0xffffffffLL);
+        // Shift in the unsigned domain: left-shifting a negative signed value
+        // is undefined behavior (caught by UBSan for cells at x < 0).
+        const auto ux = static_cast<unsigned long long>(static_cast<long long>(x));
+        const auto uy = static_cast<unsigned long long>(static_cast<long long>(y));
+        return static_cast<long long>((ux << 32) ^ (uy & 0xffffffffULL));
     }
     double m_tol;
     double m_cell;
