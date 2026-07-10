@@ -842,3 +842,19 @@ TEST_CASE("booleanOp refuses to return an empty (no-solid) result",
     const auto none = solidops::booleanOp(small, far, solidops::BoolOp::Intersect);
     CHECK_FALSE(none.ok);
 }
+
+TEST_CASE("negative EXTRUDE height goes downward — a hole needs Cut mode",
+          "[m7][extrude][semantics]")
+{
+    // Lex asked: "une extrusion négative génère bien un trou ?" — NO: it
+    // extrudes the other way (material below the plane). Cutting material out
+    // of an existing solid is EXTRUDE <h> Cut <target> (or HOLE).
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 10,10")));
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE -10 1")));
+    const SolidEntity* down = firstSolid(rig.doc);
+    REQUIRE(down);
+    CHECK(volumeOf(down->shape()) == Approx(1000.0).epsilon(1e-6));
+    CHECK(down->zMin() == Approx(-10.0).margin(1e-6));
+    CHECK(down->zMax() == Approx(0.0).margin(1e-6));
+}

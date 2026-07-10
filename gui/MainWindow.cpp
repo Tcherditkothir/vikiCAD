@@ -441,6 +441,57 @@ void MainWindow::toggle3D(bool on)
                                 "! push/pull: the picked solid no longer exists"));
                             return;
                         }
+                        // Push/pull ON A BORE WALL resizes the hole (Fusion
+                        // semantics): pushing outward (+) enlarges the
+                        // diameter by 2×distance, pulling inward shrinks it.
+                        if (solid->features) {
+                            const int node = featureForFace(
+                                *solid->features, m_occtView->pickedFace());
+                            if (node >= 0) {
+                                const double old =
+                                    solid->features->nodeAt(node).diameter;
+                                const double next = old + 2.0 * dist;
+                                if (next <= 0.01) {
+                                    m_commandBar->appendHistory(QStringLiteral(
+                                        "! push/pull: that would close the "
+                                        "hole (diameter %1 → %2)")
+                                        .arg(old).arg(next));
+                                    return;
+                                }
+                                TransactionScope scope(
+                                    *m_doc, QStringLiteral("HOLE RADIUS"));
+                                bool ok = false;
+                                try {
+                                    if (auto* s = dynamic_cast<SolidEntity*>(
+                                            m_doc->beginModify(id))) {
+                                        ok = featureparams::set(
+                                                 *s->features, node,
+                                                 QStringLiteral("diameter"),
+                                                 next) &&
+                                             s->regenerateFeatures();
+                                        m_doc->endModify(id);
+                                    }
+                                    if (ok)
+                                        scope.commit();
+                                    else
+                                        scope.rollback();
+                                } catch (const std::exception&) {
+                                    scope.rollback();
+                                }
+                                m_commandBar->appendHistory(
+                                    ok ? QStringLiteral(
+                                             "Hole %1: diameter %2 → %3")
+                                             .arg(node).arg(old).arg(next)
+                                       : QStringLiteral(
+                                             "! push/pull: hole regeneration "
+                                             "failed"));
+                                if (ok) {
+                                    sync3DView();
+                                    m_propsPanel->refresh();
+                                }
+                                return;
+                            }
+                        }
                         const auto res = solidops::pushPullFace(
                             solid->shape(), m_occtView->pickedFace(), dist);
                         if (!res.ok) {

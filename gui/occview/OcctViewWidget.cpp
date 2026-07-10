@@ -746,6 +746,16 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
 
 void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
 {
+    // Scene rebuilds (after push/pull, undo…) clear the pick state, which
+    // used to make right-click dead until the user left-clicked again. Fusion
+    // semantics instead: right-click acts on WHAT IS UNDER THE CURSOR — pick
+    // it now if nothing is currently picked (a Ctrl-accumulated multi-pick is
+    // kept as-is).
+    if (m_pickedSolid == kInvalidEntityId && !m_view.IsNull() &&
+        !m_context.IsNull()) {
+        const QPoint p = devicePos(event->pos());
+        pickAtPhysical(p.x(), p.y());
+    }
     if (m_pickedSolid == kInvalidEntityId) {
         QWidget::contextMenuEvent(event);
         return;
