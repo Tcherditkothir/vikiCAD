@@ -35,6 +35,11 @@ struct WireResult {
 WireResult wiresFromEntities(const Document& doc, const std::vector<EntityId>& ids,
                              const WorkPlane& plane);
 
+// Invariant (enforced by every producer in SolidOps.cpp via requireSolid):
+// ok is NEVER true unless `shape` contains at least one TopAbs_SOLID. The
+// only exception is loftProfiles(..., solid=false), whose expected result is
+// a shell. Degenerate outputs (empty compound, bare face/shell) come back as
+// ok=false with a message — the "part vanished" class of bug.
 struct SolidResult {
     bool ok = false;
     QString message;

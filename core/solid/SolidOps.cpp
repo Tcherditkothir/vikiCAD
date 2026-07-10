@@ -74,6 +74,44 @@ gp_Pnt to3d(const Vec2d& p, const WorkPlane& plane)
     return plane.origin.Translated(x * p.x + y * p.y);
 }
 
+// Material volume of a shape (sum over its solids), mm³. 0 for null shapes.
+double shapeVolume(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull())
+        return 0.0;
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(shape, props);
+    return props.Mass();
+}
+
+// The one gate every SolidResult producer must pass: NEVER report ok=true
+// with a shape that contains no real material. OCCT builders happily
+// "succeed" with an empty compound, a face or a shell (degenerate profile,
+// infeasible parameters, everything cut away…), and committing that made
+// whole parts vanish in the field — irrecoverably, because it looked like a
+// success. Two checks: the shape must contain at least one TopAbs_SOLID, and
+// the enclosed volume must be positive (a zero-area profile revolved 360°
+// yields a formal "solid" with zero volume — garbage all the same).
+// Fills `result` either way: ok=true with `shape` on success, else ok=false
+// with `noSolidMessage` and a null shape. Returns result.ok.
+bool requireSolid(SolidResult& result, const TopoDS_Shape& shape,
+                  const QString& noSolidMessage)
+{
+    if (!shape.IsNull()) {
+        TopExp_Explorer solids(shape, TopAbs_SOLID);
+        if (solids.More() && shapeVolume(shape) > 1e-12) {
+            result.ok = true;
+            result.shape = shape;
+            result.message.clear();
+            return true;
+        }
+    }
+    result.ok = false;
+    result.shape = TopoDS_Shape();
+    result.message = noSolidMessage;
+    return false;
+}
+
 // Segment/arc pieces of a profile, oriented a -> b.
 struct ProfilePiece {
     Vec2d a, b;
@@ -380,8 +418,9 @@ SolidResult prismFromWires(const std::vector<TopoDS_Wire>& wires, const gp_Vec& 
             acc = fuse.Shape();
         }
     }
-    result.ok = true;
-    result.shape = acc;
+    requireSolid(result, acc,
+                 QStringLiteral("extrusion produced no solid (degenerate "
+                                "profile?)"));
     return result;
 }
 
@@ -450,36 +489,50 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
         result.message = QStringLiteral("degenerate revolution axis");
         return result;
     }
+    if (nearZero(angle)) {
+        result.message = QStringLiteral("revolution angle must be non-zero");
+        return result;
+    }
     const Vec2d dir = (axisB - axisA).normalized();
     // Map the in-plane 2D axis direction to 3D through the work-plane frame.
     const gp_Vec ax3 = gp_Vec(plane.xDir) * dir.x +
                        gp_Vec(plane.normal.Crossed(plane.xDir)) * dir.y;
     const gp_Ax1 axis(to3d(axisA, plane), gp_Dir(ax3));
     TopoDS_Shape acc;
-    for (const TopoDS_Wire& wire : wires) {
-        BRepBuilderAPI_MakeFace face(wire);
-        if (!face.IsDone()) {
-            result.message = QStringLiteral("profile wire does not bound a face");
-            return result;
-        }
-        BRepPrimAPI_MakeRevol revol(face.Face(), axis, angle);
-        if (!revol.IsDone()) {
-            result.message = QStringLiteral("revolution failed (profile crossing the axis?)");
-            return result;
-        }
-        if (acc.IsNull()) {
-            acc = revol.Shape();
-        } else {
-            BRepAlgoAPI_Fuse fuse(acc, revol.Shape());
-            if (!fuse.IsDone()) {
-                result.message = QStringLiteral("fusing profiles failed");
+    try {
+        for (const TopoDS_Wire& wire : wires) {
+            BRepBuilderAPI_MakeFace face(wire);
+            if (!face.IsDone()) {
+                result.message = QStringLiteral("profile wire does not bound a face");
                 return result;
             }
-            acc = fuse.Shape();
+            BRepPrimAPI_MakeRevol revol(face.Face(), axis, angle);
+            if (!revol.IsDone()) {
+                result.message =
+                    QStringLiteral("revolution failed (profile crossing the axis?)");
+                return result;
+            }
+            if (acc.IsNull()) {
+                acc = revol.Shape();
+            } else {
+                BRepAlgoAPI_Fuse fuse(acc, revol.Shape());
+                if (!fuse.IsDone()) {
+                    result.message = QStringLiteral("fusing profiles failed");
+                    return result;
+                }
+                acc = fuse.Shape();
+            }
         }
+    } catch (const Standard_Failure& e) {
+        // OCCT throws (not Standard_Failure-free) on degenerate inputs, e.g. a
+        // zero sweep angle; a producer must never leak that to callers.
+        result.message = QStringLiteral("revolution failed: %1")
+                             .arg(QString::fromUtf8(e.GetMessageString()));
+        return result;
     }
-    result.ok = true;
-    result.shape = acc;
+    requireSolid(result, acc,
+                 QStringLiteral("revolution produced no solid (zero-area "
+                                "profile or zero angle?)"));
     return result;
 }
 
@@ -580,8 +633,9 @@ SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
             return result;
         }
     }
-    result.ok = true;
-    result.shape = acc;
+    requireSolid(result, acc,
+                 QStringLiteral("sweep produced no solid (degenerate profile "
+                                "or path?)"));
     return result;
 }
 
@@ -606,8 +660,15 @@ SolidResult loftProfiles(const std::vector<TopoDS_Wire>& sections, bool solid)
             result.message = QStringLiteral("loft failed");
             return result;
         }
-        result.ok = true;
-        result.shape = gen.Shape();
+        if (solid) {
+            requireSolid(result, gen.Shape(),
+                         QStringLiteral("loft produced no solid (degenerate "
+                                        "or coincident sections?)"));
+        } else {
+            // Surface loft: a shell is the EXPECTED result, no solid required.
+            result.ok = true;
+            result.shape = gen.Shape();
+        }
     } catch (const Standard_Failure& e) {
         result.message =
             QStringLiteral("loft failed: %1").arg(QString::fromUtf8(e.GetMessageString()));
@@ -650,19 +711,9 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
     // A boolean that leaves NO solid is a failure, not a success: committing
     // an empty compound made whole parts vanish (and looked like a bug you
     // could not undo). Cutting everything away is reported the same way.
-    bool hasSolid = false;
-    for (TopExp_Explorer e(out, TopAbs_SOLID); e.More(); e.Next()) {
-        hasSolid = true;
-        break;
-    }
-    if (!hasSolid) {
-        result.message =
-            QStringLiteral("boolean produced no solid (everything was cut "
-                           "away or the shapes did not intersect)");
-        return result;
-    }
-    result.ok = true;
-    result.shape = out;
+    requireSolid(result, out,
+                 QStringLiteral("boolean produced no solid (everything was "
+                                "cut away or the shapes did not intersect)"));
     return result;
 }
 
@@ -688,6 +739,9 @@ std::vector<TopoDS_Shape> splitSolid(const TopoDS_Shape& solid,
         }
         if (out.IsNull())
             return pieces;
+        // Only TopAbs_SOLID children are returned — a split that yields faces
+        // or an empty compound reports zero pieces, never garbage shapes
+        // (callers treat < 2 pieces as "the tool missed the solid").
         for (TopExp_Explorer exp(out, TopAbs_SOLID); exp.More(); exp.Next())
             pieces.push_back(exp.Current());
     } catch (const Standard_Failure&) {
@@ -785,8 +839,9 @@ SolidResult filletEdges(const TopoDS_Shape& solid,
             s.Nullify();
         }
         if (!s.IsNull()) {
-            result.ok = true;
-            result.shape = s;
+            requireSolid(result, s,
+                         QStringLiteral("fillet produced no solid — radius "
+                                        "too large for this geometry?"));
             return result;
         }
     } catch (const Standard_Failure&) {
@@ -833,8 +888,9 @@ SolidResult chamferEdges(const TopoDS_Shape& solid,
             s.Nullify();
         }
         if (!s.IsNull()) {
-            result.ok = true;
-            result.shape = s;
+            requireSolid(result, s,
+                         QStringLiteral("chamfer produced no solid — distance "
+                                        "too large for this geometry?"));
             return result;
         }
     } catch (const Standard_Failure&) {
@@ -927,8 +983,9 @@ SolidResult draftFaces(const TopoDS_Shape& solid,
             s.Nullify();
         }
         if (!s.IsNull()) {
-            result.ok = true;
-            result.shape = s;
+            requireSolid(result, s,
+                         QStringLiteral("draft produced no solid — angle too "
+                                        "large for this geometry?"));
             return result;
         }
     } catch (const Standard_Failure&) {
@@ -1016,6 +1073,7 @@ SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
                 // With no face removed, MakeThickSolidByJoin returns the inner
                 // offset solid (the cavity), not the wall. The closed shell is
                 // then `solid` minus that cavity, leaving the wall all around.
+                // booleanOp itself refuses to succeed without a TopAbs_SOLID.
                 const auto cut = booleanOp(solid, s, BoolOp::Subtract);
                 if (cut.ok && !cut.shape.IsNull()) {
                     result.ok = true;
@@ -1023,9 +1081,25 @@ SolidResult shellSolid(const TopoDS_Shape& solid, double thickness,
                     return result;
                 }
             } else {
-                // A removed face produces the proper open shell directly.
-                result.ok = true;
-                result.shape = s;
+                // A removed face produces the open shell directly — which is
+                // still a TopoDS_SOLID (a wall with a cavity), so the guard
+                // applies: an empty/shell-only result means the offset failed.
+                if (!requireSolid(result,
+                                  s,
+                                  QStringLiteral("shell produced no solid — "
+                                                 "thickness too large for this "
+                                                 "geometry?")))
+                    return result;
+                // A shell must REMOVE material. On an infeasible thickness
+                // MakeThickSolidByJoin can hand the input solid back untouched
+                // (a silent no-op "success") — refuse that too.
+                if (shapeVolume(result.shape) > shapeVolume(solid) - 1e-9) {
+                    result.ok = false;
+                    result.shape = TopoDS_Shape();
+                    result.message =
+                        QStringLiteral("shell removed no material — thickness "
+                                       "too large for this geometry?");
+                }
                 return result;
             }
         }
@@ -1158,6 +1232,8 @@ SolidResult makeHole(const TopoDS_Shape& solid, const WorkPlane& plane,
         result.message = QStringLiteral("building the hole cylinder failed");
         return result;
     }
+    // booleanOp carries the no-solid guard: a hole that swallows the whole
+    // part comes back ok=false, never an empty success.
     return booleanOp(solid, tool, BoolOp::Subtract);
 }
 
