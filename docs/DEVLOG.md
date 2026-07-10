@@ -382,3 +382,26 @@ A aussi corrigé au passage la lecture des réponses IPC fragmentées du CLI.
 - Chasse aux échecs silencieux : chaque action refusée dit pourquoi (9b4ecd7).
 
 **État : 1620 assertions / 210 cas verts + gui-smoke 40/40.**
+
+## 2026-07-10 (suite) — Push/pull de trou, clic droit, onglets, SKETCHES v1
+
+- **Push/pull sur paroi de trou = rayon** (sémantique Fusion) via FeatureTree,
+  refus si ça fermerait le trou. **Clic droit** picke désormais ce qui est
+  sous le curseur (l'état de pick vidé par les rebuilds le rendait muet).
+  Test-vérité : EXTRUDE négatif = extrusion vers le bas, PAS un trou (Cut/HOLE
+  pour ça).
+- **Onglets** : bandeau d'outils à onglets Draw/Modify/Annotate/Measure/
+  Blocks/Solids/Views (une rangée, fini le foutoir sur 3 lignes) ; panneaux
+  Layers/Properties/Assembly tabifiés à droite (9811b4f).
+- **SKETCHES v1** (9168b0c) — la spec de Lex, à la lettre : sketch = objet
+  léger {nom, plan, entités}, registre persisté dans le .vkd ; commande
+  SKETCH New/Open/Close/List ; sketch-sur-face auto-capturé ; groupe
+  « Sketches » dans le browser (ouvrir/renommer/supprimer, sélection =
+  entités surlignées) ; étiquette de sketch ouvert dans la barre d'état ;
+  **les profils d'un sketch SURVIVENT à l'extrusion** (réutilisables — le
+  smoke extrude deux fois le même profil), les dessins hors sketch sont
+  consommés comme avant ; **AUCUNE dépendance solide→sketch** (éditer un
+  sketch ne régénère jamais un solide existant — décision de conception
+  explicite de Lex, gravée ici).
+- État : **1703 assertions / 217 cas + gui-smoke 55/55** (scénario sketch
+  inclus), vérifié indépendamment après le workflow.
