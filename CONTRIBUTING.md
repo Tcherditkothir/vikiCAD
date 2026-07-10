@@ -39,6 +39,22 @@ The suite is Catch2. Run it after every change; it must stay all-green:
 New test files go in `tests/` and must be registered in
 `tests/CMakeLists.txt`.
 
+### Live-GUI smoke test
+
+Beyond the unit suite, `scripts/gui-smoke.sh` drives the REAL GUI headlessly
+(systemd user unit + IPC socket) through a 2D + 3D scenario — RECT/CIRCLE/
+MOVE/UNDO/REDO, EXTRUDE/HOLE with screenshot image-hash comparison,
+SPLIT/COMBINE, STL export — asserting entity counts and renders at every
+step. It builds first if needed, prints a PASS/FAIL table, exits non-zero on
+any failure, and always stops the GUI unit when done.
+
+```sh
+./scripts/gui-smoke.sh
+```
+
+Run it (all-green) before handing a build to a user. Dependencies: bash,
+python3 with PIL (`python3-pil`) — both part of the normal dev setup.
+
 ## Code style
 
 - C++17, Qt6 Widgets, OpenCASCADE. Match the surrounding code.

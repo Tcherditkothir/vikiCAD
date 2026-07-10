@@ -397,8 +397,12 @@ int cmdConnect(const QStringList& args)
                           {QStringLiteral("params"), params}};
     socket.write(QJsonDocument(req).toJson(QJsonDocument::Compact) + "\n");
     socket.flush();
-    if (!socket.waitForReadyRead(10000))
-        return emitError(QStringLiteral("E_TIMEOUT"), QStringLiteral("no response"));
+    // Large replies (e.g. query entities with BREP solids) arrive in several
+    // chunks: keep reading until the full newline-terminated line is buffered,
+    // otherwise a partial line parses as an empty JSON object.
+    while (!socket.canReadLine())
+        if (!socket.waitForReadyRead(10000))
+            return emitError(QStringLiteral("E_TIMEOUT"), QStringLiteral("no response"));
     const QJsonObject resp = QJsonDocument::fromJson(socket.readLine()).object();
     if (resp.contains(QStringLiteral("error")))
         return emitError(QStringLiteral("E_RPC"),

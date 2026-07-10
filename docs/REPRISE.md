@@ -3,6 +3,17 @@
 Document de reprise pour continuer les corrections. À lire AVANT toute action,
 avec DEVLOG.md (historique) et LESSONS.md (pièges connus).
 
+## ⚠️ Harnais GUI-live : `scripts/gui-smoke.sh` — À LANCER AVANT DE LIVRER
+
+**Lancer `scripts/gui-smoke.sh` (tout-vert) avant de remettre quoi que ce
+soit à Lex.** Il build si besoin, démarre la VRAIE GUI (unité systemd
+`vikicad-gui`), attend le ping IPC, puis déroule un scénario 2D
+(RECT/CIRCLE/MOVE + UNDO/REDO, compteurs+bounds vérifiés) et 3D (EXTRUDE,
+HOLE avec comparaison de captures par image-hash, UNDO/REDO du rendu,
+SPLIT/COMBINE, export STL avec contrôle d'en-tête). Table PASS/FAIL, code de
+sortie non-zéro au moindre échec, arrêt garanti de l'unité GUI (trap).
+Dépendances : bash + python3-PIL seulement. Détails : CONTRIBUTING.md.
+
 ## ✅ NUIT AUTONOME DU 2026-07-09 — FAITE (21 features, suite 814→1256 assert.)
 
 La nuit autonome est terminée. 3 lots de workflow (`scripts/overnight-workflow
