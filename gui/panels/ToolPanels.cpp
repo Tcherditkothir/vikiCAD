@@ -1,9 +1,10 @@
 #include "ToolPanels.h"
 
+#include <QHBoxLayout>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
-#include <QToolBar>
+#include <QTabWidget>
 #include <QToolButton>
 
 namespace viki {
@@ -115,12 +116,18 @@ const Panel kPanels[] = {
       {"ƒ", "Param", "PARAM", "Define a named parameter for feature expressions"}}},
 };
 
+QString toolTip(const Tool& tool)
+{
+    return QStringLiteral("%1  —  %2").arg(QLatin1String(tool.command),
+                                           QString::fromUtf8(tool.tip));
+}
+
 } // namespace
 
-void buildToolPanels(QMainWindow* window, QMenu* viewMenu,
-                     const std::function<void(const QString&)>& runCommand)
+void buildToolMenus(QMainWindow* window,
+                    const std::function<void(const QString&)>& runCommand)
 {
-    // Full menus mirroring the toolbars: every command reachable from the
+    // Full menus mirroring the tool tabs: every command reachable from the
     // menu bar, hover shows "COMMAND — description" (tooltips enabled).
     QMenuBar* menuBar = window->menuBar();
     for (const Panel& panel : kPanels) {
@@ -130,9 +137,7 @@ void buildToolPanels(QMainWindow* window, QMenu* viewMenu,
             auto* action = menu->addAction(
                 QStringLiteral("%1  %2").arg(QString::fromUtf8(tool.glyph),
                                              QLatin1String(tool.label)));
-            const QString tip = QStringLiteral("%1  —  %2")
-                                    .arg(QLatin1String(tool.command),
-                                         QString::fromUtf8(tool.tip));
+            const QString tip = toolTip(tool);
             action->setToolTip(tip);
             action->setStatusTip(tip);
             const QString command = QLatin1String(tool.command);
@@ -140,29 +145,50 @@ void buildToolPanels(QMainWindow* window, QMenu* viewMenu,
                              [runCommand, command] { runCommand(command); });
         }
     }
+}
 
+QHBoxLayout* addToolTabPage(QTabWidget* tabs, const QString& title)
+{
+    auto* page = new QWidget(tabs);
+    auto* row = new QHBoxLayout(page);
+    row->setContentsMargins(4, 1, 4, 1);
+    row->setSpacing(2);
+    row->addStretch(1); // buttons pack left, stretch soaks the rest
+    tabs->addTab(page, title);
+    return row;
+}
+
+QToolButton* addToolButton(QHBoxLayout* row, const QString& glyph,
+                           const QString& label, const QString& tip)
+{
+    auto* btn = new QToolButton(row->parentWidget());
+    btn->setText(glyph + QLatin1Char('\n') + label);
+    btn->setToolTip(tip);
+    btn->setAutoRaise(true);
+    // Insert before the trailing stretch so buttons stay left-packed.
+    row->insertWidget(row->count() - 1, btn);
+    return btn;
+}
+
+QTabWidget* buildToolTabs(QWidget* parent,
+                          const std::function<void(const QString&)>& runCommand)
+{
+    auto* tabs = new QTabWidget(parent);
+    tabs->setObjectName(QStringLiteral("toolTabs"));
+    tabs->setDocumentMode(true); // compact strip, no page frame
+    tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     for (const Panel& panel : kPanels) {
-        auto* bar = new QToolBar(QLatin1String(panel.title), window);
-        bar->setObjectName(QLatin1String(panel.title));
-        bar->setMovable(true);
-        bar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        QHBoxLayout* row = addToolTabPage(tabs, QLatin1String(panel.title));
         for (const Tool& tool : panel.tools) {
-            auto* btn = new QToolButton(bar);
-            btn->setText(QString::fromUtf8(tool.glyph) + QLatin1Char('\n') +
-                         QLatin1String(tool.label));
-            btn->setToolTip(QStringLiteral("%1  —  %2")
-                                .arg(QLatin1String(tool.command),
-                                     QString::fromUtf8(tool.tip)));
-            btn->setAutoRaise(true);
+            QToolButton* btn =
+                addToolButton(row, QString::fromUtf8(tool.glyph),
+                              QLatin1String(tool.label), toolTip(tool));
             const QString command = QLatin1String(tool.command);
-            QObject::connect(btn, &QToolButton::clicked, window,
+            QObject::connect(btn, &QToolButton::clicked, tabs,
                              [runCommand, command] { runCommand(command); });
-            bar->addWidget(btn);
         }
-        window->addToolBar(Qt::TopToolBarArea, bar);
-        if (viewMenu)
-            viewMenu->addAction(bar->toggleViewAction());
     }
+    return tabs;
 }
 
 } // namespace viki

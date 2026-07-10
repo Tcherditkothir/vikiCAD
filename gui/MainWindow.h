@@ -13,6 +13,7 @@
 class QLabel;
 class QShortcut;
 class QStackedWidget;
+class QTabWidget;
 class QToolBar;
 class QToolButton;
 
@@ -72,7 +73,8 @@ private:
     QLabel* m_coordLabel = nullptr;
     QToolButton* m_unitsBtn = nullptr;
     QToolButton* m_3dButton = nullptr;
-    QToolBar* m_3dViewBar = nullptr; // Top/Front/Right/Iso/Fit/Grid, 3D only
+    QTabWidget* m_toolTabs = nullptr; // Draw/…/Solids/Views tool tab strip
+    int m_viewsTabIndex = -1;         // Views tab: enabled in 3D mode only
     RpcServer* m_rpc = nullptr;
     OcctViewWidget* m_occtView = nullptr;
     QStackedWidget* m_viewStack = nullptr;

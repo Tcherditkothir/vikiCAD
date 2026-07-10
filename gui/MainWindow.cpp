@@ -21,6 +21,8 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QTabWidget>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
 
@@ -92,6 +94,14 @@ MainWindow::MainWindow()
                          QDockWidget::DockWidgetFloatable |
                          QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, asmDock);
+
+    // The three right-side panels stack as TABS of one dock area instead of
+    // piling on top of each other; each can still be floated/closed on its
+    // own. Properties in front by default.
+    tabifyDockWidget(layerDock, propsDock);
+    tabifyDockWidget(propsDock, asmDock);
+    propsDock->raise();
+
     connect(m_assemblyPanel, &AssemblyPanel::selectionChanged, this, [this] {
         m_canvas->markDocumentDirty();
         m_propsPanel->refresh(); // show the selected solid's properties
@@ -194,10 +204,62 @@ MainWindow::MainWindow()
                          [this] { onCommandEntered(QStringLiteral("ZOOM")); });
     menuBar()->addMenu(viewMenu0);
 
-    // Grouped command toolbars (each button = the same command as typing it).
+    // Grouped command menus + the compact tool tab strip above the view
+    // (each button = the same command as typing it). One tab per group
+    // replaces the old stack of wrap-around toolbars.
+    const auto runCommand = [this](const QString& command) {
+        onCommandEntered(command);
+    };
+    buildToolMenus(this, runCommand);
+    m_toolTabs = buildToolTabs(this, runCommand);
+
+    // Views tab: standard camera views + fit + grid for the 3D view (the
+    // ViewCube itself lives inside the OCCT viewport). Greyed out until the
+    // 3D view is active — same reachability as the old "3D views" toolbar.
+    QHBoxLayout* viewsRow = addToolTabPage(m_toolTabs, QStringLiteral("Views"));
+    m_viewsTabIndex = m_toolTabs->count() - 1;
+    const auto addView = [this, viewsRow](const QString& label, const QString& name) {
+        QToolButton* btn = addToolButton(viewsRow, label, QString(),
+                                         QStringLiteral("%1 view").arg(label));
+        btn->setText(label); // single-line: these are view names, not glyphs
+        connect(btn, &QToolButton::clicked, this, [this, name] {
+            if (m_occtView)
+                m_occtView->setStandardView(name);
+        });
+    };
+    addView(QStringLiteral("Top"), QStringLiteral("TOP"));
+    addView(QStringLiteral("Front"), QStringLiteral("FRONT"));
+    addView(QStringLiteral("Right"), QStringLiteral("RIGHT"));
+    addView(QStringLiteral("Iso"), QStringLiteral("ISO"));
+    {
+        QToolButton* fit = addToolButton(viewsRow, QStringLiteral("Fit"),
+                                         QString(), QStringLiteral("Fit all"));
+        fit->setText(QStringLiteral("Fit"));
+        connect(fit, &QToolButton::clicked, this, [this] {
+            if (m_occtView)
+                m_occtView->fitView();
+        });
+        QToolButton* grid =
+            addToolButton(viewsRow, QStringLiteral("Grid"), QString(),
+                          QStringLiteral("Toggle the 3D grid"));
+        grid->setText(QStringLiteral("Grid"));
+        grid->setCheckable(true);
+        connect(grid, &QToolButton::toggled, this, [this](bool on) {
+            if (m_occtView)
+                m_occtView->setGridVisible(on);
+        });
+    }
+    m_toolTabs->setTabEnabled(m_viewsTabIndex, false); // enabled with 3D mode
+
+    // Host the strip in a fixed toolbar row so the View menu gets a single
+    // show/hide toggle for the whole thing.
+    auto* tabStripBar = new QToolBar(QStringLiteral("Tool tabs"), this);
+    tabStripBar->setObjectName(QStringLiteral("toolTabsBar"));
+    tabStripBar->setMovable(false);
+    tabStripBar->addWidget(m_toolTabs);
+    addToolBar(Qt::TopToolBarArea, tabStripBar);
     viewMenu0->addSeparator();
-    buildToolPanels(this, viewMenu0,
-                    [this](const QString& command) { onCommandEntered(command); });
+    viewMenu0->addAction(tabStripBar->toggleViewAction());
 
     // --- Help menu (last, per convention)
     auto* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
@@ -707,44 +769,23 @@ void MainWindow::toggle3D(bool on)
                     });
             m_viewStack->addWidget(m_occtView);
         }
-        if (!m_3dViewBar) {
-            // Standard views + fit + grid: the poor man's ViewCube, always
-            // reachable while the 3D view is active.
-            m_3dViewBar = addToolBar(QStringLiteral("3D views"));
-            m_3dViewBar->setObjectName(QStringLiteral("viewbar3d"));
-            const auto addView = [this](const QString& label, const QString& name) {
-                QAction* a = m_3dViewBar->addAction(label);
-                connect(a, &QAction::triggered, this, [this, name] {
-                    if (m_occtView)
-                        m_occtView->setStandardView(name);
-                });
-            };
-            addView(QStringLiteral("Top"), QStringLiteral("TOP"));
-            addView(QStringLiteral("Front"), QStringLiteral("FRONT"));
-            addView(QStringLiteral("Right"), QStringLiteral("RIGHT"));
-            addView(QStringLiteral("Iso"), QStringLiteral("ISO"));
-            QAction* fit = m_3dViewBar->addAction(QStringLiteral("Fit"));
-            connect(fit, &QAction::triggered, this, [this] {
-                if (m_occtView)
-                    m_occtView->fitView();
-            });
-            m_3dViewBar->addSeparator();
-            QAction* grid = m_3dViewBar->addAction(QStringLiteral("Grid"));
-            grid->setCheckable(true);
-            connect(grid, &QAction::toggled, this, [this](bool on) {
-                if (m_occtView)
-                    m_occtView->setGridVisible(on);
-            });
+        // The Views tab (built in the constructor) is only usable while the
+        // 3D view is active — same reachability as the old "3D views" bar.
+        if (m_toolTabs && m_viewsTabIndex >= 0) {
+            m_toolTabs->setTabEnabled(m_viewsTabIndex, true);
+            m_toolTabs->setCurrentIndex(m_viewsTabIndex);
         }
-        m_3dViewBar->setVisible(true);
         m_occtView->refreshFrom(*m_doc);
         m_viewStack->setCurrentWidget(m_occtView);
         if (!m_occtView->isReady())
             m_commandBar->appendHistory(
                 QStringLiteral("3D view unavailable (no OpenGL/X11 in this session)"));
     } else {
-        if (m_3dViewBar)
-            m_3dViewBar->setVisible(false);
+        if (m_toolTabs && m_viewsTabIndex >= 0) {
+            if (m_toolTabs->currentIndex() == m_viewsTabIndex)
+                m_toolTabs->setCurrentIndex(0); // back to Draw
+            m_toolTabs->setTabEnabled(m_viewsTabIndex, false);
+        }
         m_viewStack->setCurrentWidget(m_canvas);
         m_canvas->markDocumentDirty();
     }
@@ -805,6 +846,23 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
             result[QStringLiteral("blocks")] = queryjson::blocksJson(*m_doc);
         if (kind == QLatin1String("layouts"))
             result[QStringLiteral("layouts")] = queryjson::layoutsJson(*m_doc);
+        if (kind == QLatin1String("ui")) {
+            // Layout self-description for the gui-smoke harness: the tool tab
+            // strip and the tabified right-side docks.
+            QJsonArray tabs;
+            if (m_toolTabs)
+                for (int i = 0; i < m_toolTabs->count(); ++i)
+                    tabs.append(m_toolTabs->tabText(i));
+            result[QStringLiteral("toolTabs")] = tabs;
+            QJsonArray docks;
+            if (auto* props =
+                    findChild<QDockWidget*>(QStringLiteral("propsDock"))) {
+                docks.append(props->windowTitle());
+                for (QDockWidget* d : tabifiedDockWidgets(props))
+                    docks.append(d->windowTitle());
+            }
+            result[QStringLiteral("tabbedDocks")] = docks;
+        }
         return result;
     }
     if (method == QLatin1String("open")) {

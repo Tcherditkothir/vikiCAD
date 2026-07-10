@@ -199,6 +199,18 @@ record PASS gui-ping "IPC socket answering"
 
 # ---- (4) scenario ----------------------------------------------------------
 
+# --- UI layout phase --------------------------------------------------------
+# The tool tab strip (Draw..Views) and the tabified right-side docks
+# (Layers/Properties/Assembly as tabs, Properties in front) self-describe
+# through `query ui`.
+ui_json="$(rpc query ui)"
+assert_eq "ui: tool tab strip present" \
+    "Draw,Modify,Annotate,Measure,Blocks,Solids,Views" \
+    "$(jget "$ui_json" "','.join(d['result']['toolTabs'])")"
+assert_eq "ui: right docks tabified" \
+    "Assembly,Layers,Properties" \
+    "$(jget "$ui_json" "','.join(sorted(d['result']['tabbedDocks']))")"
+
 # --- 2D phase ---------------------------------------------------------------
 assert_eq "2d: fresh document empty" 0 "$(count)"
 
