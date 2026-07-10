@@ -157,6 +157,28 @@ MainWindow::MainWindow()
                         &MainWindow::openPreferences);
     fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
+
+    // --- Edit menu: the standard commands live HERE, one binding each
+    // (duplicated shortcuts made Qt fire neither — see above).
+    auto* editMenu = menuBar()->addMenu(QStringLiteral("&Edit"));
+    QAction* undoAct = editMenu->addAction(QStringLiteral("&Undo"));
+    undoAct->setShortcut(QKeySequence::Undo); // Ctrl+Z
+    undoAct->setShortcutContext(Qt::ApplicationShortcut);
+    connect(undoAct, &QAction::triggered, this,
+            [this] { onCommandEntered(QStringLiteral("UNDO")); });
+    QAction* redoAct = editMenu->addAction(QStringLiteral("&Redo"));
+    redoAct->setShortcuts({QKeySequence::Redo,               // Ctrl+Shift+Z
+                           QKeySequence(QStringLiteral("Ctrl+Y"))});
+    redoAct->setShortcutContext(Qt::ApplicationShortcut);
+    connect(redoAct, &QAction::triggered, this,
+            [this] { onCommandEntered(QStringLiteral("REDO")); });
+    editMenu->addSeparator();
+    QAction* delAct = editMenu->addAction(QStringLiteral("&Delete selection"));
+    delAct->setShortcut(QKeySequence::Delete);
+    delAct->setShortcutContext(Qt::ApplicationShortcut);
+    connect(delAct, &QAction::triggered, this,
+            [this] { onCommandEntered(QStringLiteral("ERASE")); });
+
     menuBar()->addMenu(viewMenu0);
 
     // Grouped command toolbars (each button = the same command as typing it).
@@ -244,15 +266,10 @@ MainWindow::MainWindow()
     bindToggle(Qt::Key_F8, orthoBtn);
     bindToggle(Qt::Key_F10, polarBtn);
 
-    // Standard edit shortcuts (route to the UNDO/REDO commands).
-    const auto bindCommand = [this](const QKeySequence& key, const QString& cmd) {
-        auto* sc = new QShortcut(key, this);
-        sc->setContext(Qt::ApplicationShortcut);
-        connect(sc, &QShortcut::activated, this, [this, cmd] { onCommandEntered(cmd); });
-    };
-    bindCommand(QKeySequence::Undo, QStringLiteral("UNDO"));          // Ctrl+Z
-    bindCommand(QKeySequence::Redo, QStringLiteral("REDO"));          // Ctrl+Shift+Z
-    bindCommand(QKeySequence(QStringLiteral("Ctrl+Y")), QStringLiteral("REDO"));
+    // Undo/Redo/Delete live in the EDIT MENU (created with the other menus
+    // below) — their shortcuts belong to those QActions. The old duplicate
+    // QShortcuts here + the same keys in shortcuts.json made Qt declare the
+    // bindings AMBIGUOUS and fire NEITHER: Ctrl+Z was dead since day one.
 
     m_unitsBtn = new QToolButton(this);
     m_unitsBtn->setText(QStringLiteral("mm"));
@@ -627,6 +644,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         const auto r = m_processor->submit(line, /*strict=*/true);
         refreshPromptAndMessages();
         m_canvas->markDocumentDirty();
+        sync3DView(); // IPC-driven 3D commands must show up too
         if (!r.ok)
             return {{QStringLiteral("error"), r.error}};
         return {{QStringLiteral("ok"), true},
@@ -743,8 +761,29 @@ void MainWindow::loadShortcuts()
     for (QShortcut* sc : m_userShortcuts)
         sc->deleteLater();
     m_userShortcuts.clear();
+    // Keys already owned by menu actions: binding them AGAIN would make Qt
+    // declare the shortcut ambiguous and fire NEITHER (the historic dead
+    // Ctrl+Z). Skip them with a note instead.
+    QSet<QString> reserved;
+    const auto collect = [&reserved](const QList<QAction*>& actions) {
+        for (const QAction* a : actions)
+            for (const QKeySequence& k : a->shortcuts())
+                if (!k.isEmpty())
+                    reserved.insert(k.toString());
+    };
+    for (const QAction* menuAct : menuBar()->actions())
+        if (menuAct->menu())
+            collect(menuAct->menu()->actions());
     const QJsonObject map = QJsonDocument::fromJson(file.readAll()).object();
     for (auto it = map.begin(); it != map.end(); ++it) {
+        const QString keyText = QKeySequence(it.key()).toString();
+        if (reserved.contains(keyText)) {
+            m_commandBar->appendHistory(
+                QStringLiteral("shortcuts.json: %1 is a built-in menu "
+                               "shortcut — entry ignored")
+                    .arg(keyText));
+            continue;
+        }
         const QString commandLine = it.value().toString();
         auto* shortcut = new QShortcut(QKeySequence(it.key()), this);
         shortcut->setContext(Qt::ApplicationShortcut);

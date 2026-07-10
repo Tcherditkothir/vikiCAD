@@ -647,6 +647,20 @@ SolidResult booleanOp(const TopoDS_Shape& a, const TopoDS_Shape& b, BoolOp op)
         result.message = QStringLiteral("boolean operation failed");
         return result;
     }
+    // A boolean that leaves NO solid is a failure, not a success: committing
+    // an empty compound made whole parts vanish (and looked like a bug you
+    // could not undo). Cutting everything away is reported the same way.
+    bool hasSolid = false;
+    for (TopExp_Explorer e(out, TopAbs_SOLID); e.More(); e.Next()) {
+        hasSolid = true;
+        break;
+    }
+    if (!hasSolid) {
+        result.message =
+            QStringLiteral("boolean produced no solid (everything was cut "
+                           "away or the shapes did not intersect)");
+        return result;
+    }
     result.ok = true;
     result.shape = out;
     return result;
@@ -1037,8 +1051,16 @@ SolidResult pushPullFace(const TopoDS_Shape& solid, const TopoDS_Shape& face,
     }
     const TopoDS_Face f = TopoDS::Face(face);
 
-    // Outward normal at the face centre (respecting the face orientation).
+    // Only PLANAR faces can be push/pulled (v1): prisming a curved face and
+    // fusing it back produces an empty/garbage boolean that used to be
+    // reported as success — and the whole part "disappeared".
     BRepAdaptor_Surface surf(f);
+    if (surf.GetType() != GeomAbs_Plane) {
+        result.message = QStringLiteral(
+            "push/pull needs a PLANAR face (this one is curved) — use SHELL, "
+            "DRAFT or a sketch + EXTRUDE Cut instead");
+        return result;
+    }
     const Standard_Real u = 0.5 * (surf.FirstUParameter() + surf.LastUParameter());
     const Standard_Real v = 0.5 * (surf.FirstVParameter() + surf.LastVParameter());
     gp_Pnt p;

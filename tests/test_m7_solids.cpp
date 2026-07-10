@@ -800,3 +800,45 @@ TEST_CASE("shellSolid opens SEVERAL picked faces at once", "[m8][shell][multi]")
     // 10*10*10 - 8*8*10 = 360.
     CHECK(volumeOf(tube.shape) == Approx(360.0).epsilon(1e-4));
 }
+
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+
+TEST_CASE("pushPullFace rejects curved faces instead of eating the part",
+          "[m7][pushpull][guard]")
+{
+    using namespace viki;
+    const TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(10.0, 20.0).Shape();
+    int curvedTried = 0;
+    for (TopExp_Explorer e(cyl, TopAbs_FACE); e.More(); e.Next()) {
+        BRepAdaptor_Surface surf(TopoDS::Face(e.Current()));
+        if (surf.GetType() == GeomAbs_Plane)
+            continue;
+        ++curvedTried;
+        const auto r = solidops::pushPullFace(cyl, e.Current(), 5.0);
+        // Used to return ok=true with an EMPTY result — the whole part
+        // vanished in the GUI. Must now refuse with a clear message.
+        CHECK_FALSE(r.ok);
+        CHECK(r.message.contains(QStringLiteral("PLANAR")));
+    }
+    CHECK(curvedTried >= 1);
+}
+
+TEST_CASE("booleanOp refuses to return an empty (no-solid) result",
+          "[m7][boolean][guard]")
+{
+    using namespace viki;
+    // Subtract a bigger box FROM a smaller one that sits entirely inside it:
+    // everything is cut away — that is a reported failure, not a silent empty.
+    const TopoDS_Shape small = BRepPrimAPI_MakeBox(2.0, 2.0, 2.0).Shape();
+    const TopoDS_Shape big = BRepPrimAPI_MakeBox(
+        gp_Pnt(-10, -10, -10), gp_Pnt(10, 10, 10)).Shape();
+    const auto gone = solidops::booleanOp(small, big, solidops::BoolOp::Subtract);
+    CHECK_FALSE(gone.ok);
+    // Intersecting two DISJOINT boxes has no material either.
+    const TopoDS_Shape far = BRepPrimAPI_MakeBox(
+        gp_Pnt(100, 100, 100), gp_Pnt(110, 110, 110)).Shape();
+    const auto none = solidops::booleanOp(small, far, solidops::BoolOp::Intersect);
+    CHECK_FALSE(none.ok);
+}

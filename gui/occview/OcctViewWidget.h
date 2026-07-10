@@ -122,6 +122,10 @@ private:
 
     // Command-input pipeline (active-command Point prompts only).
     bool commandWantsPoint() const;
+    // Labelled X/Y/Z axes following the cursor on the work plane while a
+    // command asks for a point — no more moving blind.
+    void updateAxes(const Vec2d& uv);
+    void clearAxes();
     // Resolve the cursor into work-plane 2D coords: prefer the surface point of
     // the planar face under the cursor (which also becomes the work plane and
     // snaps to the face's feature points); fall back to a ray/work-plane
@@ -164,6 +168,8 @@ private:
     Handle(AIS_InteractiveObject) m_ghost;
     // Clickable orientation cube pinned to the top-right corner.
     Handle(AIS_ViewCube) m_viewCube;
+    // Cursor-following axes shown during point input.
+    Handle(AIS_InteractiveObject) m_axes;
     // What the cursor last resolved to during a Point prompt.
     bool m_hoverValid = false;
     Vec2d m_hoverUv;

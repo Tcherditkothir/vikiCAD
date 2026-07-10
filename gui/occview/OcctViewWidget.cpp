@@ -14,8 +14,10 @@
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_Trihedron.hxx>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_Window.hxx>
+#include <Geom_Axis2Placement.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_TypeOfHighlight.hxx>
@@ -459,8 +461,44 @@ void OcctViewWidget::updateGhost(const Vec2d& uv)
     m_view->Redraw();
 }
 
+// Labelled X/Y/Z axes at the cursor position on the work plane: during MOVE3D
+// or hole placement you SEE which way the axes run instead of guessing.
+void OcctViewWidget::updateAxes(const Vec2d& uv)
+{
+    if (m_context.IsNull() || !m_doc)
+        return;
+    const WorkPlane wp = documentWorkplane(*m_doc);
+    gp_Ax2 placement;
+    try {
+        placement = gp_Ax2(solidops::planePoint3d(uv, wp), wp.normal, wp.xDir);
+    } catch (const Standard_Failure&) {
+        return; // degenerate plane frame — skip the marker this move
+    }
+    Handle(AIS_Trihedron) tri = Handle(AIS_Trihedron)::DownCast(m_axes);
+    if (tri.IsNull()) {
+        tri = new AIS_Trihedron(new Geom_Axis2Placement(placement));
+        tri->SetSize(18.0);
+        m_axes = tri;
+        m_context->Display(m_axes, false);
+        m_context->Deactivate(m_axes); // a marker, never a pick target
+    } else {
+        tri->SetComponent(new Geom_Axis2Placement(placement));
+        m_context->Redisplay(m_axes, false);
+    }
+}
+
+void OcctViewWidget::clearAxes()
+{
+    if (m_axes.IsNull())
+        return;
+    if (!m_context.IsNull())
+        m_context->Remove(m_axes, false);
+    m_axes.Nullify();
+}
+
 void OcctViewWidget::clearGhost()
 {
+    clearAxes(); // the axes marker shares the ghost's lifecycle
     if (m_ghost.IsNull())
         return;
     if (!m_context.IsNull()) {
@@ -496,12 +534,14 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
             Vec2d uv;
             if (cursorToPlane(p, uv)) {
                 m_processor->ctx().setPointerHint(uv);
+                updateAxes(uv);  // show the axis directions at the cursor
                 updateGhost(uv); // redraws
             } else {
                 m_view->Redraw(); // flush the MoveTo highlight
             }
-        } else if (!m_ghost.IsNull()) {
-            clearGhost(); // the command ended some other way
+        } else if (!m_ghost.IsNull() || !m_axes.IsNull()) {
+            clearGhost(); // the command ended some other way (axes too)
+            m_view->Redraw();
         }
     }
     m_lastPos = event->pos();
