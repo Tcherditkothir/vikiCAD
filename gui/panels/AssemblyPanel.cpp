@@ -80,14 +80,18 @@ void AssemblyPanel::showContextMenu(const QPoint& pos)
     // Apply fn to every target solid in one undoable transaction.
     const auto forEachSolid = [&](const QString& tx,
                                   const std::function<void(SolidEntity&)>& fn) {
-        m_doc->beginTransaction(tx);
-        for (const EntityId id : ids)
-            if (dynamic_cast<const SolidEntity*>(m_doc->entity(id)))
-                if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
-                    fn(*s);
-                    m_doc->endModify(id);
-                }
-        m_doc->commitTransaction();
+        TransactionScope scope(*m_doc, tx);
+        try {
+            for (const EntityId id : ids)
+                if (dynamic_cast<const SolidEntity*>(m_doc->entity(id)))
+                    if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                        fn(*s);
+                        m_doc->endModify(id);
+                    }
+            scope.commit();
+        } catch (const std::exception&) {
+            scope.rollback(); // keep undo alive; the edit simply doesn't apply
+        }
         refresh();
         emit selectionChanged();
     };
@@ -176,10 +180,14 @@ void AssemblyPanel::showContextMenu(const QPoint& pos)
     menu.addSeparator();
     connect(menu.addAction(QStringLiteral("Delete")), &QAction::triggered, this,
             [this, ids] {
-                m_doc->beginTransaction(QStringLiteral("DELETE"));
-                for (const EntityId id : ids)
-                    m_doc->removeEntity(id);
-                m_doc->commitTransaction();
+                TransactionScope scope(*m_doc, QStringLiteral("DELETE"));
+                try {
+                    for (const EntityId id : ids)
+                        m_doc->removeEntity(id);
+                    scope.commit();
+                } catch (const std::exception&) {
+                    scope.rollback(); // keep undo alive
+                }
                 refresh();
                 emit selectionChanged();
             });

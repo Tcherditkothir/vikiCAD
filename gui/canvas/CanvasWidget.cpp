@@ -502,12 +502,12 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton && m_grip.active) {
         m_grip.active = false;
         if (m_doc && m_doc->entity(m_grip.id)) {
-            m_doc->beginTransaction(QStringLiteral("GRIP EDIT"));
+            TransactionScope scope(*m_doc, QStringLiteral("GRIP EDIT"));
             if (Entity* e = m_doc->beginModify(m_grip.id)) {
                 e->moveGrip(m_grip.index, m_effectiveCursor);
                 m_doc->endModify(m_grip.id);
             }
-            m_doc->commitTransaction();
+            scope.commit();
         }
         emit interaction();
         return;

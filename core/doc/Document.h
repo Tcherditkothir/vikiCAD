@@ -162,4 +162,39 @@ private:
     std::vector<std::function<void()>> m_listeners;
 };
 
+// RAII transaction guard. Begins the transaction on construction; if commit()
+// is not reached (early return, OCCT / serialization exception), the
+// destructor rolls the transaction back. A leaked OPEN transaction silently
+// disables undo forever (Document::undo refuses while one is open) — every
+// begin/commit window with a throwing or early-returning body must use this.
+class TransactionScope {
+public:
+    TransactionScope(Document& doc, const QString& name) : m_doc(doc)
+    {
+        m_doc.beginTransaction(name);
+    }
+    ~TransactionScope()
+    {
+        if (!m_closed)
+            m_doc.rollbackTransaction();
+    }
+    TransactionScope(const TransactionScope&) = delete;
+    TransactionScope& operator=(const TransactionScope&) = delete;
+
+    void commit()
+    {
+        m_doc.commitTransaction();
+        m_closed = true;
+    }
+    void rollback()
+    {
+        m_doc.rollbackTransaction();
+        m_closed = true;
+    }
+
+private:
+    Document& m_doc;
+    bool m_closed = false;
+};
+
 } // namespace viki

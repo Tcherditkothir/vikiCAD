@@ -7,6 +7,7 @@ add_executable(vikicad-tests
     test_regions.cpp
     test_occt_smoke.cpp
     test_document.cpp
+    test_transaction_scope.cpp
     test_commands.cpp
     test_store.cpp
     test_entities2.cpp

@@ -399,12 +399,20 @@ void MainWindow::toggle3D(bool on)
                                 QStringLiteral("! push/pull: %1").arg(res.message));
                             return;
                         }
-                        m_doc->beginTransaction(QStringLiteral("PUSHPULL"));
-                        if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
-                            s->setShape(res.shape);
-                            m_doc->endModify(id);
+                        TransactionScope scope(*m_doc, QStringLiteral("PUSHPULL"));
+                        try {
+                            if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                                s->setShape(res.shape);
+                                m_doc->endModify(id);
+                            }
+                            scope.commit();
+                        } catch (const std::exception& ex) {
+                            scope.rollback();
+                            m_commandBar->appendHistory(
+                                QStringLiteral("! push/pull: %1")
+                                    .arg(QString::fromUtf8(ex.what())));
+                            return;
                         }
-                        m_doc->commitTransaction();
                         m_occtView->refreshFrom(*m_doc);
                         m_commandBar->appendHistory(
                             QStringLiteral("Push/Pull: %1 by %2")
@@ -439,17 +447,24 @@ void MainWindow::toggle3D(bool on)
                 const ColorSpec color = solid->color();
                 const QString component = solid->component;
                 const double transparency = solid->transparency;
-                m_doc->beginTransaction(QStringLiteral("SPLIT"));
-                m_doc->removeEntity(id);
-                for (const TopoDS_Shape& piece : pieces) {
-                    auto e = std::make_unique<SolidEntity>(piece);
-                    e->setLayerId(layerId);
-                    e->setColor(color);
-                    e->component = component;
-                    e->transparency = transparency;
-                    m_doc->addEntity(std::move(e));
+                TransactionScope scope(*m_doc, QStringLiteral("SPLIT"));
+                try {
+                    m_doc->removeEntity(id);
+                    for (const TopoDS_Shape& piece : pieces) {
+                        auto e = std::make_unique<SolidEntity>(piece);
+                        e->setLayerId(layerId);
+                        e->setColor(color);
+                        e->component = component;
+                        e->transparency = transparency;
+                        m_doc->addEntity(std::move(e));
+                    }
+                    scope.commit();
+                } catch (const std::exception& ex) {
+                    scope.rollback();
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! split: %1").arg(QString::fromUtf8(ex.what())));
+                    return;
                 }
-                m_doc->commitTransaction();
                 m_occtView->refreshFrom(*m_doc);
                 m_commandBar->appendHistory(
                     QStringLiteral("Split: %1 pieces").arg(pieces.size()));
@@ -465,12 +480,19 @@ void MainWindow::toggle3D(bool on)
                         QStringLiteral("! %1").arg(res.message));
                     return;
                 }
-                m_doc->beginTransaction(tx);
-                if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
-                    s->setShape(res.shape);
-                    m_doc->endModify(id);
+                TransactionScope scope(*m_doc, tx);
+                try {
+                    if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                        s->setShape(res.shape);
+                        m_doc->endModify(id);
+                    }
+                    scope.commit();
+                } catch (const std::exception& ex) {
+                    scope.rollback();
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! %1: %2").arg(tx).arg(QString::fromUtf8(ex.what())));
+                    return;
                 }
-                m_doc->commitTransaction();
                 sync3DView();
                 m_commandBar->appendHistory(okMsg);
             };
@@ -531,26 +553,32 @@ void MainWindow::toggle3D(bool on)
                                          const std::vector<std::pair<QString, double>>&
                                              params,
                                          const QString& tx) {
-                m_doc->beginTransaction(tx);
+                TransactionScope scope(*m_doc, tx);
                 bool ok = false;
-                if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
-                    ok = s->features != nullptr;
-                    for (const auto& p : params)
-                        ok = ok && featureparams::set(*s->features, node,
-                                                      p.first, p.second);
-                    ok = ok && s->regenerateFeatures();
-                    m_doc->endModify(id);
+                QString error = QStringLiteral("regeneration rejected");
+                try {
+                    if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                        ok = s->features != nullptr;
+                        for (const auto& p : params)
+                            ok = ok && featureparams::set(*s->features, node,
+                                                          p.first, p.second);
+                        ok = ok && s->regenerateFeatures();
+                        m_doc->endModify(id);
+                    }
+                } catch (const std::exception& ex) {
+                    ok = false;
+                    error = QString::fromUtf8(ex.what());
                 }
                 if (ok) {
-                    m_doc->commitTransaction();
+                    scope.commit();
                     sync3DView();
                     m_propsPanel->refresh();
                     m_assemblyPanel->refresh();
                     m_commandBar->appendHistory(QStringLiteral("%1: done").arg(tx));
                 } else {
-                    m_doc->rollbackTransaction();
+                    scope.rollback();
                     m_commandBar->appendHistory(
-                        QStringLiteral("! %1 failed (regeneration rejected)").arg(tx));
+                        QStringLiteral("! %1 failed (%2)").arg(tx).arg(error));
                 }
             };
             connect(m_occtView, &OcctViewWidget::moveHoleRequested, this,
@@ -1185,18 +1213,24 @@ bool MainWindow::insertStepFile(const QString& path, QString& error)
     // Component name = the file's base name; each imported solid gets tagged.
     const QString comp = QFileInfo(path).completeBaseName();
     int added = 0;
-    m_doc->beginTransaction(QStringLiteral("INSERT STEP"));
-    for (const EntityId id : tmp->drawOrder()) {
-        const Entity* e = tmp->entity(id);
-        if (!e)
-            continue;
-        auto copy = e->clone();
-        if (auto* solid = dynamic_cast<SolidEntity*>(copy.get()))
-            solid->component = comp;
-        m_doc->addEntity(std::move(copy));
-        ++added;
+    TransactionScope scope(*m_doc, QStringLiteral("INSERT STEP"));
+    try {
+        for (const EntityId id : tmp->drawOrder()) {
+            const Entity* e = tmp->entity(id);
+            if (!e)
+                continue;
+            auto copy = e->clone();
+            if (auto* solid = dynamic_cast<SolidEntity*>(copy.get()))
+                solid->component = comp;
+            m_doc->addEntity(std::move(copy));
+            ++added;
+        }
+        scope.commit();
+    } catch (const std::exception& ex) {
+        scope.rollback();
+        error = QString::fromUtf8(ex.what());
+        return false;
     }
-    m_doc->commitTransaction();
     m_commandBar->appendHistory(
         QStringLiteral("Inserted component '%1' (%2 solid%3)")
             .arg(comp).arg(added).arg(added == 1 ? QString() : QStringLiteral("s")));

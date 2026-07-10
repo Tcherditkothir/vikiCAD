@@ -243,12 +243,20 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
     geom[key] = next;
     full[QStringLiteral("geom")] = geom;
 
-    m_doc->beginTransaction(QStringLiteral("PROPERTIES"));
-    if (Entity* e = m_doc->beginModify(id)) {
-        e->fromJson(full);
-        m_doc->endModify(id);
+    TransactionScope scope(*m_doc, QStringLiteral("PROPERTIES"));
+    try {
+        if (Entity* e = m_doc->beginModify(id)) {
+            e->fromJson(full);
+            m_doc->endModify(id);
+        }
+        scope.commit();
+    } catch (const std::exception& ex) {
+        scope.rollback();
+        emit feedback(QStringLiteral("property edit failed: %1")
+                          .arg(QString::fromUtf8(ex.what())));
+        rebuildGeometryTable();
+        return;
     }
-    m_doc->commitTransaction();
     emit propertiesApplied();
     rebuildGeometryTable();
 }
@@ -276,29 +284,34 @@ void PropertiesPanel::applyFeatureEdit(int paramIndex)
     }
     const EntityId id = m_selection->ids().front();
 
-    m_doc->beginTransaction(QStringLiteral("FEATURE EDIT"));
+    TransactionScope scope(*m_doc, QStringLiteral("FEATURE EDIT"));
     bool applied = false;
     QString error;
-    if (Entity* e = m_doc->beginModify(id)) {
-        auto* solid = dynamic_cast<SolidEntity*>(e);
-        if (solid && solid->features &&
-            featureparams::set(*solid->features, p.nodeIndex, p.name, value)) {
-            if (solid->regenerateFeatures()) {
-                applied = true;
-            } else {
-                // Grab the replay's reason, then put the old value back.
-                error = solid->features->regenerate().message;
-                featureparams::set(*solid->features, p.nodeIndex, p.name,
-                                   p.value);
+    try {
+        if (Entity* e = m_doc->beginModify(id)) {
+            auto* solid = dynamic_cast<SolidEntity*>(e);
+            if (solid && solid->features &&
+                featureparams::set(*solid->features, p.nodeIndex, p.name, value)) {
+                if (solid->regenerateFeatures()) {
+                    applied = true;
+                } else {
+                    // Grab the replay's reason, then put the old value back.
+                    error = solid->features->regenerate().message;
+                    featureparams::set(*solid->features, p.nodeIndex, p.name,
+                                       p.value);
+                }
             }
+            m_doc->endModify(id);
         }
-        m_doc->endModify(id);
+    } catch (const std::exception& ex) {
+        applied = false;
+        error = QString::fromUtf8(ex.what());
     }
     if (applied) {
-        m_doc->commitTransaction();
+        scope.commit();
         emit propertiesApplied();
     } else {
-        m_doc->rollbackTransaction();
+        scope.rollback();
         if (error.isEmpty())
             error = QStringLiteral("feature edit rejected");
         emit feedback(QStringLiteral("%1 = %2: %3").arg(p.label).arg(value).arg(error));
@@ -357,13 +370,21 @@ void PropertiesPanel::applyOriginEdit(int axis)
     gp_Trsf t;
     t.SetTranslation(gp_Vec(axis == 0 ? delta : 0.0, axis == 1 ? delta : 0.0,
                             axis == 2 ? delta : 0.0));
-    m_doc->beginTransaction(QStringLiteral("MOVE"));
-    if (Entity* e = m_doc->beginModify(id)) {
-        if (auto* solid = dynamic_cast<SolidEntity*>(e))
-            solid->applyTrsf(t);
-        m_doc->endModify(id);
+    TransactionScope scope(*m_doc, QStringLiteral("MOVE"));
+    try {
+        if (Entity* e = m_doc->beginModify(id)) {
+            if (auto* solid = dynamic_cast<SolidEntity*>(e))
+                solid->applyTrsf(t);
+            m_doc->endModify(id);
+        }
+        scope.commit();
+    } catch (const std::exception& ex) {
+        scope.rollback();
+        emit feedback(QStringLiteral("move failed: %1")
+                          .arg(QString::fromUtf8(ex.what())));
+        rebuildGeometryTable();
+        return;
     }
-    m_doc->commitTransaction();
     emit propertiesApplied();
     rebuildGeometryTable();
 }
@@ -373,14 +394,22 @@ void PropertiesPanel::applyToSelection(const std::function<void(Entity&)>& fn,
 {
     if (!m_doc || !m_selection || m_selection->isEmpty())
         return;
-    m_doc->beginTransaction(txName);
-    for (const EntityId id : m_selection->ids()) {
-        if (Entity* e = m_doc->beginModify(id)) {
-            fn(*e);
-            m_doc->endModify(id);
+    TransactionScope scope(*m_doc, txName);
+    try {
+        for (const EntityId id : m_selection->ids()) {
+            if (Entity* e = m_doc->beginModify(id)) {
+                fn(*e);
+                m_doc->endModify(id);
+            }
         }
+        scope.commit();
+    } catch (const std::exception& ex) {
+        scope.rollback();
+        emit feedback(QStringLiteral("%1 failed: %2")
+                          .arg(txName)
+                          .arg(QString::fromUtf8(ex.what())));
+        return;
     }
-    m_doc->commitTransaction();
     emit propertiesApplied();
 }
 

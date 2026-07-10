@@ -414,11 +414,25 @@ private:
 
 // ---- UNDO / REDO ---------------------------------------------------------------
 
+// Safety valve shared by UNDO/REDO: a leaked OPEN transaction (a begin without
+// commit/rollback somewhere) makes Document::undo()/redo() refuse silently —
+// forever. Instead of doing nothing, roll the stray transaction back and tell
+// the user, so undo comes back to life.
+static void recoverLeakedTransaction(CommandContext& ctx)
+{
+    if (!ctx.doc().inTransaction())
+        return;
+    ctx.doc().rollbackTransaction();
+    ctx.info(QStringLiteral(
+        "an unfinished operation had left a transaction open — rolled it back"));
+}
+
 class UndoCommand : public Command {
 public:
     const char* name() const override { return "UNDO"; }
     Step start(CommandContext& ctx) override
     {
+        recoverLeakedTransaction(ctx);
         const QString name = ctx.doc().undo();
         ctx.info(name.isEmpty() ? QStringLiteral("nothing to undo")
                                 : QStringLiteral("undid %1").arg(name));
@@ -432,6 +446,7 @@ public:
     const char* name() const override { return "REDO"; }
     Step start(CommandContext& ctx) override
     {
+        recoverLeakedTransaction(ctx);
         const QString name = ctx.doc().redo();
         ctx.info(name.isEmpty() ? QStringLiteral("nothing to redo")
                                 : QStringLiteral("redid %1").arg(name));
