@@ -76,5 +76,6 @@ void registerGearCommands(CommandProcessor& processor);
 void registerAssemblyCommands(CommandProcessor& processor);
 void registerPattern3DCommands(CommandProcessor& processor);
 void registerParamCommands(CommandProcessor& processor);
+void registerSketchCommands(CommandProcessor& processor);
 
 } // namespace viki

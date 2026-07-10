@@ -14,6 +14,7 @@
 #include "Entity.h"
 #include "Layer.h"
 #include "ParamTable.h"
+#include "solid/WorkPlane.h"
 
 namespace viki {
 
@@ -31,6 +32,16 @@ struct Change {
 struct Transaction {
     QString name;
     std::vector<Change> changes;
+};
+
+// A sketch is a LIGHTWEIGHT reference: a name + a work plane + the 2D
+// entities drawn while it was active (tracked by membership tags, not by
+// ownership). Solids built from a sketch keep NO dependency back to it —
+// editing a sketch never regenerates a generated solid.
+struct SketchInfo {
+    int64_t id = 0;
+    QString name;
+    WorkPlane plane;
 };
 
 // The drawing database. ALL mutations go through addEntity / removeEntity /
@@ -102,6 +113,26 @@ public:
     const std::vector<DimStyle>& dimStyles() const { return m_dimStyles; }
     void upsertDimStyle(const DimStyle& style);
 
+    // --- sketches (first-class lightweight references; direct edits like
+    // layers/blocks — not journaled, v1 choice). While a sketch is OPEN
+    // (activeSketch() != 0) every entity added through addEntity is tagged as
+    // belonging to it. Deleting a sketch keeps the entities and drops the tag.
+    const std::vector<SketchInfo>& sketches() const { return m_sketches; }
+    const SketchInfo* sketchById(int64_t id) const;
+    const SketchInfo* sketchByName(const QString& name) const;
+    int64_t createSketch(const QString& name, const WorkPlane& plane);
+    bool renameSketch(int64_t id, const QString& name);
+    bool removeSketch(int64_t id); // drops registry entry + tags, keeps entities
+    int64_t activeSketch() const { return m_activeSketch; }
+    void setActiveSketch(int64_t id); // 0 = none
+    // Sketch membership of one entity (0 = untagged).
+    int64_t entitySketch(EntityId id) const;
+    void setEntitySketch(EntityId id, int64_t sketchId); // 0 clears the tag
+    // Entities tagged with this sketch, in draw order.
+    std::vector<EntityId> sketchEntities(int64_t sketchId) const;
+    // Load path: restore a registry entry / a membership tag with stored ids.
+    void restoreSketch(const SketchInfo& info);
+
     // --- user parameters (named values with expressions; d=10, w=2*d).
     // Direct edits (not journaled — v1 choice, like dim styles / layers).
     // Persisted in .vkd. Groundwork for driving dimensions/features later.
@@ -147,6 +178,13 @@ private:
     std::vector<Transaction> m_undoStack;
     std::vector<Transaction> m_redoStack;
     static constexpr size_t kMaxUndo = 100;
+
+    std::vector<SketchInfo> m_sketches;
+    int64_t m_nextSketchId = 1;
+    int64_t m_activeSketch = 0; // 0 = no sketch open
+    // EntityId -> sketch id. Entries survive entity removal on purpose: undo
+    // restores an entity under its original id, so its tag comes back too.
+    std::unordered_map<EntityId, int64_t> m_sketchMembership;
 
     std::vector<Layer> m_layers;
     std::vector<std::unique_ptr<BlockDef>> m_blocks;

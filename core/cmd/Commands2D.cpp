@@ -550,6 +550,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerAssemblyCommands(p);
     registerPattern3DCommands(p);
     registerParamCommands(p);
+    registerSketchCommands(p);
 }
 
 } // namespace viki

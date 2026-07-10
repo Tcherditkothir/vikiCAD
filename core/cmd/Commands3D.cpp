@@ -185,8 +185,12 @@ private:
             return Step::cancelled();
         }
         ctx.doc().beginTransaction(QStringLiteral("EXTRUDE"));
+        // Profiles that belong to a sketch are KEPT — the sketch is a
+        // reusable reference (Fusion keeps sketches). Untagged profiles are
+        // consumed as before.
         for (const EntityId id : m_ids)
-            ctx.doc().removeEntity(id);
+            if (ctx.doc().entitySketch(id) == 0)
+                ctx.doc().removeEntity(id);
         if (m_mode == solidops::ExtrudeMode::Join ||
             m_mode == solidops::ExtrudeMode::Cut)
             ctx.doc().removeEntity(m_target);
@@ -280,8 +284,11 @@ private:
             return Step::cancelled();
         }
         ctx.doc().beginTransaction(QStringLiteral("REVOLVE"));
+        // Sketch-tagged profiles are kept (reusable reference); untagged
+        // ones are consumed — same contract as EXTRUDE.
         for (const EntityId id : m_ids)
-            ctx.doc().removeEntity(id);
+            if (ctx.doc().entitySketch(id) == 0)
+                ctx.doc().removeEntity(id);
         const EntityId sid =
             ctx.doc().addEntity(std::make_unique<SolidEntity>(solid.shape));
         ctx.doc().commitTransaction();

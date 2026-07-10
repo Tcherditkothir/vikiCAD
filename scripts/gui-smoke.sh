@@ -275,6 +275,31 @@ read -r piece_a piece_b <<<"$(solid_ids)"
 gexec "3d: COMBINE pieces" "COMBINE $piece_a $piece_b"
 assert_eq "3d: one solid after COMBINE" 1 "$(count)"
 
+# --- sketch phase -------------------------------------------------------------
+# Sketches are first-class references: a profile drawn inside an open sketch
+# must SURVIVE the EXTRUDE built from it (untagged profiles stay consumed —
+# the 3D phase above already proves that: EXTRUDE left exactly 1 entity).
+count_before_sketch="$(count)"
+
+gexec "sketch: SKETCH NEW smoke" "SKETCH NEW smoke"
+gexec "sketch: RECT inside sketch" "RECT 200,0 240,30"
+sketch_rect_id="$(max_id)"
+assert_eq "sketch: rect added" "$((count_before_sketch + 1))" "$(count)"
+gexec "sketch: SKETCH CLOSE" "SKETCH CLOSE"
+
+gexec "sketch: EXTRUDE tagged profile" "EXTRUDE 15 $sketch_rect_id"
+assert_eq "sketch: profile survived EXTRUDE" "$((count_before_sketch + 2))" "$(count)"
+assert_eq "sketch: two solids now" 2 "$(wc -w <<<"$(solid_ids)")"
+
+# The kept profile is reusable: extrude it AGAIN (no sketch->solid dependency).
+gexec "sketch: EXTRUDE same profile again" "EXTRUDE 30 $sketch_rect_id"
+assert_eq "sketch: profile still there" "$((count_before_sketch + 3))" "$(count)"
+assert_eq "sketch: three solids now" 3 "$(wc -w <<<"$(solid_ids)")"
+
+gexec "sketch: UNDO extrude #2" "UNDO"
+gexec "sketch: UNDO extrude #1" "UNDO"
+assert_eq "sketch: undos restore counts" "$((count_before_sketch + 1))" "$(count)"
+
 # --- STL export --------------------------------------------------------------
 out="$(rpc save "$TMP/smoke.vkd")"
 assert_eq "stl: save .vkd" True "$(jget "$out" "d['result'].get('ok')")"

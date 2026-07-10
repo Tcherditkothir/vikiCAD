@@ -10,11 +10,14 @@ class QTreeWidgetItem;
 
 namespace viki {
 
-// Assembly tree: solids grouped by component name. Selecting rows (multi-select
-// with Ctrl/Shift) drives the document selection, which highlights the solids
-// in the 2D and 3D views and feeds the Properties panel. The context menu acts
-// on the whole selection: Combine (join), Move, Color, Transparency, Rename,
-// Delete.
+// Assembly tree: solids grouped by component name, plus a top-level
+// "Sketches" group (one row per sketch: name + entity count). Selecting rows
+// (multi-select with Ctrl/Shift) drives the document selection, which
+// highlights the solids/sketch entities in the 2D and 3D views and feeds the
+// Properties panel. The context menu acts on the whole selection: Combine
+// (join), Move, Color, Transparency, Rename, Delete. Sketch rows get their
+// own menu: Open (SKETCH Open through the shared processor + switch to 2D),
+// Rename, Delete (keeps the entities, drops their sketch tag).
 class AssemblyPanel : public QWidget {
     Q_OBJECT
 public:
@@ -35,10 +38,16 @@ signals:
     // One-line user feedback (e.g. why a context-menu action was refused);
     // routed to the command bar history by the host.
     void feedback(const QString& message);
+    // A sketch was opened from the panel: the host switches to the 2D view
+    // (the canvas IS the sketch plane).
+    void sketchActivated();
 
 private:
     void syncSelectionFromTree();
     void showContextMenu(const QPoint& pos);
+    void openSketch(int64_t id);
+    // Sketch id of a tree row, or 0 if the row is not a sketch.
+    static int64_t sketchIdForItem(QTreeWidgetItem* item);
     std::vector<EntityId> idsForItem(QTreeWidgetItem* item) const;
     std::vector<EntityId> selectedIds() const;
 

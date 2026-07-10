@@ -56,6 +56,7 @@ private:
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();
+    void updateSketchStatus(); // status-bar label for the open sketch
     void updateWindowTitle();
     void updateUnitsButton();
     bool saveTo(const QString& path);
@@ -71,6 +72,7 @@ private:
     PropertiesPanel* m_propsPanel = nullptr;
     AssemblyPanel* m_assemblyPanel = nullptr;
     QLabel* m_coordLabel = nullptr;
+    QLabel* m_sketchLabel = nullptr; // "Sketch 'x' — SKETCH Close to finish"
     QToolButton* m_unitsBtn = nullptr;
     QToolButton* m_3dButton = nullptr;
     QTabWidget* m_toolTabs = nullptr; // Draw/…/Solids/Views tool tab strip

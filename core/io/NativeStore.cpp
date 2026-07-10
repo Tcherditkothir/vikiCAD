@@ -69,6 +69,16 @@ CREATE TABLE IF NOT EXISTS params (
     expr TEXT NOT NULL,
     sort INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS sketches (
+    id    INTEGER PRIMARY KEY,
+    name  TEXT NOT NULL,
+    plane TEXT NOT NULL,
+    sort  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sketch_members (
+    entity_id INTEGER PRIMARY KEY,
+    sketch_id INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS entities (
     id         INTEGER PRIMARY KEY,
     owner_kind INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +90,35 @@ CREATE TABLE IF NOT EXISTS entities (
     brep       BLOB
 );
 )sql";
+
+// Nine full-precision doubles "ox oy oz nx ny nz xx xy xz" — the same format
+// as the "workplane" meta entry.
+QString planeToString(const WorkPlane& wp)
+{
+    const auto num = [](double d) { return QString::number(d, 'g', 17); };
+    return QStringLiteral("%1 %2 %3 %4 %5 %6 %7 %8 %9")
+        .arg(num(wp.origin.X()), num(wp.origin.Y()), num(wp.origin.Z()),
+             num(wp.normal.X()), num(wp.normal.Y()), num(wp.normal.Z()),
+             num(wp.xDir.X()), num(wp.xDir.Y()), num(wp.xDir.Z()));
+}
+
+std::optional<WorkPlane> planeFromString(const QString& value)
+{
+    const QStringList parts = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (parts.size() != 9)
+        return std::nullopt;
+    bool ok = true;
+    double c[9];
+    for (int i = 0; i < 9 && ok; ++i)
+        c[i] = parts[i].toDouble(&ok);
+    // Only accept non-degenerate direction vectors; gp_Dir throws on a
+    // zero-magnitude vector, so guard before constructing.
+    if (!ok || (c[3] * c[3] + c[4] * c[4] + c[5] * c[5]) <= 1e-18 ||
+        (c[6] * c[6] + c[7] * c[7] + c[8] * c[8]) <= 1e-18)
+        return std::nullopt;
+    return WorkPlane{gp_Pnt(c[0], c[1], c[2]), gp_Dir(c[3], c[4], c[5]),
+                     gp_Dir(c[6], c[7], c[8])};
+}
 
 } // namespace
 
@@ -110,7 +149,8 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
     if (!exec(db.get(),
                "DELETE FROM meta; DELETE FROM layers; DELETE FROM entities; "
                "DELETE FROM dim_styles; DELETE FROM blocks; "
-               "DELETE FROM layouts; DELETE FROM viewports; DELETE FROM params;",
+               "DELETE FROM layouts; DELETE FROM viewports; DELETE FROM params; "
+               "DELETE FROM sketches; DELETE FROM sketch_members;",
                error))
         return false;
 
@@ -128,17 +168,42 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
                                                        : QStringLiteral("mm"));
     putMeta("next_id", QString::number(doc.nextId()));
     putMeta("current_layer", QString::number(doc.currentLayer()));
+    // Persist the current work plane as nine full-precision doubles.
+    putMeta("workplane", planeToString(documentWorkplane(doc)));
+    // The currently-open sketch survives save/load (0 = none).
+    putMeta("active_sketch", QString::number(doc.activeSketch()));
+    sqlite3_finalize(stmt);
+
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO sketches(id,name,plane,sort) VALUES(?,?,?,?);",
+                       -1, &stmt, nullptr);
     {
-        // Persist the current work plane as nine full-precision doubles.
-        const WorkPlane& wp = documentWorkplane(doc);
-        const auto num = [](double d) {
-            return QString::number(d, 'g', 17);
-        };
-        putMeta("workplane",
-                QStringLiteral("%1 %2 %3 %4 %5 %6 %7 %8 %9")
-                    .arg(num(wp.origin.X()), num(wp.origin.Y()), num(wp.origin.Z()),
-                         num(wp.normal.X()), num(wp.normal.Y()), num(wp.normal.Z()),
-                         num(wp.xDir.X()), num(wp.xDir.Y()), num(wp.xDir.Z())));
+        int ssort = 0;
+        for (const SketchInfo& s : doc.sketches()) {
+            const QByteArray plane = planeToString(s.plane).toUtf8();
+            sqlite3_reset(stmt);
+            sqlite3_bind_int64(stmt, 1, s.id);
+            sqlite3_bind_text(stmt, 2, s.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, plane.constData(), plane.size(), SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 4, ssort++);
+            sqlite3_step(stmt);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // Membership tags of LIVE entities only (stale tags of removed entities
+    // are an in-session undo convenience, not document state).
+    sqlite3_prepare_v2(db.get(),
+                       "INSERT INTO sketch_members(entity_id,sketch_id) VALUES(?,?);",
+                       -1, &stmt, nullptr);
+    for (const EntityId id : doc.drawOrder()) {
+        const int64_t sk = doc.entitySketch(id);
+        if (sk == 0)
+            continue;
+        sqlite3_reset(stmt);
+        sqlite3_bind_int64(stmt, 1, id);
+        sqlite3_bind_int64(stmt, 2, sk);
+        sqlite3_step(stmt);
     }
     sqlite3_finalize(stmt);
 
@@ -303,6 +368,7 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
     doc->setFilePath(path);
 
     sqlite3_stmt* stmt = nullptr;
+    int64_t activeSketch = 0; // applied after the sketch registry is restored
 
     if (sqlite3_prepare_v2(db.get(), "SELECT key,value FROM meta;", -1, &stmt, nullptr) ==
         SQLITE_OK) {
@@ -319,22 +385,10 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
             else if (key == QLatin1String("current_layer"))
                 doc->setCurrentLayer(value.toLongLong());
             else if (key == QLatin1String("workplane")) {
-                const QStringList parts = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                if (parts.size() == 9) {
-                    bool ok = true;
-                    double c[9];
-                    for (int i = 0; i < 9 && ok; ++i)
-                        c[i] = parts[i].toDouble(&ok);
-                    // Only accept non-degenerate direction vectors; gp_Dir throws
-                    // on a zero-magnitude vector, so guard before constructing.
-                    if (ok && (c[3] * c[3] + c[4] * c[4] + c[5] * c[5]) > 1e-18 &&
-                        (c[6] * c[6] + c[7] * c[7] + c[8] * c[8]) > 1e-18) {
-                        documentWorkplane(*doc) =
-                            WorkPlane{gp_Pnt(c[0], c[1], c[2]), gp_Dir(c[3], c[4], c[5]),
-                                      gp_Dir(c[6], c[7], c[8])};
-                    }
-                }
-            }
+                if (const auto wp = planeFromString(value))
+                    documentWorkplane(*doc) = *wp;
+            } else if (key == QLatin1String("active_sketch"))
+                activeSketch = value.toLongLong();
         }
         sqlite3_finalize(stmt);
     }
@@ -382,6 +436,31 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
         sqlite3_finalize(stmt);
         doc->params().reevaluate();
     }
+
+    // sketch tables may be absent in files written before this feature.
+    if (sqlite3_prepare_v2(db.get(), "SELECT id,name,plane FROM sketches ORDER BY sort;",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            SketchInfo info;
+            info.id = sqlite3_column_int64(stmt, 0);
+            info.name = QString::fromUtf8(
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            if (const auto wp = planeFromString(QString::fromUtf8(
+                    reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)))))
+                info.plane = *wp;
+            doc->restoreSketch(info);
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (sqlite3_prepare_v2(db.get(), "SELECT entity_id,sketch_id FROM sketch_members;",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+            doc->setEntitySketch(sqlite3_column_int64(stmt, 0),
+                                 sqlite3_column_int64(stmt, 1));
+        sqlite3_finalize(stmt);
+    }
+    if (activeSketch != 0 && doc->sketchById(activeSketch))
+        doc->setActiveSketch(activeSketch);
 
     if (sqlite3_prepare_v2(db.get(),
                            "SELECT id,name,paper_w,paper_h FROM layouts ORDER BY sort;", -1,

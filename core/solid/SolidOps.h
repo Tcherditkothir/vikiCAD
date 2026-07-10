@@ -10,17 +10,9 @@
 #include <gp_Pnt.hxx>
 
 #include "doc/Document.h"
+#include "solid/WorkPlane.h"
 
 namespace viki {
-
-// Work plane for sketching/extruding: an orthonormal frame. A 2D sketch point
-// (u,v) maps to origin + u*xDir + v*(normal x xDir); extrusion runs along the
-// normal. Default = the world XY plane, so 2D drafting is unchanged.
-struct WorkPlane {
-    gp_Pnt origin = gp_Pnt(0, 0, 0);
-    gp_Dir normal = gp_Dir(0, 0, 1);
-    gp_Dir xDir = gp_Dir(1, 0, 0);
-};
 
 namespace solidops {
 

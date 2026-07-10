@@ -128,6 +128,10 @@ MainWindow::MainWindow()
                 sync3DView();
                 m_assemblyPanel->refresh();
             });
+    // Opening a sketch from the browser lands in the 2D canvas: the canvas IS
+    // the aligned plane view (u,v on the restored work plane).
+    connect(m_assemblyPanel, &AssemblyPanel::sketchActivated, this,
+            [this] { setView3D(false); });
 
     // When a panel is torn off (floating) give it real window chrome so it can
     // be maximized / full-screened, not just a frameless floating box.
@@ -293,6 +297,12 @@ MainWindow::MainWindow()
     m_coordLabel = new QLabel(QStringLiteral("0.00, 0.00"), this);
     m_coordLabel->setMinimumWidth(160);
     statusBar()->addWidget(m_coordLabel);
+
+    // While a sketch is open, its name stays visible here (transient
+    // showMessage() texts would hide it).
+    m_sketchLabel = new QLabel(this);
+    m_sketchLabel->setVisible(false);
+    statusBar()->addPermanentWidget(m_sketchLabel);
 
     const auto makeToggle = [this](const QString& text, bool checked,
                                    const std::function<void(bool)>& fn) {
@@ -1073,7 +1083,9 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
         m_docDirty3d = true; // the 3D scene needs a real rebuild on next sync
         m_layerPanel->refresh();
         m_assemblyPanel->refresh();
+        updateSketchStatus(); // sketch open/close/rename fires this too
     });
+    updateSketchStatus();
     m_canvas->clearSketchReference();
     m_doc->clearExtraSnapPoints();
     m_canvas->zoomExtents();
@@ -1164,6 +1176,17 @@ void MainWindow::refreshPromptAndMessages()
                                  .arg(m_doc->entityCount())
                                  .arg(m_selection.size()),
                              2000);
+}
+
+void MainWindow::updateSketchStatus()
+{
+    if (!m_sketchLabel || !m_doc)
+        return;
+    const SketchInfo* info = m_doc->sketchById(m_doc->activeSketch());
+    m_sketchLabel->setVisible(info != nullptr);
+    m_sketchLabel->setText(
+        info ? QStringLiteral("Sketch '%1' — SKETCH Close to finish").arg(info->name)
+             : QString());
 }
 
 void MainWindow::updateWindowTitle()
@@ -1356,9 +1379,27 @@ void MainWindow::beginSketchOnFace()
     m_doc->setExtraSnapPoints(
         solidops::faceSnapPoints2d(m_occtView->pickedFace(), *wp));
     setView3D(false); // back to the 2D canvas to draw the profile
+    // Face sketches are always captured as first-class sketches: auto-create
+    // one on the plane just set, with a generated unique name, through the
+    // shared processor (so CLI/IPC see the exact same state).
+    {
+        if (m_processor->hasActiveCommand())
+            m_processor->cancelActive(); // the line below must start SKETCH
+        QString name = QStringLiteral("Sketch on face — solid %1")
+                           .arg(qlonglong(m_occtView->pickedSolid()));
+        for (int n = 2; m_doc->sketchByName(name); ++n)
+            name = QStringLiteral("Sketch on face — solid %1 (%2)")
+                       .arg(qlonglong(m_occtView->pickedSolid()))
+                       .arg(n);
+        const auto r = m_processor->submit(
+            QStringLiteral("SKETCH NEW %1").arg(name), /*strict=*/false);
+        if (!r.ok)
+            m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+        refreshPromptAndMessages();
+    }
     m_commandBar->appendHistory(QStringLiteral(
         "Sketching on the face (blue dashed outline). Draw a closed profile, "
-        "then EXTRUDE. WORKPLANE XY resets."));
+        "then EXTRUDE. SKETCH Close to finish; WORKPLANE XY resets."));
 }
 
 void MainWindow::insertStepComponent()

@@ -28,6 +28,7 @@ add_executable(vikicad-tests
     test_stl_export.cpp
     test_obj_export.cpp
     test_params.cpp
+    test_sketch.cpp
     test_feature_tree.cpp
     test_feature_params.cpp
     test_standard_views.cpp

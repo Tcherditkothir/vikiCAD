@@ -34,6 +34,30 @@ AssemblyPanel::AssemblyPanel(QWidget* parent) : QWidget(parent)
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this,
             &AssemblyPanel::showContextMenu);
+    // Double-click a sketch row -> open it (same as the context-menu action).
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                if (const int64_t id = sketchIdForItem(item))
+                    openSketch(id);
+            });
+}
+
+// Sketch rows carry their registry id in UserRole + 3 (solid rows use
+// UserRole for the entity id and UserRole + 2 for feature nodes).
+int64_t AssemblyPanel::sketchIdForItem(QTreeWidgetItem* item)
+{
+    if (!item)
+        return 0;
+    const QVariant v = item->data(0, Qt::UserRole + 3);
+    return v.isValid() ? v.toLongLong() : 0;
+}
+
+void AssemblyPanel::openSketch(int64_t id)
+{
+    // Through the shared processor: work plane + snaps + active-sketch state
+    // are restored by the SKETCH command itself, exactly as if typed.
+    emit commandRequested(QStringLiteral("SKETCH OPEN %1").arg(id));
+    emit sketchActivated(); // host switches to the 2D canvas (= the plane)
 }
 
 std::vector<EntityId> AssemblyPanel::idsForItem(QTreeWidgetItem* item) const
@@ -41,6 +65,9 @@ std::vector<EntityId> AssemblyPanel::idsForItem(QTreeWidgetItem* item) const
     std::vector<EntityId> ids;
     if (!item)
         return ids;
+    // A sketch row selects the sketch's tagged entities.
+    if (const int64_t sk = sketchIdForItem(item))
+        return m_doc ? m_doc->sketchEntities(sk) : ids;
     const QVariant idVar = item->data(0, Qt::UserRole);
     if (idVar.isValid()) {
         ids.push_back(EntityId(idVar.toLongLong())); // single solid
@@ -70,6 +97,40 @@ void AssemblyPanel::showContextMenu(const QPoint& pos)
 {
     if (!m_doc)
         return;
+    // Sketch rows have their own menu (open / rename / delete-keep-entities).
+    if (const int64_t sk = sketchIdForItem(m_tree->itemAt(pos))) {
+        const SketchInfo* info = m_doc->sketchById(sk);
+        if (!info)
+            return;
+        QMenu menu(this);
+        connect(menu.addAction(QStringLiteral("Open sketch")), &QAction::triggered,
+                this, [this, sk] { openSketch(sk); });
+        connect(menu.addAction(QStringLiteral("Rename sketch…")),
+                &QAction::triggered, this, [this, sk, name = info->name] {
+                    bool ok = false;
+                    const QString fresh = QInputDialog::getText(
+                        this, QStringLiteral("Rename sketch"),
+                        QStringLiteral("Sketch name:"), QLineEdit::Normal, name, &ok);
+                    if (!ok || fresh.trimmed().isEmpty())
+                        return;
+                    if (!m_doc->renameSketch(sk, fresh))
+                        emit feedback(QStringLiteral(
+                                          "! rename: a sketch named '%1' already exists")
+                                          .arg(fresh.trimmed()));
+                    refresh();
+                });
+        menu.addSeparator();
+        // Deleting a sketch is registry-only: the drawn entities stay in the
+        // document, they just lose their sketch tag — the label says so.
+        connect(menu.addAction(QStringLiteral("Delete sketch (keep entities)")),
+                &QAction::triggered, this, [this, sk] {
+                    m_doc->removeSketch(sk);
+                    refresh();
+                    emit selectionChanged();
+                });
+        menu.exec(m_tree->viewport()->mapToGlobal(pos));
+        return;
+    }
     // Act on the multi-selection; fall back to the row under the cursor.
     std::vector<EntityId> ids = selectedIds();
     if (ids.empty())
@@ -218,6 +279,27 @@ void AssemblyPanel::refresh()
     m_tree->clear();
     if (!m_doc)
         return;
+    // Top-level "Sketches" group: one row per sketch (name + entity count).
+    // Sketches are lightweight references — they appear even when empty.
+    if (!m_doc->sketches().empty()) {
+        auto* group = new QTreeWidgetItem(
+            m_tree, {QStringLiteral("Sketches  (%1)").arg(m_doc->sketches().size())});
+        for (const SketchInfo& s : m_doc->sketches()) {
+            const size_t n = m_doc->sketchEntities(s.id).size();
+            auto* row = new QTreeWidgetItem(
+                group, {QStringLiteral("%1  (%2 %3)%4")
+                            .arg(s.name)
+                            .arg(n)
+                            .arg(n == 1 ? QStringLiteral("entity")
+                                        : QStringLiteral("entities"))
+                            .arg(s.id == m_doc->activeSketch()
+                                     ? QStringLiteral("  — open")
+                                     : QString())});
+            row->setData(0, Qt::UserRole + 3, qlonglong(s.id));
+            row->setToolTip(0, QStringLiteral("Double-click to open the sketch "
+                                              "(restores its work plane)"));
+        }
+    }
     // Group solids by component name (preserving insertion order per group).
     std::map<QString, std::vector<EntityId>> groups;
     std::vector<QString> order;

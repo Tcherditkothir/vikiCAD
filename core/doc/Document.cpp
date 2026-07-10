@@ -54,6 +54,10 @@ EntityId Document::addEntity(std::unique_ptr<Entity> entity)
 
     m_entities.emplace(id, std::move(entity));
     m_drawOrder.push_back(id);
+    // While a sketch is open, everything drawn belongs to it. This is THE
+    // single tagging choke point — commands never tag entities themselves.
+    if (m_activeSketch != 0)
+        m_sketchMembership[id] = m_activeSketch;
     return id;
 }
 
@@ -405,6 +409,105 @@ void Document::restoreEntity(std::unique_ptr<Entity> entity, EntityId id)
     m_entities.emplace(id, std::move(entity));
     m_drawOrder.push_back(id);
     m_nextId = std::max(m_nextId, id + 1);
+}
+
+const SketchInfo* Document::sketchById(int64_t id) const
+{
+    for (const SketchInfo& s : m_sketches)
+        if (s.id == id)
+            return &s;
+    return nullptr;
+}
+
+const SketchInfo* Document::sketchByName(const QString& name) const
+{
+    for (const SketchInfo& s : m_sketches)
+        if (s.name.compare(name, Qt::CaseInsensitive) == 0)
+            return &s;
+    return nullptr;
+}
+
+int64_t Document::createSketch(const QString& name, const WorkPlane& plane)
+{
+    if (sketchByName(name))
+        return 0; // names are unique (0 = refused, ids start at 1)
+    SketchInfo info;
+    info.id = m_nextSketchId++;
+    info.name = name;
+    info.plane = plane;
+    m_sketches.push_back(info);
+    notifyChanged();
+    return info.id;
+}
+
+bool Document::renameSketch(int64_t id, const QString& name)
+{
+    if (name.trimmed().isEmpty())
+        return false;
+    const SketchInfo* clash = sketchByName(name);
+    if (clash && clash->id != id)
+        return false;
+    for (SketchInfo& s : m_sketches) {
+        if (s.id == id) {
+            s.name = name.trimmed();
+            notifyChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Document::removeSketch(int64_t id)
+{
+    const auto it = std::find_if(m_sketches.begin(), m_sketches.end(),
+                                 [id](const SketchInfo& s) { return s.id == id; });
+    if (it == m_sketches.end())
+        return false;
+    m_sketches.erase(it);
+    // Keep the entities, drop their tags ("delete = registry entry + untag").
+    for (auto mit = m_sketchMembership.begin(); mit != m_sketchMembership.end();)
+        mit = (mit->second == id) ? m_sketchMembership.erase(mit) : std::next(mit);
+    if (m_activeSketch == id)
+        m_activeSketch = 0;
+    notifyChanged();
+    return true;
+}
+
+void Document::setActiveSketch(int64_t id)
+{
+    if (m_activeSketch == id)
+        return;
+    m_activeSketch = id;
+    notifyChanged();
+}
+
+int64_t Document::entitySketch(EntityId id) const
+{
+    const auto it = m_sketchMembership.find(id);
+    return it == m_sketchMembership.end() ? 0 : it->second;
+}
+
+void Document::setEntitySketch(EntityId id, int64_t sketchId)
+{
+    if (sketchId == 0)
+        m_sketchMembership.erase(id);
+    else
+        m_sketchMembership[id] = sketchId;
+}
+
+std::vector<EntityId> Document::sketchEntities(int64_t sketchId) const
+{
+    std::vector<EntityId> ids;
+    for (const EntityId id : m_drawOrder)
+        if (entitySketch(id) == sketchId)
+            ids.push_back(id);
+    return ids;
+}
+
+void Document::restoreSketch(const SketchInfo& info)
+{
+    m_sketches.push_back(info);
+    m_nextSketchId = std::max(m_nextSketchId, info.id + 1);
 }
 
 void Document::notifyChanged()
