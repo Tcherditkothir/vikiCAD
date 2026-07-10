@@ -153,6 +153,12 @@ MainWindow::MainWindow()
     fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
                         &MainWindow::insertStepComponent);
     fileMenu->addSeparator();
+    // Output commands (they run through the processor like typed commands).
+    fileMenu->addAction(QStringLiteral("Page &Layout..."), this,
+                        [this] { onCommandEntered(QStringLiteral("LAYOUT")); });
+    fileMenu->addAction(QStringLiteral("&Plot / Print..."), this,
+                        [this] { onCommandEntered(QStringLiteral("PLOT")); });
+    fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("&Preferences..."), this,
                         &MainWindow::openPreferences);
     fileMenu->addSeparator();
@@ -179,12 +185,43 @@ MainWindow::MainWindow()
     connect(delAct, &QAction::triggered, this,
             [this] { onCommandEntered(QStringLiteral("ERASE")); });
 
+    viewMenu0->addSeparator();
+    viewMenu0->addAction(QStringLiteral("&Zoom..."), this,
+                         [this] { onCommandEntered(QStringLiteral("ZOOM")); });
     menuBar()->addMenu(viewMenu0);
 
     // Grouped command toolbars (each button = the same command as typing it).
     viewMenu0->addSeparator();
     buildToolPanels(this, viewMenu0,
                     [this](const QString& command) { onCommandEntered(command); });
+
+    // --- Help menu (last, per convention)
+    auto* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
+    helpMenu->addAction(QStringLiteral("&About VikiCAD"), this, [this] {
+        QMessageBox::about(
+            this, QStringLiteral("About VikiCAD"),
+            QStringLiteral(
+                "<h3>VikiCAD %1</h3>"
+                "<p>A 2D/3D CAD application — DXF/DWG drafting and "
+                "OpenCASCADE solid modeling (built against OCCT %2).</p>"
+                "<p>Copyright © 2026 Lex Richer.<br>"
+                "Developed with Claude (Anthropic). Built on Qt, "
+                "Open CASCADE Technology, libdxfrw and LibreDWG.</p>"
+                "<p>This program is free software: you can redistribute it "
+                "and/or modify it under the terms of the GNU General Public "
+                "License as published by the Free Software Foundation, "
+                "either version 3 of the License, or (at your option) any "
+                "later version. It is distributed in the hope that it will "
+                "be useful, but WITHOUT ANY WARRANTY; without even the "
+                "implied warranty of MERCHANTABILITY or FITNESS FOR A "
+                "PARTICULAR PURPOSE. See "
+                "<a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">"
+                "https://www.gnu.org/licenses/gpl-3.0.html</a>.</p>")
+                .arg(QString::fromLatin1(versionString()),
+                     QString::fromLatin1(occtVersionString())));
+    });
+    helpMenu->addAction(QStringLiteral("About &Qt"),
+                        this, [this] { QMessageBox::aboutQt(this); });
 
     // --- status bar: coords + mode toggles + units
     m_coordLabel = new QLabel(QStringLiteral("0.00, 0.00"), this);
