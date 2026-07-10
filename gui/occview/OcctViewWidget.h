@@ -7,6 +7,7 @@
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_InteractiveObject.hxx>
+#include <AIS_ViewCube.hxx>
 #include <TopoDS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
@@ -51,6 +52,10 @@ public:
     void fitView();
     // 10 mm reference grid in the 3D view, on/off.
     void setGridVisible(bool on);
+    // Mouse mapping (Preferences): which button orbits / pans, zoom wheel
+    // direction. Buttons may be Qt::LeftButton/MiddleButton/RightButton.
+    void setMouseBindings(Qt::MouseButton orbit, Qt::MouseButton pan,
+                          bool zoomInvert);
     bool isReady() const { return !m_view.IsNull(); }
     // Dump the 3D framebuffer to an image file (QWidget::grab can't capture
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
@@ -94,6 +99,9 @@ signals:
     // Run a command line through the shared processor (right-click Move…):
     // the host submits it exactly as if typed.
     void commandRequested(const QString& line);
+    // Right-click on a bore wall: edit THAT hole (parametric, undoable).
+    void moveHoleRequested(EntityId solid, int nodeIndex, double cx, double cy);
+    void holeDiameterRequested(EntityId solid, int nodeIndex, double diameter);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -129,6 +137,9 @@ private:
     QPoint m_pressPos;
     bool m_initFailed = false;
     bool m_fittedOnce = false;
+    Qt::MouseButton m_orbitButton = Qt::LeftButton;
+    Qt::MouseButton m_panButton = Qt::MiddleButton;
+    bool m_zoomInvert = false;
     // Until the user orbits/pans/zooms, window resizes re-frame the scene
     // (fixes the tiny-model-in-a-corner startup); afterwards the camera is his.
     bool m_userNavigated = false;
@@ -151,6 +162,8 @@ private:
 
     // Transient ghost of the active command's pending result.
     Handle(AIS_InteractiveObject) m_ghost;
+    // Clickable orientation cube pinned to the top-right corner.
+    Handle(AIS_ViewCube) m_viewCube;
     // What the cursor last resolved to during a Point prompt.
     bool m_hoverValid = false;
     Vec2d m_hoverUv;

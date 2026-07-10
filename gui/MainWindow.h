@@ -1,14 +1,17 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <QMainWindow>
 
+#include "PreferencesDialog.h" // MousePrefs
 #include "cmd/CommandProcessor.h"
 #include "doc/Document.h"
 #include "doc/SelectionSet.h"
 
 class QLabel;
+class QShortcut;
 class QStackedWidget;
 class QToolBar;
 class QToolButton;
@@ -87,6 +90,12 @@ private:
     bool documentIsSolidsOnly() const;
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);
     void loadShortcuts();
+    // Preferences: mouse mapping (prefs.json) + editable shortcut table
+    // (shortcuts.json). openPreferences() re-applies both live.
+    void openPreferences();
+    void loadMousePrefs();
+    MousePrefs m_mousePrefs;
+    std::vector<QShortcut*> m_userShortcuts; // rebuilt when edited
 };
 
 } // namespace viki

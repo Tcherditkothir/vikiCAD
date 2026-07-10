@@ -11,9 +11,12 @@
 #include <QStringList>
 #include <QWheelEvent>
 
+#include <AIS_AnimationCamera.hxx>
 #include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_ViewCube.hxx>
 #include <Aspect_Window.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_TypeOfHighlight.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -85,6 +88,21 @@ void OcctViewWidget::initViewer()
         m_context->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(orange);
         m_context->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)
             ->SetTransparency(0.0f);
+        // The ViewCube (top-right corner): click faces/edges/corners to
+        // orient the camera, Fusion-style. Clicks are routed in
+        // mouseReleaseEvent (AIS_ViewCubeOwner -> HandleClick).
+        m_viewCube = new AIS_ViewCube();
+        m_viewCube->SetTransformPersistence(new Graphic3d_TransformPers(
+            Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
+            Graphic3d_Vec2i(100, 100)));
+        m_viewCube->SetSize(52.0);
+        m_viewCube->SetBoxColor(Quantity_Color(0.62, 0.66, 0.72, Quantity_TOC_RGB));
+        m_viewCube->SetTextColor(Quantity_NOC_BLACK);
+        m_viewCube->SetViewAnimation(
+            new AIS_AnimationCamera("viewcube", m_view));
+        m_viewCube->SetFixedAnimationLoop(true);
+        m_viewCube->SetDuration(0.2);
+        m_context->Display(m_viewCube, false);
     } catch (...) {
         // No GL/X available (offscreen runs): degrade gracefully.
         m_initFailed = true;
@@ -111,6 +129,8 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         return;
     m_context->RemoveAll(false);
     m_ghost.Nullify(); // RemoveAll dropped it with everything else
+    if (!m_viewCube.IsNull())
+        m_context->Display(m_viewCube, false); // the cube survives rebuilds
     m_shapes.clear();
     m_pickedFace = TopoDS_Shape();
     m_pickedSolid = kInvalidEntityId;
@@ -284,11 +304,19 @@ QPoint OcctViewWidget::devicePos(const QPoint& logical) const
                   int(logical.y() * double(ph) / double(height())));
 }
 
+void OcctViewWidget::setMouseBindings(Qt::MouseButton orbit, Qt::MouseButton pan,
+                                      bool zoomInvert)
+{
+    m_orbitButton = orbit;
+    m_panButton = pan == orbit ? Qt::MiddleButton : pan; // never the same
+    m_zoomInvert = zoomInvert;
+}
+
 void OcctViewWidget::mousePressEvent(QMouseEvent* event)
 {
     m_lastPos = event->pos();
     m_pressPos = event->pos();
-    if (!m_view.IsNull() && event->button() == Qt::LeftButton) {
+    if (!m_view.IsNull() && event->button() == m_orbitButton) {
         const QPoint p = devicePos(event->pos());
         m_view->StartRotation(p.x(), p.y());
     }
@@ -448,12 +476,12 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
     if (m_view.IsNull())
         return;
     const QPoint p = devicePos(event->pos());
-    if (event->buttons() & Qt::LeftButton) {
+    if (event->buttons() & m_orbitButton) {
         // A real drag (not a click) = the user took over the camera.
         if ((event->pos() - m_pressPos).manhattanLength() >= 4)
             m_userNavigated = true;
         m_view->Rotation(p.x(), p.y());
-    } else if (event->buttons() & Qt::MiddleButton) {
+    } else if (event->buttons() & m_panButton) {
         m_userNavigated = true;
         const QPoint last = devicePos(m_lastPos);
         m_view->Pan(p.x() - last.x(), last.y() - p.y());
@@ -562,6 +590,17 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     const QPoint p = devicePos(event->pos());
 
+    // A click on the ViewCube orients the camera — nothing else.
+    m_context->MoveTo(p.x(), p.y(), m_view, Standard_False);
+    Handle(AIS_ViewCubeOwner) cubeOwner =
+        Handle(AIS_ViewCubeOwner)::DownCast(m_context->DetectedOwner());
+    if (!cubeOwner.IsNull() && !m_viewCube.IsNull()) {
+        m_viewCube->HandleClick(cubeOwner);
+        m_userNavigated = true; // deliberate camera placement
+        m_view->Redraw();
+        return;
+    }
+
     // A running command asking for a point: the click IS the point (work-plane
     // coords resolved by the last hover). If the command then asks for an
     // entity and the click was on a solid's face, the same click answers that
@@ -627,8 +666,9 @@ void OcctViewWidget::wheelEvent(QWheelEvent* event)
     if (m_view.IsNull())
         return;
     m_userNavigated = true;
-    const double factor = event->angleDelta().y() > 0 ? 1.2 : 1.0 / 1.2;
-    m_view->SetZoom(factor);
+    const bool up = m_zoomInvert ? event->angleDelta().y() < 0
+                                 : event->angleDelta().y() > 0;
+    m_view->SetZoom(up ? 1.2 : 1.0 / 1.2);
 }
 
 // Same typing contract as the 2D canvas: no need to click the command bar —
@@ -671,6 +711,26 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
     QMenu menu(this);
+    // The picked face is a bore wall? Offer to edit THAT hole first — moving
+    // the hole, not the solid, is what a click on a hole means.
+    int holeNode = -1;
+    const FeatureTree* tree = nullptr;
+    if (m_doc && !m_pickedFace.IsNull()) {
+        const auto* solidEnt =
+            dynamic_cast<const SolidEntity*>(m_doc->entity(m_pickedSolid));
+        if (solidEnt && solidEnt->features) {
+            holeNode = featureForFace(*solidEnt->features, m_pickedFace);
+            tree = solidEnt->features.get();
+        }
+    }
+    QAction* mvHole = nullptr;
+    QAction* diaHole = nullptr;
+    if (holeNode >= 0) {
+        mvHole = menu.addAction(
+            QStringLiteral("Move hole %1… (center x, y)").arg(holeNode));
+        diaHole = menu.addAction(QStringLiteral("Hole %1 diameter…").arg(holeNode));
+        menu.addSeparator();
+    }
     // Always available on a picked solid: move it (typed offset or two
     // picked points — the two-point flow then clicks the solid to move).
     QAction* mvNum = menu.addAction(QStringLiteral("Move solid… (dx, dy, dz)"));
@@ -697,6 +757,34 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
     }
     QAction* chosen = menu.exec(event->globalPos());
     bool ok = false;
+    if (holeNode >= 0 && chosen == mvHole && tree) {
+        const Vec2d cur = tree->nodeAt(holeNode).holeCenter;
+        const QString text = QInputDialog::getText(
+            this, QStringLiteral("Move hole"),
+            QStringLiteral("New center x, y (bore-plane mm):"),
+            QLineEdit::Normal,
+            QStringLiteral("%1, %2").arg(cur.x).arg(cur.y), &ok);
+        if (!ok)
+            return;
+        const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        if (parts.size() != 2)
+            return;
+        bool okx = false, oky = false;
+        const double cx = parts[0].trimmed().toDouble(&okx);
+        const double cy = parts[1].trimmed().toDouble(&oky);
+        if (okx && oky)
+            emit moveHoleRequested(m_pickedSolid, holeNode, cx, cy);
+        return;
+    }
+    if (holeNode >= 0 && chosen == diaHole && tree) {
+        const double d = QInputDialog::getDouble(
+            this, QStringLiteral("Hole diameter"),
+            QStringLiteral("Diameter (mm):"), tree->nodeAt(holeNode).diameter,
+            0.001, 1.0e6, 3, &ok);
+        if (ok)
+            emit holeDiameterRequested(m_pickedSolid, holeNode, d);
+        return;
+    }
     if (chosen == mvNum) {
         const QString text = QInputDialog::getText(
             this, QStringLiteral("Move solid"),

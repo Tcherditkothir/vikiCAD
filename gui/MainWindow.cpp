@@ -38,6 +38,7 @@
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
+#include "solid/FeatureParams.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -151,6 +152,9 @@ MainWindow::MainWindow()
 #endif
     fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
                         &MainWindow::insertStepComponent);
+    fileMenu->addSeparator();
+    fileMenu->addAction(QStringLiteral("&Preferences..."), this,
+                        &MainWindow::openPreferences);
     fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     menuBar()->addMenu(viewMenu0);
@@ -317,6 +321,7 @@ MainWindow::MainWindow()
             QStringLiteral("IPC: listening on local socket 'vikicad'"));
 
     loadShortcuts();
+    loadMousePrefs();
     m_commandBar->focusInput();
 }
 
@@ -326,6 +331,9 @@ void MainWindow::toggle3D(bool on)
         if (!m_occtView) {
             m_occtView = new OcctViewWidget(this);
             m_occtView->attach(m_doc.get(), m_processor.get(), &m_selection);
+            m_occtView->setMouseBindings(m_mousePrefs.orbitButton(),
+                                         m_mousePrefs.panButton(),
+                                         m_mousePrefs.zoomInvert);
             connect(m_occtView, &OcctViewWidget::interaction, this,
                     &MainWindow::onInteraction);
             // Type over the 3D view -> characters land in the command bar
@@ -500,6 +508,45 @@ void MainWindow::toggle3D(bool on)
                     [this](const QString& line) {
                         m_commandBar->appendHistory(QStringLiteral("> %1").arg(line));
                         onCommandEntered(line);
+                    });
+            // Right-click on a bore wall: edit THAT hole (parametric).
+            const auto editHole = [this](EntityId id, int node,
+                                         const std::vector<std::pair<QString, double>>&
+                                             params,
+                                         const QString& tx) {
+                m_doc->beginTransaction(tx);
+                bool ok = false;
+                if (auto* s = dynamic_cast<SolidEntity*>(m_doc->beginModify(id))) {
+                    ok = s->features != nullptr;
+                    for (const auto& p : params)
+                        ok = ok && featureparams::set(*s->features, node,
+                                                      p.first, p.second);
+                    ok = ok && s->regenerateFeatures();
+                    m_doc->endModify(id);
+                }
+                if (ok) {
+                    m_doc->commitTransaction();
+                    sync3DView();
+                    m_propsPanel->refresh();
+                    m_assemblyPanel->refresh();
+                    m_commandBar->appendHistory(QStringLiteral("%1: done").arg(tx));
+                } else {
+                    m_doc->rollbackTransaction();
+                    m_commandBar->appendHistory(
+                        QStringLiteral("! %1 failed (regeneration rejected)").arg(tx));
+                }
+            };
+            connect(m_occtView, &OcctViewWidget::moveHoleRequested, this,
+                    [editHole](EntityId id, int node, double cx, double cy) {
+                        editHole(id, node,
+                                 {{QStringLiteral("center x"), cx},
+                                  {QStringLiteral("center y"), cy}},
+                                 QStringLiteral("MOVE HOLE"));
+                    });
+            connect(m_occtView, &OcctViewWidget::holeDiameterRequested, this,
+                    [editHole](EntityId id, int node, double d) {
+                        editHole(id, node, {{QStringLiteral("diameter"), d}},
+                                 QStringLiteral("HOLE DIAMETER"));
                     });
             m_viewStack->addWidget(m_occtView);
         }
@@ -692,6 +739,10 @@ void MainWindow::loadShortcuts()
     }
     if (!file.open(QIODevice::ReadOnly))
         return;
+    // Rebuildable: Preferences edits drop the old bindings and re-run this.
+    for (QShortcut* sc : m_userShortcuts)
+        sc->deleteLater();
+    m_userShortcuts.clear();
     const QJsonObject map = QJsonDocument::fromJson(file.readAll()).object();
     for (auto it = map.begin(); it != map.end(); ++it) {
         const QString commandLine = it.value().toString();
@@ -700,7 +751,64 @@ void MainWindow::loadShortcuts()
         connect(shortcut, &QShortcut::activated, this, [this, commandLine] {
             onCommandEntered(commandLine);
         });
+        m_userShortcuts.push_back(shortcut);
     }
+}
+
+void MainWindow::loadMousePrefs()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QFile file(dir + QStringLiteral("/prefs.json"));
+    if (!file.open(QIODevice::ReadOnly))
+        return; // defaults
+    const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+    if (o.contains(QStringLiteral("orbit")))
+        m_mousePrefs.orbit = o[QStringLiteral("orbit")].toString();
+    if (o.contains(QStringLiteral("pan")))
+        m_mousePrefs.pan = o[QStringLiteral("pan")].toString();
+    m_mousePrefs.zoomInvert = o[QStringLiteral("zoomInvert")].toBool(false);
+}
+
+void MainWindow::openPreferences()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // Current shortcuts, straight from the file the bindings were built from.
+    QJsonObject shortcuts;
+    {
+        QFile file(dir + QStringLiteral("/shortcuts.json"));
+        if (file.open(QIODevice::ReadOnly))
+            shortcuts = QJsonDocument::fromJson(file.readAll()).object();
+    }
+    PreferencesDialog dialog(m_mousePrefs, shortcuts, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    // Persist + apply the mouse mapping.
+    m_mousePrefs = dialog.mousePrefs();
+    {
+        QFile file(dir + QStringLiteral("/prefs.json"));
+        if (file.open(QIODevice::WriteOnly)) {
+            const QJsonObject o{
+                {QStringLiteral("orbit"), m_mousePrefs.orbit},
+                {QStringLiteral("pan"), m_mousePrefs.pan},
+                {QStringLiteral("zoomInvert"), m_mousePrefs.zoomInvert}};
+            file.write(QJsonDocument(o).toJson(QJsonDocument::Indented));
+        }
+    }
+    if (m_occtView)
+        m_occtView->setMouseBindings(m_mousePrefs.orbitButton(),
+                                     m_mousePrefs.panButton(),
+                                     m_mousePrefs.zoomInvert);
+    // Persist + rebuild the keyboard shortcuts.
+    {
+        QFile file(dir + QStringLiteral("/shortcuts.json"));
+        if (file.open(QIODevice::WriteOnly))
+            file.write(QJsonDocument(dialog.shortcuts())
+                           .toJson(QJsonDocument::Indented));
+    }
+    loadShortcuts();
+    m_commandBar->appendHistory(QStringLiteral("Preferences applied"));
 }
 
 MainWindow::~MainWindow() = default;
