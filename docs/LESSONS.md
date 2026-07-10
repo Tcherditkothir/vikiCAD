@@ -53,3 +53,24 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   le stash (ici `makeHole` complet à ~90 %), le finir à la main (enregistrement
   de la commande + test + build) est plus rapide et fiable que de tout jeter et
   relancer — mes propres appels d'outils ne subissent pas la même fenêtre 529.
+
+## 2026-07-10 — Leçons de la passe « professionnel »
+
+- **Piège Qt (grave)** : deux QShortcut (ou QAction+QShortcut) sur la même
+  touche → « ambiguous » → AUCUN ne se déclenche, sans erreur ni log. Ctrl+Z
+  était mort depuis sa création. Règle : une touche = UN SEUL propriétaire ;
+  les raccourcis standards vivent sur les QAction de menu ; tout chargeur de
+  raccourcis utilisateur doit filtrer les touches déjà prises.
+- **Piège OCCT** : un booléen peut « réussir » (IsDone) en produisant un
+  compound SANS solide (ex. prisme d'une face courbe re-fusionné). Toujours
+  vérifier TopExp SOLID avant de déclarer ok — sinon l'utilisateur voit sa
+  pièce disparaître.
+- **Transactions** : Document::undo refuse si une transaction est ouverte —
+  correct, mais une fuite (early return/exception entre begin et commit) tue
+  l'undo EN SILENCE. RAII (TransactionScope) partout dans la GUI + soupape
+  dans UNDO qui rollback et prévient.
+- **Process (le plus important)** : reproduire le bug AVANT de corriger
+  (headless d'abord), et valider sur la VRAIE GUI via IPC + diff de captures
+  (`scripts/gui-smoke.sh`, 40 checks) AVANT de livrer. Les allers-retours
+  « corrigé → non ça marche pas » venaient de corrections plausibles jamais
+  exécutées dans la GUI réelle.

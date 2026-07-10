@@ -343,3 +343,42 @@ clic-unique HOLE, Split par clic droit, édition du diamètre dans Propriétés,
 MOVE3D P à la souris. Backlog suivant (avec son pilotage) : solveur de
 contraintes 2D, vue de sketch réorientée, gizmo 3D, ViewCube widget,
 enregistrement EXTRUDE dans l'historique paramétrique.
+
+## 2026-07-10 — Passe « professionnel » : causes racines + harnais d'auto-test
+
+Retour dur (et juste) de Lex : push/pull → pièce disparue, Ctrl+Z toujours
+mort, pas de menu Edit, déplacements à l'aveugle — « trouve des process pour
+te tester, révise tout, ne me déçois plus ».
+
+**Méthode changée : reproduire avant de corriger, vérifier sur la vraie GUI
+avant de livrer.**
+
+Causes racines trouvées par reproduction/lecture (pas par devinette) :
+1. **Pièce disparue** : `pushPullFace` sur face COURBE → ok=true avec un
+   compound VIDE (0 solide), commité tel quel. Fix double : refus des faces
+   non planes + `booleanOp`/`requireSolid` refusent tout résultat sans solide
+   (généralisé à tous les producteurs de SolidResult, commit 9ecb3b1).
+2. **Ctrl+Z JAMAIS fonctionnel** : DEUX QShortcut sur Ctrl+Z (constructeur +
+   shortcuts.json) → « ambiguous » Qt → aucun ne tire. Fix : menu **Edit**
+   (Undo/Redo/Delete, un seul binding chacun) + loadShortcuts ignore les
+   touches déjà prises par les menus.
+3. **RPC exec ne rafraîchissait pas la 3D** (3 captures identiques au test
+   live). Fix : sync3DView dans le chemin IPC.
+4. **Trièdre X/Y/Z** qui suit le curseur pendant toute saisie de point (fini
+   le déplacement à tâtons).
+
+**Harnais d'auto-test GUI : `scripts/gui-smoke.sh`** (commit 7beff7d) — lance
+la vraie GUI (systemd-run), la pilote par IPC, vérifie 40 assertions : compte
+d'entités ET diffs de captures d'écran (UNDO doit restituer le rendu au pixel
+près), split/combine, export STL. À exécuter AVANT toute livraison à Lex.
+A aussi corrigé au passage la lecture des réponses IPC fragmentées du CLI.
+
+**Durcissement systémique** (workflow 5 agents, tous verts) :
+- `TransactionScope` RAII + soupape UNDO/REDO (une transaction fuitée tuait
+  l'undo en silence — plus possible, commit d49ddbb).
+- `requireSolid` sur toutes les ops solides + 3 tests dégénérés (9ecb3b1).
+- Menus complets : menu **Solids**, **Help > About** (version + GPLv3),
+  vérification de couverture commande↔menu (69fe91c).
+- Chasse aux échecs silencieux : chaque action refusée dit pourquoi (9b4ecd7).
+
+**État : 1620 assertions / 210 cas verts + gui-smoke 40/40.**
