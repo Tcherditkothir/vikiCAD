@@ -224,11 +224,15 @@ void OcctViewWidget::refreshFrom(const Document& doc)
             curveAis->SetWidth(2.0);
             m_shapes.push_back({curveAis, id});
             m_context->Display(curveAis, 0 /*wireframe*/, 0, false);
-            m_context->Activate(curveAis, 0); // pickable as a WHOLE entity
+            // WIRE selection mode: OCCT ranks wire owners ABOVE face owners,
+            // so hovering a sketch curve lying ON a face now pre-highlights
+            // the CURVE, not the face under it (the selection-conflict fix).
+            const int wireMode = AIS_Shape::SelectionMode(TopAbs_WIRE);
+            m_context->Activate(curveAis, wireMode);
             // Thin curves need a fat pick tolerance or they are impossible to
             // hit next to a big solid (why "je n'arrive pas à sélectionner le
             // cercle du sketch").
-            m_context->SetSelectionSensitivity(curveAis, 0, 8);
+            m_context->SetSelectionSensitivity(curveAis, wireMode, 8);
             if (m_selection && m_selection->contains(id))
                 m_context->AddOrRemoveSelected(curveAis, false);
         }
@@ -784,6 +788,24 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     const QPoint p = devicePos(event->pos());
 
+    // Alt+click: the selection-conflict resolver — list EVERYTHING under the
+    // cursor (face / edge / sketch curve / solid, depth-ordered) and pick the
+    // one you meant.
+    if (event->modifiers().testFlag(Qt::AltModifier)) {
+        const auto candidates = pickCandidatesAt(p);
+        if (candidates.empty())
+            return;
+        QMenu menu(this);
+        std::vector<QAction*> acts;
+        for (const PickCandidate& c : candidates)
+            acts.push_back(menu.addAction(c.label));
+        QAction* chosen = menu.exec(event->globalPosition().toPoint());
+        for (size_t i = 0; i < acts.size(); ++i)
+            if (chosen == acts[i])
+                chooseCandidate(candidates[i]);
+        return;
+    }
+
     // A click on the ViewCube orients the camera — nothing else.
     m_context->MoveTo(p.x(), p.y(), m_view, Standard_False);
     Handle(AIS_ViewCubeOwner) cubeOwner =
@@ -898,6 +920,91 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
     QWidget::keyPressEvent(event);
 }
 
+std::vector<OcctViewWidget::PickCandidate>
+OcctViewWidget::pickCandidatesAt(const QPoint& physical)
+{
+    std::vector<PickCandidate> out;
+    if (m_view.IsNull() || m_context.IsNull() || !m_doc)
+        return out;
+    m_context->MoveTo(physical.x(), physical.y(), m_view, Standard_False);
+    const auto sel = m_context->MainSelector();
+    if (sel.IsNull())
+        return out;
+    for (Standard_Integer i = 1; i <= sel->NbPicked(); ++i) {
+        const Handle(SelectMgr_EntityOwner) owner = sel->Picked(i);
+        if (owner.IsNull())
+            continue;
+        if (!Handle(AIS_ViewCubeOwner)::DownCast(owner).IsNull())
+            continue; // the cube is a camera control, not a pickable
+        const Handle(AIS_InteractiveObject) io =
+            Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+        EntityId id = kInvalidEntityId;
+        for (const auto& pr : m_shapes)
+            if (pr.first == io)
+                id = pr.second;
+        if (id == kInvalidEntityId)
+            continue;
+        const Entity* e = m_doc->entity(id);
+        const QString what = e ? QLatin1String(e->typeName())
+                               : QStringLiteral("entity");
+        QString label = QStringLiteral("%1 #%2").arg(what).arg(qlonglong(id));
+        const Handle(StdSelect_BRepOwner) brep =
+            Handle(StdSelect_BRepOwner)::DownCast(owner);
+        if (!brep.IsNull() && brep->HasShape()) {
+            switch (brep->Shape().ShapeType()) {
+            case TopAbs_FACE:
+                label = QStringLiteral("face of %1").arg(label);
+                break;
+            case TopAbs_EDGE:
+                label = QStringLiteral("edge of %1").arg(label);
+                break;
+            case TopAbs_VERTEX:
+                label = QStringLiteral("vertex of %1").arg(label);
+                break;
+            default:
+                break; // wires/whole shapes read fine as the entity itself
+            }
+        }
+        // Skip exact duplicates (several triangulation hits on one owner).
+        bool dup = false;
+        for (const PickCandidate& c : out)
+            dup = dup || c.owner == owner;
+        if (!dup)
+            out.push_back({label, owner, id});
+    }
+    return out;
+}
+
+void OcctViewWidget::chooseCandidate(const PickCandidate& candidate)
+{
+    if (m_context.IsNull() || candidate.owner.IsNull())
+        return;
+    m_context->ClearSelected(false);
+    m_context->AddOrRemoveSelected(candidate.owner, false);
+    m_pickedSolid = candidate.id;
+    m_pickedFace = TopoDS_Shape();
+    m_pickedFaces.clear();
+    m_pickedEdges.clear();
+    const Handle(StdSelect_BRepOwner) brep =
+        Handle(StdSelect_BRepOwner)::DownCast(candidate.owner);
+    if (!brep.IsNull() && brep->HasShape()) {
+        if (brep->Shape().ShapeType() == TopAbs_FACE) {
+            m_pickedFace = brep->Shape();
+            m_pickedFaces.push_back(brep->Shape());
+        } else if (brep->Shape().ShapeType() == TopAbs_EDGE) {
+            m_pickedEdges.push_back(brep->Shape());
+        }
+    }
+    if (m_selection) {
+        m_selection->clear();
+        m_selection->add(candidate.id);
+    }
+    m_keepPickHighlight = true; // keep THIS precise highlight
+    m_context->UpdateCurrentViewer();
+    emit picked(QStringLiteral("selected: %1").arg(candidate.label));
+    emit interaction();
+}
+
 void OcctViewWidget::showContextMenu(const QPoint& globalPos)
 {
     // During a KEYWORD prompt (e.g. EXTRUDE "Mode [New/Join/Cut/Symmetric]"),
@@ -952,39 +1059,56 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
             tree = solidEnt->features.get();
         }
     }
+    // ---- The action TREE: everything applicable to the element under the
+    // cursor, grouped so the software teaches itself.
     QAction* mvHole = nullptr;
     QAction* diaHole = nullptr;
     if (holeNode >= 0) {
-        mvHole = menu.addAction(
-            QStringLiteral("Move hole %1… (center x, y)").arg(holeNode));
-        diaHole = menu.addAction(QStringLiteral("Hole %1 diameter…").arg(holeNode));
-        menu.addSeparator();
+        QMenu* holeMenu =
+            menu.addMenu(QStringLiteral("Hole %1 ▸").arg(holeNode));
+        mvHole = holeMenu->addAction(QStringLiteral("Move… (center x, y)"));
+        diaHole = holeMenu->addAction(QStringLiteral("Diameter…"));
     }
-    // Always available on a picked solid: move it (typed offset or two
-    // picked points — the two-point flow then clicks the solid to move).
-    QAction* mvNum = menu.addAction(QStringLiteral("Move solid… (dx, dy, dz)"));
-    QAction* mvPts = menu.addAction(QStringLiteral("Move by two points"));
-    menu.addSeparator();
     QAction* pp = nullptr;
     QAction* sk = nullptr;
     QAction* sp = nullptr;
     QAction* sh = nullptr;
     if (!m_pickedFace.IsNull()) {
-        pp = menu.addAction(QStringLiteral("Push/Pull face…"));
-        sk = menu.addAction(QStringLiteral("Sketch on this face"));
-        sp = menu.addAction(QStringLiteral("Split solid by this face"));
-        sh = menu.addAction(QStringLiteral("Shell — keep %1 face(s) open…")
-                                .arg(m_pickedFaces.size()));
+        QMenu* faceMenu = menu.addMenu(QStringLiteral("Face ▸"));
+        pp = faceMenu->addAction(QStringLiteral("Push/Pull…"));
+        sk = faceMenu->addAction(QStringLiteral("Sketch on this face"));
+        sp = faceMenu->addAction(QStringLiteral("Split solid by this face"));
+        sh = faceMenu->addAction(QStringLiteral("Shell — keep %1 face(s) open…")
+                                     .arg(m_pickedFaces.size()));
     }
     QAction* fe = nullptr;
     QAction* ce = nullptr;
     if (!m_pickedEdges.empty()) {
-        fe = menu.addAction(QStringLiteral("Fillet %1 selected edge(s)…")
-                                .arg(m_pickedEdges.size()));
-        ce = menu.addAction(QStringLiteral("Chamfer %1 selected edge(s)…")
-                                .arg(m_pickedEdges.size()));
+        QMenu* edgeMenu = menu.addMenu(
+            QStringLiteral("Edges (%1) ▸").arg(m_pickedEdges.size()));
+        fe = edgeMenu->addAction(QStringLiteral("Fillet…"));
+        ce = edgeMenu->addAction(QStringLiteral("Chamfer…"));
+    }
+    QMenu* moveMenu = menu.addMenu(QStringLiteral("Move ▸"));
+    QAction* mvNum = moveMenu->addAction(QStringLiteral("Move solid… (dx, dy, dz)"));
+    QAction* mvPts = moveMenu->addAction(QStringLiteral("Move by two points"));
+    // "Select ▸": the conflict resolver — pick exactly WHICH of the
+    // overlapping things under the cursor you meant (also on Alt+click).
+    menu.addSeparator();
+    const std::vector<PickCandidate> candidates =
+        pickCandidatesAt(devicePos(mapFromGlobal(globalPos)));
+    std::vector<QAction*> candidateActs;
+    if (!candidates.empty()) {
+        QMenu* selMenu = menu.addMenu(QStringLiteral("Select ▸"));
+        for (const PickCandidate& c : candidates)
+            candidateActs.push_back(selMenu->addAction(c.label));
     }
     QAction* chosen = menu.exec(globalPos);
+    for (size_t i = 0; i < candidateActs.size(); ++i)
+        if (chosen == candidateActs[i]) {
+            chooseCandidate(candidates[i]);
+            return;
+        }
     bool ok = false;
     if (holeNode >= 0 && chosen == mvHole && tree) {
         const Vec2d cur = tree->nodeAt(holeNode).holeCenter;

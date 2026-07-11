@@ -217,6 +217,11 @@ MainWindow::MainWindow()
     };
     buildToolMenus(this, runCommand);
     m_toolTabs = buildToolTabs(this, runCommand);
+    // Pin an EXPLICIT arrow cursor on the button areas: cursor inheritance
+    // near the native GL view occasionally left the pointer invisible over
+    // the top buttons.
+    m_toolTabs->setCursor(Qt::ArrowCursor);
+    menuBar()->setCursor(Qt::ArrowCursor);
 
     // Big, unmissable "Finish sketch" button (Fusion-style), pinned to the
     // right corner of the tool tab strip while a sketch is open. Finishing a

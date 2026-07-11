@@ -138,6 +138,16 @@ private:
     // Right-click menu, synthesized on a SHORT right click (a right DRAG
     // orbits the camera, so Qt's automatic press-time menu is suppressed).
     void showContextMenu(const QPoint& globalPos);
+    // Selection-conflict resolver: everything under the cursor, depth-first,
+    // with human labels ("face of solid #3", "circle #12"...). Shown on
+    // Alt+click and as the "Select ▸" submenu of the right-click menu.
+    struct PickCandidate {
+        QString label;
+        Handle(SelectMgr_EntityOwner) owner;
+        EntityId id = kInvalidEntityId;
+    };
+    std::vector<PickCandidate> pickCandidatesAt(const QPoint& physical);
+    void chooseCandidate(const PickCandidate& candidate);
     // Left-drag box selection (window select) with an OCCT rubber band.
     void updateRubberBand(const QPoint& fromLogical, const QPoint& toLogical);
     void finishBoxSelect(const QPoint& fromLogical, const QPoint& toLogical);

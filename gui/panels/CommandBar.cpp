@@ -63,7 +63,11 @@ void CommandBar::setCompletions(const QStringList& names)
         // ("je lançais des commandes au hasard"). Clear the auto-highlight on
         // every prefix change — Enter then submits the TYPED text (aliases
         // like L work); the arrow keys still pick a suggestion explicitly.
-        connect(m_input, &QLineEdit::textChanged, this, [this] {
+        // textEdited (USER typing only) — textChanged also fires when the
+        // ARROW KEYS navigate the popup (the completer sets the text
+        // programmatically), and clearing the index there erased the
+        // selection highlight, making the arrows look broken.
+        connect(m_input, &QLineEdit::textEdited, this, [this] {
             if (m_completer && m_completer->popup())
                 m_completer->popup()->setCurrentIndex(QModelIndex());
             // Qt re-anchors the popup to the line edit on every keystroke —
@@ -71,6 +75,10 @@ void CommandBar::setCompletions(const QStringList& names)
             QTimer::singleShot(0, this,
                                [this] { moveCompleterPopupToAnchor(); });
         });
+        // The dark theme hid the popup's selected row — make it unmissable.
+        m_completer->popup()->setStyleSheet(
+            QStringLiteral("QListView::item:selected { background: #2e6bd6; "
+                           "color: white; }"));
         // And Escape over the open popup = cancel EVERYTHING in one press.
         m_completer->popup()->installEventFilter(this);
     } else {
