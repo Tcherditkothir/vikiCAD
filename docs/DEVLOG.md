@@ -405,3 +405,44 @@ A aussi corrigé au passage la lecture des réponses IPC fragmentées du CLI.
   explicite de Lex, gravée ici).
 - État : **1703 assertions / 217 cas + gui-smoke 55/55** (scénario sketch
   inclus), vérifié indépendamment après le workflow.
+
+## 2026-07-11 — Sketch UX round 2, refonte souris, ergonomie de sélection
+
+Trois vagues de retours terrain de Lex, toutes traitées par cause racine,
+chacune validée suite complète + gui-smoke avant livraison :
+
+**Sketch UX (8094397, e04b40b)** : repère de face DÉTERMINISTE aligné monde
+(pln.XAxis() d'OCCT était arbitraire → le « désalignement 90° ») ; icône UCS
+X/Y dans le canevas ; bouton vert « ✓ Finish sketch » (coin du bandeau) avec
+retour 3D robuste ; ISOLATION du sketch sur face (le dessin modèle n'est plus
+superposé au plan de la face — c'était l'autre moitié du « désalignement ») ;
+sketches VISIBLES en 3D (fil bleu clair sur leur plan).
+
+**Bug tokenizer tueur (4ee9c9f)** : le nom auto des face-sketches contenait
+des espaces → coupé en tokens → tous nommés « Sketch » → le 2e échouait en
+silence → pas d'isolation. Noms mono-token (FaceSketch-N) + abandon visible.
+
+**LA trouvaille de Lex : Espace tapait un espace (4ee9c9f)** : QCompleter
+route les touches du popup DIRECTEMENT au line edit en contournant notre
+event filter → avec le popup omniprésent, Espace≠Enter → toutes les commandes
+semblaient « bloquées ». Espace soumet depuis le popup désormais. Même bug
+famille : Enter détourné par la ligne auto-surlignée du popup (« l » lançait
+une commande au hasard) → index nettoyé sur textEdited (pas textChanged, qui
+casse la surbrillance des flèches — corrigé le 11 aussi).
+
+**Refonte souris (1f04220)** : gauche = sélection + BOÎTE de sélection au
+drag (AIS_RubberBand + SelectRectangle) ; orbite = drag DROIT, menu = clic
+droit court (menu Qt supprimé au press, synthétisé au release) ; milieu =
+pan ; le tout remappable (Preferences). Courbes de sketch = objets AIS
+individuels pickables (EntityId) → EXTRUDE clique le cercle en 3D et utilise
+LE PLAN DU SKETCH (sémantique Fusion) ; aperçu live d'extrusion bleu/rouge ;
+menu d'options aux prompts Keyword (clic droit → [New/Join/Cut/…]).
+
+**Ergonomie de sélection (8d1091b)** : courbes en mode WIRE (priorité OCCT >
+faces → le survol allume LA COURBE posée sur une face) ; Alt+clic = résolveur
+de conflits (liste en profondeur de tout ce qui est sous le curseur) ; menu
+clic droit en ARBORESCENCE (Hole ▸ / Face ▸ / Edges ▸ / Move ▸ / Select ▸) ;
+surbrillance contrastée du popup ; curseur flèche épinglé sur menus/onglets.
+
+**État en pause : 1717 assertions / 218 cas + gui-smoke 55/55 verts.**
+Pause décidée par Lex le 2026-07-11 ; reprise la semaine suivante.

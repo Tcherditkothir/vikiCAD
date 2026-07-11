@@ -1,7 +1,46 @@
-# REPRISE — état de travail au 2026-07-08 (fin de session M6-usage)
+# REPRISE — PAUSE au 2026-07-11, reprise semaine du 14 juillet
 
-Document de reprise pour continuer les corrections. À lire AVANT toute action,
-avec DEVLOG.md (historique) et LESSONS.md (pièges connus).
+Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
+complet) et LESSONS.md (pièges connus — dont les gros du 10-11 juillet).
+
+## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
+
+- **Arbre propre, dernier commit `8d1091b`** (« Selection you can trust »).
+- **Suite : 1717 assertions / 218 cas verts. Harnais GUI : 55/55 verts.**
+- Depuis le 09 : 21 features de nuit autonome, passe « professionnel »
+  (causes racines : Ctrl+Z ambigu jamais fonctionnel, booléens vides =
+  pièce disparue, TransactionScope), sketches v1 (légers, sans dépendance
+  solide→sketch — décision ferme de Lex), onglets outils+panneaux, refonte
+  souris (gauche=sélection+boîte, droit=orbite/menu), ergonomie de sélection
+  (priorité courbe>face au survol, Alt+clic résolveur, menu en arborescence).
+
+## 👀 EN ATTENTE DE VALIDATION PAR LEX (dernier lot, non testable souris)
+
+- Survol : une courbe de sketch posée sur une face s'allume ELLE.
+- **Alt+clic** = liste des candidats sous le curseur ; idem « Select ▸ » au
+  clic droit ; menu clic droit en arborescence (Hole ▸/Face ▸/Edges ▸/Move ▸).
+- Popup d'autocomplétion : flèches → surbrillance bleue, Enter prend la ligne
+  choisie, Espace = Enter même popup ouvert.
+- Souris : boîte de sélection au drag gauche ; orbite au drag droit ; preview
+  d'extrusion bleu/rouge ; curseur visible sur les boutons du haut.
+- Flux sketch complet : face → sketch isolé aligné (icône X/Y) → ✓ Finish →
+  retour 3D, sketch bleu visible → EXTRUDE en cliquant la courbe (plan du
+  sketch pris automatiquement).
+
+## 🔜 PROCHAINS CHANTIERS (ordre de valeur probable — CONFIRMER avec Lex)
+
+1. **Gizmo de drag direct** (déplacer solides/trous à la souris — le trièdre
+   curseur existe comme base visuelle).
+2. **EXTRUDE/REVOLVE enregistrés dans FeatureTree** (seuls HOLE/SHELL ont un
+   historique aujourd'hui) + édition via l'arbre.
+3. **Contraintes de sketch + cotes pilotantes** — GROS, piloter avec Lex
+   (il refuse les dépendances lourdes sketch→solide, PAS les contraintes
+   internes au sketch).
+4. **Release publique GPLv3** : build Release + .desktop pointé dessus, tag,
+   hébergement (GitHub INACCESSIBLE depuis la machine — IPv6 only ; prévoir
+   une alternative ou un transfert par Lex).
+5. Moyens : MAKEVIEW placement à valider ; MATE/DRAFT sans GUI ; double-clic
+   sketch 3D → l'ouvrir ; presse-papier/duplication de solides.
 
 ## ⚠️ Harnais GUI-live : `scripts/gui-smoke.sh` — À LANCER AVANT DE LIVRER
 
