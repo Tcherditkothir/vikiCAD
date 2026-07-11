@@ -1246,12 +1246,25 @@ std::optional<WorkPlane> planeFromFace(const TopoDS_Shape& face)
         return std::nullopt; // can only sketch on a planar face
     const gp_Pln pln = surf.Plane();
     WorkPlane wp;
-    wp.origin = pln.Location();
     wp.normal = pln.Axis().Direction();
-    wp.xDir = pln.XAxis().Direction();
     // Face orientation flips the surface normal; keep the outward sense.
     if (TopoDS::Face(face).Orientation() == TopAbs_REVERSED)
         wp.normal.Reverse();
+    // DETERMINISTIC, WORLD-ALIGNED sketch frame. OCCT's pln.XAxis() comes
+    // from the surface parametrization and is arbitrary — sketching on a flat
+    // top face came out rotated (often 90°) against the model-space drawing.
+    // Instead: sketch X = world X projected onto the plane (world Y when the
+    // plane is perpendicular to X), and the origin = the WORLD ORIGIN
+    // projected onto the plane. On any Z-normal face the sketch then uses
+    // plain world X/Y coordinates, exactly aligned with the 2D drawing.
+    const gp_Vec n(wp.normal);
+    gp_Vec xref(1, 0, 0);
+    if (std::fabs(n.Dot(xref)) > 0.99)
+        xref = gp_Vec(0, 1, 0);
+    const gp_Vec x = xref - n * n.Dot(xref);
+    wp.xDir = gp_Dir(x);
+    const gp_Vec toLoc(gp_Pnt(0, 0, 0), pln.Location());
+    wp.origin = gp_Pnt(0, 0, 0).Translated(n * n.Dot(toLoc));
     return wp;
 }
 

@@ -11,6 +11,7 @@
 #include "doc/SelectionSet.h"
 
 class QLabel;
+class QPushButton;
 class QShortcut;
 class QStackedWidget;
 class QTabWidget;
@@ -73,6 +74,8 @@ private:
     AssemblyPanel* m_assemblyPanel = nullptr;
     QLabel* m_coordLabel = nullptr;
     QLabel* m_sketchLabel = nullptr; // "Sketch 'x' — SKETCH Close to finish"
+    QPushButton* m_finishSketchBtn = nullptr; // corner of the tool tab strip
+    bool m_sketchFrom3d = false; // face sketch: Finish returns to 3D
     QToolButton* m_unitsBtn = nullptr;
     QToolButton* m_3dButton = nullptr;
     QTabWidget* m_toolTabs = nullptr; // Draw/…/Solids/Views tool tab strip

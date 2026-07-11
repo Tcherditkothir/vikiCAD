@@ -858,3 +858,33 @@ TEST_CASE("negative EXTRUDE height goes downward — a hole needs Cut mode",
     CHECK(down->zMin() == Approx(-10.0).margin(1e-6));
     CHECK(down->zMax() == Approx(0.0).margin(1e-6));
 }
+
+TEST_CASE("sketch frame on a Z-normal face is world-aligned (no 90° surprise)",
+          "[m7][workplane][align]")
+{
+    using namespace viki;
+    // Box from (2,3,0) to (12,13,10): its TOP face plane must give a sketch
+    // frame with xDir = world X and origin = world origin projected to z=10 —
+    // so sketch coordinates ARE world XY (aligned with the 2D drawing).
+    const TopoDS_Shape box =
+        BRepPrimAPI_MakeBox(gp_Pnt(2, 3, 0), gp_Pnt(12, 13, 10)).Shape();
+    bool checkedTop = false;
+    for (TopExp_Explorer e(box, TopAbs_FACE); e.More(); e.Next()) {
+        const auto wp = solidops::planeFromFace(e.Current());
+        REQUIRE(wp.has_value());
+        if (std::abs(wp->normal.Z() - 1.0) > 1e-9)
+            continue; // only the +Z top face here
+        checkedTop = true;
+        CHECK(std::abs(wp->xDir.X() - 1.0) < 1e-9); // world X
+        CHECK(std::abs(wp->xDir.Y()) < 1e-9);
+        CHECK(wp->origin.X() == Approx(0.0).margin(1e-9));
+        CHECK(wp->origin.Y() == Approx(0.0).margin(1e-9));
+        CHECK(wp->origin.Z() == Approx(10.0).margin(1e-9));
+        // A model point maps to ITS OWN world XY in sketch coordinates.
+        const Vec2d uv =
+            solidops::projectToPlane2d(gp_Pnt(7.5, 4.25, 10.0), *wp);
+        CHECK(uv.x == Approx(7.5).margin(1e-9));
+        CHECK(uv.y == Approx(4.25).margin(1e-9));
+    }
+    CHECK(checkedTop);
+}

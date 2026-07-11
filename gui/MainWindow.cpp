@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 #include "Version.h"
@@ -216,6 +217,26 @@ MainWindow::MainWindow()
     };
     buildToolMenus(this, runCommand);
     m_toolTabs = buildToolTabs(this, runCommand);
+
+    // Big, unmissable "Finish sketch" button (Fusion-style), pinned to the
+    // right corner of the tool tab strip while a sketch is open. Finishing a
+    // face sketch returns to the 3D view it came from.
+    m_finishSketchBtn = new QPushButton(QStringLiteral("✓ Finish sketch"), this);
+    m_finishSketchBtn->setStyleSheet(
+        QStringLiteral("QPushButton { background: #2e8b57; color: white; "
+                       "font-weight: bold; padding: 4px 14px; border-radius: "
+                       "3px; } QPushButton:hover { background: #37a469; }"));
+    m_finishSketchBtn->setVisible(false);
+    m_toolTabs->setCornerWidget(m_finishSketchBtn, Qt::TopRightCorner);
+    connect(m_finishSketchBtn, &QPushButton::clicked, this, [this] {
+        // Capture BEFORE closing: updateSketchStatus drops the flag as part
+        // of the close itself.
+        const bool backTo3d = m_sketchFrom3d;
+        m_sketchFrom3d = false;
+        onCommandEntered(QStringLiteral("SKETCH CLOSE"));
+        if (backTo3d)
+            setView3D(true); // back to the model you were sketching on
+    });
 
     // Views tab: standard camera views + fit + grid for the 3D view (the
     // ViewCube itself lives inside the OCCT viewport). Greyed out until the
@@ -1187,6 +1208,10 @@ void MainWindow::updateSketchStatus()
     m_sketchLabel->setText(
         info ? QStringLiteral("Sketch '%1' — SKETCH Close to finish").arg(info->name)
              : QString());
+    if (m_finishSketchBtn)
+        m_finishSketchBtn->setVisible(info != nullptr);
+    if (!info)
+        m_sketchFrom3d = false; // closed some other way — drop the flag
 }
 
 void MainWindow::updateWindowTitle()
@@ -1369,6 +1394,7 @@ void MainWindow::beginSketchOnFace()
         m_commandBar->appendHistory(QStringLiteral("! sketch: pick a FLAT face"));
         return;
     }
+    m_sketchFrom3d = true; // "Finish sketch" returns to the 3D view
     documentWorkplane(*m_doc) = *wp;
     // Project the real face outline into the sketch plane so the canvas shows
     // the face (holes and all), not a blank box.

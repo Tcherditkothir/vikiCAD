@@ -337,6 +337,34 @@ void CanvasWidget::paintEvent(QPaintEvent*)
 
     drawSnapGlyph(p);
 
+    // UCS icon: the sketch/world coordinate system — red X, green Y, at the
+    // origin when visible, pinned to the lower-left corner otherwise (AutoCAD
+    // behaviour). In a face sketch this IS the sketch frame, so you always
+    // know which way the axes run.
+    {
+        const QPointF o = m_camera.worldToScreen({0, 0});
+        const bool onScreen = o.x() >= 0 && o.x() <= width() && o.y() >= 0 &&
+                              o.y() <= height();
+        const QPointF base =
+            onScreen ? o : QPointF(34.0, double(height()) - 34.0);
+        const double len = 34.0;
+        QPen xPen(QColor(235, 80, 80), 2);
+        QPen yPen(QColor(90, 210, 110), 2);
+        p.setPen(xPen);
+        p.drawLine(base, base + QPointF(len, 0));
+        p.drawLine(base + QPointF(len, 0), base + QPointF(len - 6, -4));
+        p.drawLine(base + QPointF(len, 0), base + QPointF(len - 6, 4));
+        p.drawText(base + QPointF(len + 4, 4), QStringLiteral("X"));
+        p.setPen(yPen);
+        p.drawLine(base, base + QPointF(0, -len));
+        p.drawLine(base + QPointF(0, -len), base + QPointF(-4, -len + 6));
+        p.drawLine(base + QPointF(0, -len), base + QPointF(4, -len + 6));
+        p.drawText(base + QPointF(-4, -len - 6), QStringLiteral("Y"));
+        // A small square marks the exact origin.
+        p.setPen(QPen(QColor(200, 200, 210), 1));
+        p.drawRect(QRectF(base.x() - 3, base.y() - 3, 6, 6));
+    }
+
     // Crosshair at the effective position (shows the snap/ortho pull).
     const QPointF cross = commandWantsPoint()
                               ? m_camera.worldToScreen(m_effectiveCursor)
