@@ -1418,10 +1418,14 @@ void MainWindow::beginSketchOnFace()
     {
         if (m_processor->hasActiveCommand())
             m_processor->cancelActive(); // the line below must start SKETCH
-        QString name = QStringLiteral("Sketch on face — solid %1")
+        // ONE token only: a multi-word name was split by the tokenizer, so
+        // every face sketch ended up named "Sketch" and the SECOND one failed
+        // silently — no active sketch, no isolation, untagged entities (the
+        // "misalignment that would not die").
+        QString name = QStringLiteral("FaceSketch-%1")
                            .arg(qlonglong(m_occtView->pickedSolid()));
         for (int n = 2; m_doc->sketchByName(name); ++n)
-            name = QStringLiteral("Sketch on face — solid %1 (%2)")
+            name = QStringLiteral("FaceSketch-%1-%2")
                        .arg(qlonglong(m_occtView->pickedSolid()))
                        .arg(n);
         const auto r = m_processor->submit(
@@ -1429,6 +1433,17 @@ void MainWindow::beginSketchOnFace()
         if (!r.ok)
             m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
         refreshPromptAndMessages();
+        if (m_doc->activeSketch() == 0) {
+            // Never enter a half-broken sketch mode: bail out visibly.
+            m_canvas->clearSketchReference();
+            m_doc->clearExtraSnapPoints();
+            m_sketchFrom3d = false;
+            m_commandBar->appendHistory(QStringLiteral(
+                "! sketch on face ABORTED (could not open a sketch — see "
+                "the message above)"));
+            setView3D(true);
+            return;
+        }
     }
     m_commandBar->appendHistory(QStringLiteral(
         "Sketching on the face (blue dashed outline). Draw a closed profile, "

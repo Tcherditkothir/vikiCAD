@@ -159,12 +159,38 @@ public:
         }
     }
 
-private:
-    Step build(CommandContext& ctx)
+public:
+    // Live ghost once profiles are picked: blue = material added (New/Join/
+    // Symmetric), red = removed (Cut). The prism itself is the preview.
+    bool preview3d(CommandContext& ctx, const Vec2d&, Preview3d& out) override
     {
-        // Profiles that belong to a SKETCH extrude on THAT sketch's plane
-        // (Fusion semantics) — picking a sketch circle in the 3D view must
-        // not depend on whatever the document work plane happens to be.
+        if (m_ids.empty() || std::fabs(m_height) < 1e-9)
+            return false;
+        const WorkPlane plane = profilePlane(ctx);
+        const auto wires = solidops::wiresFromEntities(ctx.doc(), m_ids, plane);
+        if (!wires.ok)
+            return false;
+        const auto ghost = solidops::extrudeWires(
+            wires.wires, m_height, plane,
+            m_mode == solidops::ExtrudeMode::Symmetric
+                ? solidops::ExtrudeMode::Symmetric
+                : solidops::ExtrudeMode::NewBody,
+            {});
+        if (!ghost.ok)
+            return false;
+        out.shape = ghost.shape;
+        out.effect = m_mode == solidops::ExtrudeMode::Cut
+                         ? Preview3d::Effect::Remove
+                         : Preview3d::Effect::Add;
+        return true;
+    }
+
+private:
+    // Profiles that belong to a SKETCH extrude on THAT sketch's plane
+    // (Fusion semantics) — picking a sketch circle in the 3D view must
+    // not depend on whatever the document work plane happens to be.
+    WorkPlane profilePlane(CommandContext& ctx) const
+    {
         WorkPlane plane = documentWorkplane(ctx.doc());
         int64_t commonSketch = 0;
         bool allSame = !m_ids.empty();
@@ -177,6 +203,12 @@ private:
         if (allSame && commonSketch != 0)
             if (const SketchInfo* info = ctx.doc().sketchById(commonSketch))
                 plane = info->plane;
+        return plane;
+    }
+
+    Step build(CommandContext& ctx)
+    {
+        const WorkPlane plane = profilePlane(ctx);
         const auto wires = solidops::wiresFromEntities(ctx.doc(), m_ids, plane);
         if (!wires.ok) {
             ctx.info(wires.message);

@@ -91,17 +91,27 @@ void CommandBar::submitLine()
 
 bool CommandBar::eventFilter(QObject* watched, QEvent* event)
 {
-    // Escape over the completion POPUP: Qt would only close the popup and the
-    // user had to press Escape AGAIN to actually cancel — one press now
-    // closes the popup, clears the line AND cancels the running command.
+    // Keys over the completion POPUP: QCompleter forwards unhandled keys
+    // STRAIGHT to the line edit's internal handler, bypassing the m_input
+    // event filter below — so while the popup was visible, SPACE typed a
+    // literal space instead of submitting (Lex's "weird" find), and Escape
+    // only closed the popup. Handle both here.
     if (m_completer && watched == m_completer->popup() &&
-        event->type() == QEvent::KeyPress &&
-        static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
-        m_popupAnchored = false;
-        m_completer->popup()->hide();
-        m_input->clear();
-        emit cancelRequested();
-        return true;
+        event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Escape) {
+            m_popupAnchored = false;
+            m_completer->popup()->hide();
+            m_input->clear();
+            emit cancelRequested();
+            return true;
+        }
+        if (key->key() == Qt::Key_Space &&
+            (!m_spaceSubmits || m_spaceSubmits())) {
+            m_completer->popup()->hide();
+            submitLine(); // AutoCAD: Space confirms like Enter
+            return true;
+        }
     }
     if (watched == m_input && event->type() == QEvent::KeyPress) {
         auto* key = static_cast<QKeyEvent*>(event);

@@ -225,6 +225,10 @@ void OcctViewWidget::refreshFrom(const Document& doc)
             m_shapes.push_back({curveAis, id});
             m_context->Display(curveAis, 0 /*wireframe*/, 0, false);
             m_context->Activate(curveAis, 0); // pickable as a WHOLE entity
+            // Thin curves need a fat pick tolerance or they are impossible to
+            // hit next to a big solid (why "je n'arrive pas à sélectionner le
+            // cercle du sketch").
+            m_context->SetSelectionSensitivity(curveAis, 0, 8);
             if (m_selection && m_selection->contains(id))
                 m_context->AddOrRemoveSelected(curveAis, false);
         }
@@ -595,8 +599,9 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
         // In command-input mode we redraw ONCE ourselves (ghost included) —
         // two full GL redraws per mouse move made big parts feel frozen.
         const bool wantPoint = commandWantsPoint();
+        const bool activeCmd = m_processor && m_processor->hasActiveCommand();
         m_context->MoveTo(p.x(), p.y(), m_view,
-                          wantPoint ? Standard_False : Standard_True);
+                          activeCmd ? Standard_False : Standard_True);
         if (wantPoint) {
             Vec2d uv;
             if (cursorToPlane(p, uv)) {
@@ -606,6 +611,10 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
             } else {
                 m_view->Redraw(); // flush the MoveTo highlight
             }
+        } else if (activeCmd) {
+            // Non-point prompts preview too: EXTRUDE shows its blue/red prism
+            // as soon as profiles are picked (EntitySet stage).
+            updateGhost(m_hoverValid ? m_hoverUv : Vec2d{0, 0}); // redraws
         } else if (!m_ghost.IsNull() || !m_axes.IsNull()) {
             clearGhost(); // the command ended some other way (axes too)
             m_view->Redraw();
@@ -891,6 +900,33 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
 
 void OcctViewWidget::showContextMenu(const QPoint& globalPos)
 {
+    // During a KEYWORD prompt (e.g. EXTRUDE "Mode [New/Join/Cut/Symmetric]"),
+    // right-click lists THE OPTIONS at the cursor — click one instead of
+    // typing it. The options are parsed from the prompt's [A/B/C] block.
+    if (m_processor && m_processor->hasActiveCommand() &&
+        m_processor->currentRequest().kind == InputKind::Keyword) {
+        const QString prompt = m_processor->currentRequest().prompt;
+        const int lb = prompt.indexOf(QLatin1Char('['));
+        const int rb = prompt.indexOf(QLatin1Char(']'));
+        if (lb >= 0 && rb > lb) {
+            const QStringList options =
+                prompt.mid(lb + 1, rb - lb - 1).split(QLatin1Char('/'));
+            QMenu menu(this);
+            for (const QString& opt : options)
+                menu.addAction(opt.trimmed());
+            menu.addSeparator();
+            QAction* accept = menu.addAction(QStringLiteral("(default)"));
+            QAction* chosen = menu.exec(globalPos);
+            if (chosen == accept)
+                m_processor->provideInput(InputValue::makeFinish());
+            else if (chosen)
+                m_processor->provideInput(
+                    InputValue::makeKeyword(chosen->text().toUpper()));
+            if (chosen)
+                emit interaction();
+            return;
+        }
+    }
     // Scene rebuilds (after push/pull, undo…) clear the pick state, which
     // used to make right-click dead until the user left-clicked again. Fusion
     // semantics instead: right-click acts on WHAT IS UNDER THE CURSOR — pick

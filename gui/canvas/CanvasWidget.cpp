@@ -2,6 +2,7 @@
 
 #include <QFontMetrics>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -482,7 +483,35 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event)
     if (event->button() == Qt::RightButton) {
         // AutoCAD/nanoCAD: right-click = Enter. Mid-command it accepts the
         // default / finishes the step; idle it repeats the last command.
+        // At a KEYWORD prompt it lists the options at the cursor instead —
+        // click one rather than typing it.
         if (m_processor && m_processor->hasActiveCommand()) {
+            if (m_processor->currentRequest().kind == InputKind::Keyword) {
+                const QString prompt = m_processor->currentRequest().prompt;
+                const int lb = prompt.indexOf(QLatin1Char('['));
+                const int rb = prompt.indexOf(QLatin1Char(']'));
+                if (lb >= 0 && rb > lb) {
+                    const QStringList options =
+                        prompt.mid(lb + 1, rb - lb - 1).split(QLatin1Char('/'));
+                    QMenu menu(this);
+                    for (const QString& opt : options)
+                        menu.addAction(opt.trimmed());
+                    menu.addSeparator();
+                    QAction* accept = menu.addAction(QStringLiteral("(default)"));
+                    QAction* chosen =
+                        menu.exec(event->globalPosition().toPoint());
+                    if (chosen == accept)
+                        m_processor->provideInput(InputValue::makeFinish());
+                    else if (chosen)
+                        m_processor->provideInput(InputValue::makeKeyword(
+                            chosen->text().toUpper()));
+                    if (chosen) {
+                        emit interaction();
+                        markDocumentDirty();
+                    }
+                    return;
+                }
+            }
             m_processor->provideInput(InputValue::makeFinish());
             emit interaction();
             markDocumentDirty();
