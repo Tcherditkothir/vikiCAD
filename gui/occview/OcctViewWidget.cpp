@@ -17,6 +17,9 @@
 #include <AIS_Trihedron.hxx>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_Window.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Geom_Axis2Placement.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -37,6 +40,7 @@
 
 #include "cmd/Command.h"
 #include "cmd/CommandProcessor.h"
+#include "render/Primitives.h"
 #include "render/StandardViews.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
@@ -168,6 +172,51 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         if (m_selection && m_selection->contains(id))
             m_context->AddOrRemoveSelected(ais, false);
         ++shown;
+    }
+    // SKETCHES are visible in 3D (Fusion-style): every sketch's curves are
+    // drawn as light-blue wireframe on their own plane, so a finished face
+    // sketch can be SEEN and found again (open/edit it from the Browser).
+    for (const SketchInfo& sk : doc.sketches()) {
+        BRep_Builder builder;
+        TopoDS_Compound curves;
+        builder.MakeCompound(curves);
+        bool any = false;
+        for (const EntityId id : doc.drawOrder()) {
+            if (doc.entitySketch(id) != sk.id)
+                continue;
+            const Entity* e = doc.entity(id);
+            if (!e || dynamic_cast<const SolidEntity*>(e))
+                continue;
+            RenderContext rc;
+            rc.chordTolerance = 0.1;
+            rc.doc = &doc;
+            PrimitiveList list;
+            e->buildPrimitives(rc, list);
+            for (const StrokePrimitive& s : list.strokes) {
+                if (s.points.size() < 2)
+                    continue;
+                try {
+                    BRepBuilderAPI_MakePolygon poly;
+                    for (const Vec2d& pt : s.points)
+                        poly.Add(solidops::planePoint3d(pt, sk.plane));
+                    if (s.closed)
+                        poly.Close();
+                    if (poly.IsDone()) {
+                        builder.Add(curves, poly.Wire());
+                        any = true;
+                    }
+                } catch (const Standard_Failure&) {
+                    // degenerate stroke — skip it, keep the rest
+                }
+            }
+        }
+        if (!any)
+            continue;
+        Handle(AIS_Shape) sketchAis = new AIS_Shape(curves);
+        sketchAis->SetColor(Quantity_Color(0.55, 0.75, 1.0, Quantity_TOC_RGB));
+        sketchAis->SetWidth(2.0);
+        m_context->Display(sketchAis, 0 /*wireframe*/, -1, false);
+        m_context->Deactivate(sketchAis); // shown, not a pick target (v1)
     }
     // Fit the camera on the first population only: refreshes now also happen
     // after every command (a hole appears in place), and re-fitting each time

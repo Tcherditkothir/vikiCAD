@@ -134,11 +134,18 @@ void CanvasWidget::rebuildStaticLayer()
         const Layer* layer = m_doc->layer(e->layerId());
         if (layer && !layer->visible)
             continue;
-        // While sketching on a face, hide the solid footprint placeholders —
-        // the blue face outline is the reference to draw against.
-        if (!m_sketchRef.empty() &&
-            QLatin1String(e->typeName()) == QLatin1String("solid"))
-            continue;
+        // While sketching on a face, ISOLATE the sketch context (Fusion
+        // behaviour): the canvas shows the face-plane coordinates (u,v), so
+        // model-space 2D entities live in a DIFFERENT plane — overlaying them
+        // looked like "the sketch is misaligned/rotated". Show only the blue
+        // face outline and the entities of the ACTIVE sketch.
+        if (!m_sketchRef.empty()) {
+            if (QLatin1String(e->typeName()) == QLatin1String("solid"))
+                continue;
+            const int64_t active = m_doc->activeSketch();
+            if (active != 0 && m_doc->entitySketch(id) != active)
+                continue;
+        }
         // View culling.
         if (!m_doc->entityBounds(*e).intersects(ctx.viewBox))
             continue;

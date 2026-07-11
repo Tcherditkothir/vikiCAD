@@ -1,5 +1,6 @@
 #include "CommandBar.h"
 
+#include <QAbstractItemView>
 #include <QCompleter>
 #include <QKeyEvent>
 #include <QLabel>
@@ -55,6 +56,18 @@ void CommandBar::setCompletions(const QStringList& names)
         m_completer->setFilterMode(Qt::MatchContains);
         m_completer->setModel(new QStringListModel(names, m_completer));
         m_input->setCompleter(m_completer);
+        // The popup must NEVER hijack Enter for a row the user did not pick:
+        // Qt auto-highlights the first match, so typing "l" + Enter inserted
+        // whatever command happened to contain an L instead of running LINE
+        // ("je lançais des commandes au hasard"). Clear the auto-highlight on
+        // every prefix change — Enter then submits the TYPED text (aliases
+        // like L work); the arrow keys still pick a suggestion explicitly.
+        connect(m_input, &QLineEdit::textChanged, this, [this] {
+            if (m_completer && m_completer->popup())
+                m_completer->popup()->setCurrentIndex(QModelIndex());
+        });
+        // And Escape over the open popup = cancel EVERYTHING in one press.
+        m_completer->popup()->installEventFilter(this);
     } else {
         if (auto* model = qobject_cast<QStringListModel*>(m_completer->model()))
             model->setStringList(names);
@@ -72,6 +85,17 @@ void CommandBar::submitLine()
 
 bool CommandBar::eventFilter(QObject* watched, QEvent* event)
 {
+    // Escape over the completion POPUP: Qt would only close the popup and the
+    // user had to press Escape AGAIN to actually cancel — one press now
+    // closes the popup, clears the line AND cancels the running command.
+    if (m_completer && watched == m_completer->popup() &&
+        event->type() == QEvent::KeyPress &&
+        static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        m_completer->popup()->hide();
+        m_input->clear();
+        emit cancelRequested();
+        return true;
+    }
     if (watched == m_input && event->type() == QEvent::KeyPress) {
         auto* key = static_cast<QKeyEvent*>(event);
         if (key->key() == Qt::Key_Space && (!m_spaceSubmits || m_spaceSubmits())) {
@@ -91,6 +115,14 @@ void CommandBar::beginTyping(const QString& seed)
 {
     m_input->setFocus();
     m_input->insert(seed);
+    // insert() bypasses QLineEdit's key handling, so the completion popup
+    // never appeared when typing OVER the canvas/3D view (the keystrokes are
+    // forwarded here). Open it explicitly — with no auto-highlighted row.
+    if (m_completer && !m_input->text().isEmpty()) {
+        m_completer->setCompletionPrefix(m_input->text());
+        m_completer->complete();
+        m_completer->popup()->setCurrentIndex(QModelIndex());
+    }
 }
 
 void CommandBar::appendHistory(const QString& text)

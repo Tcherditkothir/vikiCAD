@@ -230,8 +230,15 @@ MainWindow::MainWindow()
     m_toolTabs->setCornerWidget(m_finishSketchBtn, Qt::TopRightCorner);
     connect(m_finishSketchBtn, &QPushButton::clicked, this, [this] {
         // Capture BEFORE closing: updateSketchStatus drops the flag as part
-        // of the close itself.
-        const bool backTo3d = m_sketchFrom3d;
+        // of the close itself. Fall back on "the document has solids" so the
+        // return to 3D never depends on HOW the sketch was entered.
+        bool hasSolids = false;
+        for (const EntityId eid : m_doc->drawOrder())
+            if (dynamic_cast<const SolidEntity*>(m_doc->entity(eid))) {
+                hasSolids = true;
+                break;
+            }
+        const bool backTo3d = m_sketchFrom3d || hasSolids;
         m_sketchFrom3d = false;
         onCommandEntered(QStringLiteral("SKETCH CLOSE"));
         if (backTo3d)
