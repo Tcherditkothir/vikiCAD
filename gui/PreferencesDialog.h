@@ -14,11 +14,11 @@ namespace viki {
 // prefs.json (mouse) + shortcuts.json (key -> command line, the same file
 // MainWindow::loadShortcuts reads).
 struct MousePrefs {
-    QString orbit = QStringLiteral("left");  // left | middle | right
+    QString orbit = QStringLiteral("right"); // left | middle | right
     QString pan = QStringLiteral("middle");  // left | middle | right
     bool zoomInvert = false;
 
-    Qt::MouseButton orbitButton() const { return button(orbit, Qt::LeftButton); }
+    Qt::MouseButton orbitButton() const { return button(orbit, Qt::RightButton); }
     Qt::MouseButton panButton() const { return button(pan, Qt::MiddleButton); }
 
 private:

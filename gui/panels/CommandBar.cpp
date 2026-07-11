@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QStringListModel>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace viki {
@@ -65,6 +66,10 @@ void CommandBar::setCompletions(const QStringList& names)
         connect(m_input, &QLineEdit::textChanged, this, [this] {
             if (m_completer && m_completer->popup())
                 m_completer->popup()->setCurrentIndex(QModelIndex());
+            // Qt re-anchors the popup to the line edit on every keystroke —
+            // pull it back to the mouse-cursor anchor once Qt is done.
+            QTimer::singleShot(0, this,
+                               [this] { moveCompleterPopupToAnchor(); });
         });
         // And Escape over the open popup = cancel EVERYTHING in one press.
         m_completer->popup()->installEventFilter(this);
@@ -76,6 +81,7 @@ void CommandBar::setCompletions(const QStringList& names)
 
 void CommandBar::submitLine()
 {
+    m_popupAnchored = false; // the typing session is over
     const QString line = m_input->text().trimmed();
     if (!line.isEmpty())
         appendHistory(QStringLiteral("> %1").arg(line));
@@ -91,6 +97,7 @@ bool CommandBar::eventFilter(QObject* watched, QEvent* event)
     if (m_completer && watched == m_completer->popup() &&
         event->type() == QEvent::KeyPress &&
         static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        m_popupAnchored = false;
         m_completer->popup()->hide();
         m_input->clear();
         emit cancelRequested();
@@ -103,6 +110,7 @@ bool CommandBar::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
         if (key->key() == Qt::Key_Escape) {
+            m_popupAnchored = false;
             m_input->clear();
             emit cancelRequested();
             return true;
@@ -113,6 +121,11 @@ bool CommandBar::eventFilter(QObject* watched, QEvent* event)
 
 void CommandBar::beginTyping(const QString& seed)
 {
+    // Typing forwarded from a view: anchor the suggestion popup AT THE MOUSE
+    // CURSOR — suggestions appear where the user is looking, not down in the
+    // bar ("le menu au curseur").
+    m_popupAnchor = QCursor::pos() + QPoint(14, 18);
+    m_popupAnchored = true;
     m_input->setFocus();
     m_input->insert(seed);
     // insert() bypasses QLineEdit's key handling, so the completion popup
@@ -122,7 +135,16 @@ void CommandBar::beginTyping(const QString& seed)
         m_completer->setCompletionPrefix(m_input->text());
         m_completer->complete();
         m_completer->popup()->setCurrentIndex(QModelIndex());
+        moveCompleterPopupToAnchor();
     }
+}
+
+void CommandBar::moveCompleterPopupToAnchor()
+{
+    if (!m_popupAnchored || !m_completer || !m_completer->popup() ||
+        !m_completer->popup()->isVisible())
+        return;
+    m_completer->popup()->move(m_popupAnchor);
 }
 
 void CommandBar::appendHistory(const QString& text)
@@ -137,6 +159,7 @@ void CommandBar::setPrompt(const QString& prompt)
 
 void CommandBar::focusInput()
 {
+    m_popupAnchored = false; // deliberate focus: suggestions at the bar
     m_input->setFocus();
 }
 

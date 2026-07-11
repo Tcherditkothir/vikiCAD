@@ -162,7 +162,21 @@ public:
 private:
     Step build(CommandContext& ctx)
     {
-        const WorkPlane plane = documentWorkplane(ctx.doc());
+        // Profiles that belong to a SKETCH extrude on THAT sketch's plane
+        // (Fusion semantics) — picking a sketch circle in the 3D view must
+        // not depend on whatever the document work plane happens to be.
+        WorkPlane plane = documentWorkplane(ctx.doc());
+        int64_t commonSketch = 0;
+        bool allSame = !m_ids.empty();
+        for (const EntityId id : m_ids) {
+            const int64_t s = ctx.doc().entitySketch(id);
+            if (commonSketch == 0)
+                commonSketch = s;
+            allSame = allSame && s != 0 && s == commonSketch;
+        }
+        if (allSame && commonSketch != 0)
+            if (const SketchInfo* info = ctx.doc().sketchById(commonSketch))
+                plane = info->plane;
         const auto wires = solidops::wiresFromEntities(ctx.doc(), m_ids, plane);
         if (!wires.ok) {
             ctx.info(wires.message);

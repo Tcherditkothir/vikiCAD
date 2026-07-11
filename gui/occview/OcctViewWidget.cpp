@@ -12,6 +12,7 @@
 #include <QWheelEvent>
 
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_RubberBand.hxx>
 #include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_Trihedron.hxx>
@@ -55,6 +56,10 @@ OcctViewWidget::OcctViewWidget(QWidget* parent)
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    // The right button ORBITS on drag and opens the menu on a short click —
+    // Qt's automatic press-time context menu would fire before the drag can
+    // start, so it is suppressed and synthesized on release instead.
+    setContextMenuPolicy(Qt::PreventContextMenu);
     // Define an explicit cursor on this NATIVE window: with no cursor of its
     // own, X falls back to an inherited one, and a busy moment can leave the
     // pointer invisible over the GL surface. A crosshair also reads as
@@ -175,12 +180,10 @@ void OcctViewWidget::refreshFrom(const Document& doc)
     }
     // SKETCHES are visible in 3D (Fusion-style): every sketch's curves are
     // drawn as light-blue wireframe on their own plane, so a finished face
-    // sketch can be SEEN and found again (open/edit it from the Browser).
+    // sketch can be SEEN, hovered and PICKED — clicking a sketch circle at an
+    // EXTRUDE "Select profiles" prompt supplies that entity, exactly like a
+    // solid pick. One AIS object PER ENTITY, registered in m_shapes.
     for (const SketchInfo& sk : doc.sketches()) {
-        BRep_Builder builder;
-        TopoDS_Compound curves;
-        builder.MakeCompound(curves);
-        bool any = false;
         for (const EntityId id : doc.drawOrder()) {
             if (doc.entitySketch(id) != sk.id)
                 continue;
@@ -192,6 +195,10 @@ void OcctViewWidget::refreshFrom(const Document& doc)
             rc.doc = &doc;
             PrimitiveList list;
             e->buildPrimitives(rc, list);
+            BRep_Builder builder;
+            TopoDS_Compound curves;
+            builder.MakeCompound(curves);
+            bool any = false;
             for (const StrokePrimitive& s : list.strokes) {
                 if (s.points.size() < 2)
                     continue;
@@ -209,14 +216,18 @@ void OcctViewWidget::refreshFrom(const Document& doc)
                     // degenerate stroke — skip it, keep the rest
                 }
             }
+            if (!any)
+                continue;
+            Handle(AIS_Shape) curveAis = new AIS_Shape(curves);
+            curveAis->SetColor(
+                Quantity_Color(0.55, 0.75, 1.0, Quantity_TOC_RGB));
+            curveAis->SetWidth(2.0);
+            m_shapes.push_back({curveAis, id});
+            m_context->Display(curveAis, 0 /*wireframe*/, 0, false);
+            m_context->Activate(curveAis, 0); // pickable as a WHOLE entity
+            if (m_selection && m_selection->contains(id))
+                m_context->AddOrRemoveSelected(curveAis, false);
         }
-        if (!any)
-            continue;
-        Handle(AIS_Shape) sketchAis = new AIS_Shape(curves);
-        sketchAis->SetColor(Quantity_Color(0.55, 0.75, 1.0, Quantity_TOC_RGB));
-        sketchAis->SetWidth(2.0);
-        m_context->Display(sketchAis, 0 /*wireframe*/, -1, false);
-        m_context->Deactivate(sketchAis); // shown, not a pick target (v1)
     }
     // Fit the camera on the first population only: refreshes now also happen
     // after every command (a hole appears in place), and re-fitting each time
@@ -572,6 +583,13 @@ void OcctViewWidget::mouseMoveEvent(QMouseEvent* event)
         m_userNavigated = true;
         const QPoint last = devicePos(m_lastPos);
         m_view->Pan(p.x() - last.x(), last.y() - p.y());
+    } else if ((event->buttons() & Qt::LeftButton) &&
+               m_orbitButton != Qt::LeftButton &&
+               m_panButton != Qt::LeftButton &&
+               (!m_processor || !m_processor->hasActiveCommand()) &&
+               (event->pos() - m_pressPos).manhattanLength() >= 4) {
+        // Left drag with no command running: WINDOW SELECTION rubber band.
+        updateRubberBand(m_pressPos, event->pos());
     } else if (!m_context.IsNull()) {
         // No button: dynamic hover highlight of the face/edge under the cursor.
         // In command-input mode we redraw ONCE ourselves (ghost included) —
@@ -670,11 +688,89 @@ QString OcctViewWidget::pickCenter()
     return pickAtPhysical(w / 2, h / 2);
 }
 
+// Dashed on-screen rectangle while dragging a window selection.
+void OcctViewWidget::updateRubberBand(const QPoint& fromLogical,
+                                      const QPoint& toLogical)
+{
+    if (m_context.IsNull() || m_view.IsNull())
+        return;
+    Handle(AIS_RubberBand) band = Handle(AIS_RubberBand)::DownCast(m_band);
+    if (band.IsNull()) {
+        band = new AIS_RubberBand(Quantity_NOC_WHITE, Aspect_TOL_DASH,
+                                  Quantity_NOC_SKYBLUE, 0.85, 1.0);
+        m_band = band;
+    }
+    const QPoint a = devicePos(fromLogical);
+    const QPoint b = devicePos(toLogical);
+    Standard_Integer ww = 0, wh = 0;
+    m_view->Window()->Size(ww, wh);
+    // AIS_RubberBand expects window coords with Y UP (flip from Qt's Y down).
+    band->SetRectangle(std::min(a.x(), b.x()), wh - std::max(a.y(), b.y()),
+                       std::max(a.x(), b.x()), wh - std::min(a.y(), b.y()));
+    if (m_context->IsDisplayed(m_band))
+        m_context->Redisplay(m_band, false);
+    else
+        m_context->Display(m_band, false);
+    m_banding = true;
+    m_view->Redraw();
+}
+
+void OcctViewWidget::finishBoxSelect(const QPoint& fromLogical,
+                                     const QPoint& toLogical)
+{
+    if (!m_band.IsNull()) {
+        m_context->Remove(m_band, false);
+        m_band.Nullify();
+    }
+    m_banding = false;
+    const QPoint a = devicePos(fromLogical);
+    const QPoint b = devicePos(toLogical);
+    const Graphic3d_Vec2i lo(std::min(a.x(), b.x()), std::min(a.y(), b.y()));
+    const Graphic3d_Vec2i hi(std::max(a.x(), b.x()), std::max(a.y(), b.y()));
+    m_context->SelectRectangle(lo, hi, m_view, AIS_SelectionScheme_Replace);
+    // Everything caught by the box becomes the document selection.
+    std::vector<EntityId> ids;
+    for (m_context->InitSelected(); m_context->MoreSelected();
+         m_context->NextSelected()) {
+        const Handle(SelectMgr_EntityOwner) owner = m_context->SelectedOwner();
+        if (owner.IsNull())
+            continue;
+        const Handle(AIS_InteractiveObject) io =
+            Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+        for (const auto& pr : m_shapes)
+            if (pr.first == io &&
+                std::find(ids.begin(), ids.end(), pr.second) == ids.end())
+                ids.push_back(pr.second);
+    }
+    if (m_selection) {
+        m_selection->clear();
+        for (const EntityId id : ids)
+            m_selection->add(id);
+    }
+    m_context->UpdateCurrentViewer();
+    emit picked(QStringLiteral("3D box select: %1 object(s)").arg(ids.size()));
+    emit interaction();
+}
+
 void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (m_view.IsNull() || m_context.IsNull() || event->button() != Qt::LeftButton)
+    if (m_view.IsNull() || m_context.IsNull())
         return;
-    // A click (no meaningful drag) acts; a drag was an orbit.
+    // Short RIGHT click = context menu (a right drag was an orbit — Qt's
+    // press-time menu is suppressed in the constructor).
+    if (event->button() == Qt::RightButton) {
+        if ((event->pos() - m_pressPos).manhattanLength() < 4)
+            showContextMenu(event->globalPosition().toPoint());
+        return;
+    }
+    if (event->button() != Qt::LeftButton)
+        return;
+    // Finish a window selection drag.
+    if (m_banding) {
+        finishBoxSelect(m_pressPos, event->pos());
+        return;
+    }
+    // A click (no meaningful drag) acts; a drag was navigation.
     if ((event->pos() - m_pressPos).manhattanLength() >= 4)
         return;
     const QPoint p = devicePos(event->pos());
@@ -793,7 +889,7 @@ void OcctViewWidget::keyPressEvent(QKeyEvent* event)
     QWidget::keyPressEvent(event);
 }
 
-void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
+void OcctViewWidget::showContextMenu(const QPoint& globalPos)
 {
     // Scene rebuilds (after push/pull, undo…) clear the pick state, which
     // used to make right-click dead until the user left-clicked again. Fusion
@@ -802,13 +898,11 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
     // kept as-is).
     if (m_pickedSolid == kInvalidEntityId && !m_view.IsNull() &&
         !m_context.IsNull()) {
-        const QPoint p = devicePos(event->pos());
+        const QPoint p = devicePos(mapFromGlobal(globalPos));
         pickAtPhysical(p.x(), p.y());
     }
-    if (m_pickedSolid == kInvalidEntityId) {
-        QWidget::contextMenuEvent(event);
+    if (m_pickedSolid == kInvalidEntityId)
         return;
-    }
     QMenu menu(this);
     // The picked face is a bore wall? Offer to edit THAT hole first — moving
     // the hole, not the solid, is what a click on a hole means.
@@ -854,7 +948,7 @@ void OcctViewWidget::contextMenuEvent(QContextMenuEvent* event)
         ce = menu.addAction(QStringLiteral("Chamfer %1 selected edge(s)…")
                                 .arg(m_pickedEdges.size()));
     }
-    QAction* chosen = menu.exec(event->globalPos());
+    QAction* chosen = menu.exec(globalPos);
     bool ok = false;
     if (holeNode >= 0 && chosen == mvHole && tree) {
         const Vec2d cur = tree->nodeAt(holeNode).holeCenter;

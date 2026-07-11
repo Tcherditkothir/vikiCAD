@@ -107,7 +107,6 @@ signals:
     void feedback(const QString& message);
 
 protected:
-    void contextMenuEvent(QContextMenuEvent* event) override;
     QPaintEngine* paintEngine() const override { return nullptr; }
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -136,6 +135,12 @@ private:
     bool cursorToPlane(const QPoint& physical, Vec2d& uv);
     void updateGhost(const Vec2d& uv);
     void clearGhost();
+    // Right-click menu, synthesized on a SHORT right click (a right DRAG
+    // orbits the camera, so Qt's automatic press-time menu is suppressed).
+    void showContextMenu(const QPoint& globalPos);
+    // Left-drag box selection (window select) with an OCCT rubber band.
+    void updateRubberBand(const QPoint& fromLogical, const QPoint& toLogical);
+    void finishBoxSelect(const QPoint& fromLogical, const QPoint& toLogical);
 
     Handle(V3d_Viewer) m_viewer;
     Handle(V3d_View) m_view;
@@ -144,7 +149,7 @@ private:
     QPoint m_pressPos;
     bool m_initFailed = false;
     bool m_fittedOnce = false;
-    Qt::MouseButton m_orbitButton = Qt::LeftButton;
+    Qt::MouseButton m_orbitButton = Qt::RightButton; // drag orbits; short click = menu
     Qt::MouseButton m_panButton = Qt::MiddleButton;
     bool m_zoomInvert = false;
     // Until the user orbits/pans/zooms, window resizes re-frame the scene
@@ -173,6 +178,9 @@ private:
     Handle(AIS_ViewCube) m_viewCube;
     // Cursor-following axes shown during point input.
     Handle(AIS_InteractiveObject) m_axes;
+    // Left-drag window-selection rubber band.
+    Handle(AIS_InteractiveObject) m_band;
+    bool m_banding = false;
     // What the cursor last resolved to during a Point prompt.
     bool m_hoverValid = false;
     Vec2d m_hoverUv;

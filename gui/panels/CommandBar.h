@@ -42,12 +42,17 @@ signals:
 
 private:
     void submitLine();
+    void moveCompleterPopupToAnchor();
 
     QPlainTextEdit* m_history = nullptr;
     QLabel* m_prompt = nullptr;
     QLineEdit* m_input = nullptr;
     QCompleter* m_completer = nullptr;
     std::function<bool()> m_spaceSubmits;
+    // When typing was forwarded from a view, the completion popup follows the
+    // MOUSE CURSOR (suggestions where you look) instead of the bottom bar.
+    QPoint m_popupAnchor;
+    bool m_popupAnchored = false;
 };
 
 } // namespace viki
