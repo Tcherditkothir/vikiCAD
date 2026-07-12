@@ -5,9 +5,16 @@ complet) et LESSONS.md (pièges connus — dont les gros du 10-11 juillet).
 
 ## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
 
-- **Arbre propre** — dernier lot : File > Export (STEP/DXF/STL/OBJ) dans la
-  GUI + verbe IPC `export` (testé par le harnais : 59 checks).
-- **Suite : 1717 assertions / 218 cas verts. Harnais GUI : 55/55 verts.**
+- **Arbre propre, dernier commit `88b60aa`.**
+- **Suite : 2182 assertions / 243 cas verts. Harnais GUI : 124 checks verts.**
+- **PARITÉ AGENT COMPLÈTE (2026-07-12)** : un agent headless a les mêmes mains
+  ET les mêmes yeux que la souris. Actions manquantes ajoutées (INSPECT,
+  FEATEDIT, PUSHPULL, SHELLOPEN, SPLITFACE, FILLETEDGES/CHAMFEREDGES, MATE,
+  DRAFT — adressage par indice de face/arête déterministe). Perception :
+  `DESCRIBE` + `query describe` (JSON calculé, sans brep), `viewdir` IPC pour
+  la boucle capture, `LIST` enrichi. Guide : **`docs/AGENT.md`** (validé par
+  un « agent aveugle » qui a tout réussi avec le seul guide). File > Export
+  (STEP/DXF/STL/OBJ) + verbe IPC `export`.
 - Depuis le 09 : 21 features de nuit autonome, passe « professionnel »
   (causes racines : Ctrl+Z ambigu jamais fonctionnel, booléens vides =
   pièce disparue, TransactionScope), sketches v1 (légers, sans dépendance

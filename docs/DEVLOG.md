@@ -464,3 +464,34 @@ du perçage sondé par interferenceVolume, UNDO/REDO, tous les chemins
 d'erreur) ; harnais gui-smoke étendu (LIST via IPC, élargissement visible à
 l'écran, UNDO restaure le rendu, mismatch rapporté). Suite : 1951 assertions /
 227 cas ; gui-smoke 72/72 verts.
+
+## 2026-07-12 — Parité agent complète : les mains ET les yeux
+
+Question de Lex : « le CLI a suivi tout du long, ou un agent va galérer ? »
+Audit : 7 opérations étaient GUI-only (push/pull, congé/chanfrein d'arêtes,
+coque à faces ouvertes, split par face, édition de trou, MATE, DRAFT). Deux
+lots ont fermé l'écart, chacun validé suite + gui-smoke.
+
+**Parité d'ACTION (9d13d2e→86ae2b6)** : `SubShape.{h,cpp}` (faceAt/edgeAt par
+ordre TopExp déterministe, 0-based) ; `INSPECT` (liste faces/arêtes : indice,
+type, aire/longueur, centroïde — le vocabulaire d'adressage, et la GUI annonce
+l'indice au pick) ; `FEATEDIT` (éditer diamètre/centre/profondeur d'un trou en
+headless) ; `PUSHPULL`/`SHELLOPEN`/`SPLITFACE` (par indice de face, courbe
+incluse) ; `FILLETEDGES`/`CHAMFEREDGES`/`MATE`/`DRAFT` (par indices).
+`docs/AGENT.md` = guide complet, chaque exemple exécuté avant commit.
+
+**Parité de PERCEPTION (ad8a835, 88b60aa)** — l'exigence de Lex « comprendre
+et VOIR, sinon useless » : `DESCRIBE`/`DESC` (résumé calculé lisible : volume,
+aire, bbox, centroïde, historique des features, sketches, calques) +
+`query describe` (MÊME données en JSON machine, numériques, AUCUN brep base64)
+câblé CLI hors-ligne ET IPC ; verbe IPC `viewdir TOP|FRONT|ISO…` → la boucle
+visuelle `view3d on → viewdir → screenshot → diff` ; `LIST` enrichi
+(volume/bbox/features sur les solides).
+
+**Preuve ultime — l'agent aveugle** : la sanity a joué un agent n'ayant QUE
+`docs/AGENT.md` + le CLI : boîte 30×20×10 → trou d5 → `query describe`
+volume=5803.6505 (exact) → `FEATEDIT diameter 8` → volume=5497.3454 (exact) →
+export STEP (ISO-10303 valide). Verdict : le guide seul a suffi, zéro lecture
+de source, zéro tâtonnement.
+
+**État : 2182 assertions / 243 cas + gui-smoke 124 checks, tout vert.**
