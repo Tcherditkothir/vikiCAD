@@ -40,7 +40,9 @@ complet) et LESSONS.md (pièges connus — dont les gros du 10-11 juillet).
 4. **Release publique GPLv3** : build Release + .desktop pointé dessus, tag,
    hébergement (GitHub INACCESSIBLE depuis la machine — IPv6 only ; prévoir
    une alternative ou un transfert par Lex).
-5. Moyens : MAKEVIEW placement à valider ; MATE/DRAFT sans GUI ; double-clic
+5. Moyens : MAKEVIEW placement à valider ; ~~MATE/DRAFT sans GUI~~ (FAIT
+   2026-07-12 : FILLETEDGES/CHAMFEREDGES/MATE/DRAFT headless par index
+   INSPECT, harnais GUI étendu) ; double-clic
    sketch 3D → l'ouvrir ; presse-papier/duplication de solides.
 
 ## ⚠️ Harnais GUI-live : `scripts/gui-smoke.sh` — À LANCER AVANT DE LIVRER

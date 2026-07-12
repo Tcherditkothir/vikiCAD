@@ -389,6 +389,61 @@ gexec "subshape: UNDO splitface" "UNDO"
 assert_eq "subshape: undo restores solid count" "$solids_before" \
     "$(wc -w <<<"$(solid_ids)")"
 
+# --- edge ops / MATE / DRAFT phase (index-addressed parity commands) ----------
+# Same box (pp_box_id, 40x30x10 restored by the undos) and cylinder tool.
+
+cyl_face_count() { # solid-id -> number of cylindrical faces
+    jget "$(rpc exec "INSPECT $1 Faces")" \
+        "sum(1 for m in d['result']['messages'] if m.startswith('face ') and 'cylinder' in m)"
+}
+face_count() { # solid-id -> number of faces
+    jget "$(rpc exec "INSPECT $1 Faces")" \
+        "sum(1 for m in d['result']['messages'] if m.startswith('face '))"
+}
+face_area_at_z() { # inspect-json z -> area of the planar face at that height
+    jget "$1" "([m.split('area=')[1].split()[0] for m in d['result']['messages'] if m.startswith('face ') and 'plane' in m and m.endswith(',$2)')] or [''])[0]"
+}
+
+# FILLETEDGES r=3 on edge 0: the box gains a cylindrical fillet face.
+gexec "edgeops: FILLETEDGES r=3 edge 0" "FILLETEDGES 3 $pp_box_id 0"
+assert_eq "edgeops: fillet adds a cylinder face" 1 "$(cyl_face_count "$pp_box_id")"
+gexec "edgeops: UNDO fillet" "UNDO"
+assert_eq "edgeops: undo removes the fillet" 0 "$(cyl_face_count "$pp_box_id")"
+
+# CHAMFEREDGES d=3 on edge 0: one extra PLANAR face (6 -> 7).
+gexec "edgeops: CHAMFEREDGES d=3 edge 0" "CHAMFEREDGES 3 $pp_box_id 0"
+assert_eq "edgeops: chamfer adds a face" 7 "$(face_count "$pp_box_id")"
+gexec "edgeops: UNDO chamfer" "UNDO"
+assert_eq "edgeops: undo restores 6 faces" 6 "$(face_count "$pp_box_id")"
+
+# DRAFT 3 deg on the 4 side faces (planar faces with centroid z=5.0); pull +Z,
+# neutral plane at the solid's zMin. The top face area moves off 1200.0.
+insp="$(rpc exec "INSPECT $pp_box_id Faces")"
+side_idxs="$(jget "$insp" \
+    "' '.join(m.split()[1].rstrip(':') for m in d['result']['messages'] if m.startswith('face ') and 'plane' in m and m.endswith(',5.0)'))")"
+assert_eq "draft: found 4 side faces" 4 "$(wc -w <<<"$side_idxs")"
+top_area_before="$(face_area_at_z "$insp" "10.0")"
+gexec "draft: DRAFT 3deg on sides" "DRAFT 3 $pp_box_id $side_idxs"
+assert_ne "draft: top face area changed" "$top_area_before" \
+    "$(face_area_at_z "$(rpc exec "INSPECT $pp_box_id Faces")" "10.0")"
+gexec "draft: UNDO draft" "UNDO"
+assert_eq "draft: undo restores top area" "$top_area_before" \
+    "$(face_area_at_z "$(rpc exec "INSPECT $pp_box_id Faces")" "10.0")"
+
+# MATE: snap the cylinder's top face (z=30) flat onto the box top (z=10) —
+# the mated face lands coincident on the box top plane.
+box_top_idx="$(face_idx_at_z "$(rpc exec "INSPECT $pp_box_id Faces")" "10.0")"
+cyl_top_idx="$(face_idx_at_z "$(rpc exec "INSPECT $pp_tool_id Faces")" "30.0")"
+assert_ne "mate: box top index found" "" "$box_top_idx"
+assert_ne "mate: cylinder top index found" "" "$cyl_top_idx"
+gexec "mate: MATE cyl top onto box top" \
+    "MATE $pp_tool_id $cyl_top_idx $pp_box_id $box_top_idx"
+assert_ne "mate: mated face sits at z=10" "" \
+    "$(face_idx_at_z "$(rpc exec "INSPECT $pp_tool_id Faces")" "10.0")"
+gexec "mate: UNDO mate" "UNDO"
+assert_ne "mate: undo puts the face back to z=30" "" \
+    "$(face_idx_at_z "$(rpc exec "INSPECT $pp_tool_id Faces")" "30.0")"
+
 # --- STL export --------------------------------------------------------------
 out="$(rpc save "$TMP/smoke.vkd")"
 assert_eq "stl: save .vkd" True "$(jget "$out" "d['result'].get('ok')")"
