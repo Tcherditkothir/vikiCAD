@@ -79,5 +79,6 @@ void registerParamCommands(CommandProcessor& processor);
 void registerSketchCommands(CommandProcessor& processor);
 void registerInspectCommands(CommandProcessor& processor);
 void registerFeatEditCommands(CommandProcessor& processor);
+void registerSubShapeOpCommands(CommandProcessor& processor);
 
 } // namespace viki

@@ -553,6 +553,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerSketchCommands(p);
     registerInspectCommands(p);
     registerFeatEditCommands(p);
+    registerSubShapeOpCommands(p);
 }
 
 } // namespace viki

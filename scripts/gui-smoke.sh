@@ -337,6 +337,58 @@ gexec "sketch: UNDO extrude #2" "UNDO"
 gexec "sketch: UNDO extrude #1" "UNDO"
 assert_eq "sketch: undos restore counts" "$((count_before_sketch + 1))" "$(count)"
 
+# --- sub-shape ops phase (PUSHPULL / SHELLOPEN / SPLITFACE by index) ----------
+# The headless twins of the direct-modeling ops: faces addressed by the
+# INSPECT indices. A fresh 40x30x10 box keeps the geometry predictable.
+gexec "subshape: RECT profile" "RECT 300,0 340,30"
+pp_rect_id="$(max_id)"
+gexec "subshape: EXTRUDE box h=10" "EXTRUDE 10 $pp_rect_id"
+pp_box_id="$(max_id)"
+
+face_idx_at_z() { # inspect-json z -> index of the planar face at that height
+    jget "$1" "([m.split()[1].rstrip(':') for m in d['result']['messages'] if m.startswith('face ') and 'plane' in m and m.endswith(',$2)')] or [''])[0]"
+}
+insp="$(rpc exec "INSPECT $pp_box_id Faces")"
+top_idx="$(face_idx_at_z "$insp" "10.0")"
+bot_idx="$(face_idx_at_z "$insp" "0.0")"
+assert_ne "subshape: top face index found" "" "$top_idx"
+assert_ne "subshape: bottom face index found" "" "$bot_idx"
+
+# PUSHPULL +5 on the top face: the top plane moves from z=10 to z=15.
+gexec "subshape: PUSHPULL +5 top face" "PUSHPULL 5 $top_idx $pp_box_id"
+assert_ne "subshape: top face now at z=15" "" \
+    "$(face_idx_at_z "$(rpc exec "INSPECT $pp_box_id Faces")" "15.0")"
+gexec "subshape: UNDO pushpull" "UNDO"
+assert_ne "subshape: undo puts top back to z=10" "" \
+    "$(face_idx_at_z "$(rpc exec "INSPECT $pp_box_id Faces")" "10.0")"
+
+# SHELLOPEN top+bottom: the box becomes a rectangular tube (6 -> 10 faces).
+gexec "subshape: SHELLOPEN t=2 top+bottom" \
+    "SHELLOPEN 2 $pp_box_id $top_idx $bot_idx"
+assert_eq "subshape: tube has 10 faces" 10 "$(jget \
+    "$(rpc exec "INSPECT $pp_box_id Faces")" \
+    "sum(1 for m in d['result']['messages'] if m.startswith('face '))")"
+gexec "subshape: UNDO shellopen" "UNDO"
+assert_eq "subshape: undo restores 6 faces" 6 "$(jget \
+    "$(rpc exec "INSPECT $pp_box_id Faces")" \
+    "sum(1 for m in d['result']['messages'] if m.startswith('face '))")"
+
+# SPLITFACE: a cylinder wall through the box replaces it with 2 pieces.
+gexec "subshape: CIRCLE tool profile" "CIRCLE 320,15 8"
+gexec "subshape: EXTRUDE tool cylinder" "EXTRUDE 30 $(max_id)"
+pp_tool_id="$(max_id)"
+wall_idx="$(jget "$(rpc exec "INSPECT $pp_tool_id Faces")" \
+    "([m.split()[1].rstrip(':') for m in d['result']['messages'] if m.startswith('face ') and 'cylinder' in m] or [''])[0]")"
+assert_ne "subshape: cylinder wall index found" "" "$wall_idx"
+solids_before="$(wc -w <<<"$(solid_ids)")"
+gexec "subshape: SPLITFACE cylinder wall" \
+    "SPLITFACE $pp_tool_id $wall_idx $pp_box_id"
+assert_eq "subshape: box replaced by 2 pieces" "$((solids_before + 1))" \
+    "$(wc -w <<<"$(solid_ids)")"
+gexec "subshape: UNDO splitface" "UNDO"
+assert_eq "subshape: undo restores solid count" "$solids_before" \
+    "$(wc -w <<<"$(solid_ids)")"
+
 # --- STL export --------------------------------------------------------------
 out="$(rpc save "$TMP/smoke.vkd")"
 assert_eq "stl: save .vkd" True "$(jget "$out" "d['result'].get('ok')")"

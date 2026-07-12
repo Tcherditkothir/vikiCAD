@@ -35,6 +35,7 @@ add_executable(vikicad-tests
     test_drawing_view.cpp
     test_inspect.cpp
     test_featedit.cpp
+    test_subshape_ops.cpp
 )
 
 if(VIKICAD_HAS_DXF)

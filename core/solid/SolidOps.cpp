@@ -9,6 +9,8 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <gp_Cylinder.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Section.hxx>
@@ -783,6 +785,62 @@ std::vector<TopoDS_Shape> splitByPlane(const TopoDS_Shape& solid, const gp_Pln& 
     if (face.IsNull())
         return {};
     return splitSolid(solid, face);
+}
+
+std::vector<TopoDS_Shape> splitByFaceExtended(const TopoDS_Shape& solid,
+                                              const TopoDS_Shape& face)
+{
+    auto pieces = splitSolid(solid, face);
+    if (pieces.size() >= 2 || solid.IsNull() || face.IsNull() ||
+        face.ShapeType() != TopAbs_FACE)
+        return pieces;
+
+    // The raw face did not cut. Prism-built lateral faces (an extruded
+    // circle's wall) can defeat the splitter even though their surface is a
+    // perfect Geom_CylindricalSurface; and a face that stops short of the
+    // solid should still cut in Fusion's "extend splitting tool" sense. So
+    // rebuild the tool on the face's CANONICAL surface, extended past the
+    // solid's bounding box, and retry.
+    Bnd_Box bb;
+    BRepBndLib::Add(solid, bb);
+    if (bb.IsVoid())
+        return pieces;
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    const double margin =
+        gp_Pnt(xmin, ymin, zmin).Distance(gp_Pnt(xmax, ymax, zmax)) + 10.0;
+
+    try {
+        const BRepAdaptor_Surface surf(TopoDS::Face(face));
+        if (surf.GetType() == GeomAbs_Plane)
+            return splitByPlane(solid, surf.Plane());
+        if (surf.GetType() == GeomAbs_Cylinder) {
+            const gp_Cylinder cyl = surf.Cylinder();
+            // V of the canonical cylinder = signed distance along the axis
+            // from its origin; span every bbox corner, plus margin.
+            const gp_Pnt loc = cyl.Position().Location();
+            const gp_Vec axis(cyl.Position().Direction());
+            double vmin = 0.0, vmax = 0.0;
+            for (int i = 0; i < 8; ++i) {
+                const gp_Pnt corner((i & 1) ? xmax : xmin,
+                                    (i & 2) ? ymax : ymin,
+                                    (i & 4) ? zmax : zmin);
+                const double v = gp_Vec(loc, corner).Dot(axis);
+                vmin = (i == 0) ? v : std::min(vmin, v);
+                vmax = (i == 0) ? v : std::max(vmax, v);
+            }
+            const Handle(Geom_CylindricalSurface) cs =
+                new Geom_CylindricalSurface(cyl.Position(), cyl.Radius());
+            BRepBuilderAPI_MakeFace mk(cs, 0.0, 2.0 * M_PI, vmin - margin,
+                                       vmax + margin, Precision::Confusion());
+            if (mk.IsDone())
+                return splitSolid(solid, mk.Face());
+        }
+        // Other surface kinds: keep the raw (failed) result — the caller
+        // reports "the tool missed the solid".
+    } catch (const Standard_Failure&) {
+    }
+    return pieces;
 }
 
 namespace {

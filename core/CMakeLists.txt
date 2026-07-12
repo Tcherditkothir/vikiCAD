@@ -42,6 +42,7 @@ add_library(vikicore STATIC
     cmd/CommandsSketch.cpp
     cmd/CommandsInspect.cpp
     cmd/CommandsFeatEdit.cpp
+    cmd/CommandsSubShapeOps.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp

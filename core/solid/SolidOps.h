@@ -97,6 +97,15 @@ std::vector<TopoDS_Shape> splitSolid(const TopoDS_Shape& solid,
 std::vector<TopoDS_Shape> splitByPlane(const TopoDS_Shape& solid,
                                        const gp_Pln& pln);
 
+// SPLITFACE: split `solid` by `face` with Fusion's "extend splitting tool"
+// semantics. The raw face is tried first; when it fails to yield 2+ pieces
+// and its surface is a plane or a cylinder, the tool is rebuilt on the
+// CANONICAL surface, extended past the solid's bounding box, and retried
+// (prism-built lateral faces — an extruded circle's wall — can defeat the
+// splitter raw even though their surface is a perfect cylinder).
+std::vector<TopoDS_Shape> splitByFaceExtended(const TopoDS_Shape& solid,
+                                              const TopoDS_Shape& face);
+
 // Parametric HOLE: drill a cylinder of `diameter` at the 2D `center` on the
 // work plane, boring along the plane normal, and Cut it from `solid`. With
 // `through = true` the bore pierces the whole solid (depth is ignored and the
