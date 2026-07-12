@@ -370,7 +370,8 @@ int cmdConnect(const QStringList& args)
     if (args.isEmpty())
         return emitError(QStringLiteral("E_ARGS"),
                          QStringLiteral("connect needs a method: ping|exec|query|open|"
-                                        "save|screenshot"));
+                                        "save|screenshot|view3d|viewdir|pick3d|"
+                                        "export|insertstep|sketchface"));
     const QString method = args.first();
     QJsonObject params;
     if (method == QLatin1String("exec") && args.size() > 1)
@@ -385,6 +386,8 @@ int cmdConnect(const QStringList& args)
         params[QStringLiteral("path")] = args[1];
     else if (method == QLatin1String("view3d") && args.size() > 1)
         params[QStringLiteral("on")] = args[1] != QLatin1String("off");
+    else if (method == QLatin1String("viewdir") && args.size() > 1)
+        params[QStringLiteral("name")] = args[1]; // TOP/FRONT/.../ISO
     else if (method == QLatin1String("pick3d") && args.size() > 2) {
         params[QStringLiteral("x")] = args[1].toInt();
         params[QStringLiteral("y")] = args[2].toInt();

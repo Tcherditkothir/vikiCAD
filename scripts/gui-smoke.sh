@@ -8,7 +8,9 @@
 # Scenario:
 #   2D : RECT, CIRCLE, MOVE (+bounds), UNDO/REDO (counts change and restore)
 #   3D : EXTRUDE, view3d on, screenshot A ; HOLE -> screenshot B != A ;
-#        UNDO -> == A ; REDO -> == B ; SPLIT XY -> 2 solids ; COMBINE -> 1 ;
+#        UNDO -> == A ; REDO -> == B ; LIST -> solid metrics (volume/area/
+#        bbox/features) ; viewdir ISO/TOP -> renders differ (camera moved) ;
+#        SPLIT XY -> 2 solids ; COMBINE -> 1 ;
 #        export STL -> non-empty + header/size check.
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
@@ -214,6 +216,10 @@ assert_eq "ui: right docks tabified" \
 # --- 2D phase ---------------------------------------------------------------
 assert_eq "2d: fresh document empty" 0 "$(count)"
 
+# viewdir needs the 3D view: refused while the 2D canvas is active.
+out="$(rpc viewdir TOP)"
+assert_eq "2d: viewdir refused outside 3D" False "$(jget "$out" "d.get('ok')")"
+
 gexec "2d: WORKPLANE XY" "WORKPLANE XY"
 
 gexec "2d: RECT" "RECT 0,0 40,30"
@@ -322,6 +328,27 @@ assert_eq "describe: query hole diameter" True "$(jget "$desc_json" \
     "d['result']['describe']['solids'][0]['features'][0]['diameter'] == 12")"
 assert_eq "describe: no brep key anywhere" True "$(jget "$desc_json" \
     "'brep' not in json.dumps(d['result']['describe'])")"
+
+# LIST on the smoke solid: the quick-numbers line (shared metrics helper
+# with DESCRIBE). Box 40x30x10 minus the d=12 bore -> volume=10869.0,
+# feature history = base + hole = 2 nodes.
+out="$(rpc exec "LIST 20,0")"
+assert_eq "list: solid metrics line" True "$(jget "$out" \
+    "any('volume=10869.0 mm3' in m and 'bbox=(0.0,0.0,0.0)-(40.0,30.0,10.0)' in m and 'features=2' in m for m in d['result']['messages'])")"
+
+# --- viewdir phase: the agent's literal eyes ---------------------------------
+# viewdir aims the camera along a standard view (and FitAlls); an image-hash
+# distance between the ISO and TOP renders proves the camera really moved.
+out="$(rpc viewdir ISO)"
+assert_eq "viewdir: ISO accepted" True "$(jget "$out" "d['result'].get('ok')")"
+shot "viewdir: screenshot ISO" "$TMP/v_iso.png"
+out="$(rpc viewdir TOP)"
+assert_eq "viewdir: TOP accepted" True "$(jget "$out" "d['result'].get('ok')")"
+shot "viewdir: screenshot TOP" "$TMP/v_top.png"
+assert_ge "viewdir: TOP differs from ISO (camera moved)" \
+    "$(img_hash_dist "$TMP/v_iso.png" "$TMP/v_top.png")" "$((SAME_HASH_MAX + 1))"
+out="$(rpc viewdir SIDEWAYS)"
+assert_eq "viewdir: unknown view refused" False "$(jget "$out" "d.get('ok')")"
 
 solid_id="$(solid_ids)"
 gexec "3d: SPLIT XY z=5" "SPLIT XY 5 $solid_id"

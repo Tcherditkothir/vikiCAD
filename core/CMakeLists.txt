@@ -52,6 +52,7 @@ add_library(vikicore STATIC
     solid/OcctOps.cpp
     solid/SolidEntity.cpp
     solid/SolidOps.cpp
+    solid/SolidMetrics.cpp
     solid/FeatureTree.cpp
     solid/FeatureParams.cpp
     solid/SubShape.cpp

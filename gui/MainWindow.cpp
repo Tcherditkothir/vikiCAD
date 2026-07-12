@@ -982,6 +982,21 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                                                 : m_occtView->pickAtPhysical(cx, cy);
         return {{QStringLiteral("ok"), true}, {QStringLiteral("picked"), info}};
     }
+    if (method == QLatin1String("viewdir")) {
+        // The agent's eyes: aim the 3D camera along a standard view
+        // (TOP/BOTTOM/FRONT/BACK/LEFT/RIGHT/ISO) — setStandardView also
+        // FitAlls, so a following `screenshot` frames the whole scene.
+        if (!m_occtView || m_viewStack->currentWidget() != m_occtView)
+            return {{QStringLiteral("error"), QStringLiteral("not in 3D view")}};
+        const QString name = params[QStringLiteral("name")].toString();
+        if (!m_occtView->setStandardView(name))
+            return {{QStringLiteral("error"),
+                     QStringLiteral("unknown view: %1 (try TOP/BOTTOM/FRONT/"
+                                    "BACK/LEFT/RIGHT/ISO)")
+                         .arg(name)}};
+        return {{QStringLiteral("ok"), true},
+                {QStringLiteral("view"), name.toUpper()}};
+    }
     if (method == QLatin1String("sketchface")) {
         beginSketchOnFace();
         return {{QStringLiteral("ok"), true}};

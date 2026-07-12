@@ -57,6 +57,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj` |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D |
 | `view3d` | `$CLI connect view3d on` | toggle the 3D view (`on`/`off`); returns `is3d` |
+| `viewdir` | `$CLI connect viewdir FRONT` | aim the 3D camera along `TOP BOTTOM FRONT BACK LEFT RIGHT ISO` and refit the scene (3D view only — §5a) |
 | `pick3d` | `$CLI connect pick3d 400 300` | click at physical view pixels; no coords = view centre; returns e.g. `"picked face 2 of solid #3"` |
 | `sketchface` | `$CLI connect sketchface` | start a sketch on the currently selected face (pick3d a face first) |
 | `insertstep` | `$CLI connect insertstep other.step` | additive STEP import as an assembly component |
@@ -243,7 +244,17 @@ Never trust a mutation you did not observe. After each step:
    bounding box catch "the part vanished" instantly.
 2. **LIST / INSPECT** — `LIST <x,y>` (LI) picks the entity at a point and
    dumps it (verified: `LIST 20,0` → `#1  line  layer '0'  bounds 40.00 mm
-   x 0.00 mm` + its JSON); `INSPECT` proves topology: face/edge counts, surface types,
+   x 0.00 mm` + its JSON). On a **solid**, LIST adds the quick-numbers line
+   (same shared computation as DESCRIBE — verified on the §3 part after
+   the hole):
+
+   ```
+   #3  solid  layer '0'  bounds 40.00 mm x 30.00 mm
+   volume=11497.3 mm3 area=3950.8 mm2 bbox=(0.0,0.0,0.0)-(40.0,30.0,10.0) features=2
+   ```
+
+   (`features=` counts the history nodes — base + hole here; 0 = plain
+   brep with no history.) `INSPECT` proves topology: face/edge counts, surface types,
    areas, centroids. A fillet shows up as new `cylinder` faces; a shell as
    a face-count jump (6 → 10 for an open-top-and-bottom box).
 3. **Numeric checks** — all verified forms:
@@ -267,7 +278,101 @@ Never trust a mutation you did not observe. After each step:
 
 ---
 
-## 5. Gotchas
+## 5. Seeing the model
+
+Three ways to LOOK at the part, cheapest first. As everywhere in this
+guide, every command below ran verbatim; outputs shown are real (a
+40x30x10 box with an 8 mm through-bore, built in §5d).
+
+### 5a. Live eyes — `viewdir` + `screenshot` (GUI over IPC)
+
+`viewdir` aims the 3D camera along a standard view and refits the whole
+scene, so the following `screenshot` is always framed. The loop:
+
+```sh
+$CLI connect open "$PWD/see.vkd"
+$CLI connect view3d on           # viewdir errors while the 2D canvas is up
+$CLI connect viewdir FRONT       # {"ok":true,...,"view":"FRONT"}
+$CLI connect screenshot front.png
+$CLI connect viewdir ISO
+$CLI connect screenshot iso.png
+```
+
+Verified: the FRONT dump shows the plate edge-on (bore invisible), the ISO
+dump shows it in 3/4 with the bore — and `gui-smoke.sh` measures a 308/1024
+dhash distance between the ISO and TOP renders (the camera really moved).
+Wrong names fail loudly: `viewdir NOPE` → `unknown view: NOPE (try
+TOP/BOTTOM/FRONT/BACK/LEFT/RIGHT/ISO)`.
+
+### 5b. Offline eyes — `MAKEVIEW` (HLR): a projection you QUERY, no GUI
+
+`MAKEVIEW <VIEW> <solidId>` runs hidden-line removal and adds every
+*visible* projected edge as a 2D LINE entity — a "drawing" made of numbers
+instead of pixels:
+
+```sh
+$CLI open see.vkd --exec "MAKEVIEW TOP 3" --save-as proj.vkd
+#   messages: ["MAKEVIEW TOP: 36 visible edges from solid 3"]
+$CLI query proj.vkd --entities   # filter "type":"line" -> 36 segments
+```
+
+Those 36 lines are the 4-edge outline plus the bore circle chorded into 32
+segments — countable, measurable proof the hole exists, from a shell with
+no display at all. Caveats (verified): hidden edges are dropped (v1), and
+the lines land in the VIEW's own 2D frame, which can be offset/mirrored
+from the model's XY footprint — measure the lines' own bounds, don't
+overlay them on the plan.
+
+### 5c. External eyes — export a mesh for outside analysis
+
+```sh
+$CLI export see.vkd see.stl   # {"format":"binary","savedTo":...,"solids":1}
+$CLI export see.vkd see.obj   # {"faces":120,"savedTo":...,"vertices":130}
+```
+
+Feed the STL/OBJ to any external mesh tool (or a few lines of Python) when
+you need analysis VikiCAD does not do itself.
+
+### 5d. Worked perception → act → verify loop (all output real)
+
+```sh
+# 0. Build the part and PERCEIVE the baseline.
+$CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" --save-as see.vkd
+$CLI open see.vkd --exec "DESCRIBE"
+#   "solid 2: volume=12000.0 mm3 area=3800.0 mm2
+#    bbox=(0.0,0.0,0.0)-(40.0,30.0,10.0) centroid=(20.0,15.0,5.0)"
+
+# 1. INSPECT for the actionable indices (top face = the plane at z=10).
+$CLI open see.vkd --exec "INSPECT 2 Faces"
+#   ... "face 5: plane area=1200.0 centroid=(20.0,15.0,10.0)"
+
+# 2. ACT.
+$CLI open see.vkd --exec "HOLE 8 T 20,15 2" --save
+#   messages: ["hole (d=8) in solid 3"]   <- NEW id, as always
+
+# 3. VERIFY numerically: describe again and check the DIFF. Volume fell
+#    12000.0 -> 11497.3, i.e. by pi*4^2*10 = 502.7 = the bore. Area rose
+#    (bore wall added more than the two discs removed). History gained
+#    the hole node. LIST at a point agrees (same shared metrics).
+$CLI open see.vkd --exec "DESCRIBE 3"
+#   "solid 3: volume=11497.3 mm3 area=3950.8 mm2 ..." + "  hole 1 d=8 through @(20,15)"
+$CLI open see.vkd --exec "LIST 20,0"
+#   "volume=11497.3 mm3 area=3950.8 mm2 bbox=(0.0,0.0,0.0)-(40.0,30.0,10.0) features=2"
+
+# 4. VERIFY visually (GUI running, §1b recipe): look at it.
+$CLI connect open "$PWD/see.vkd"
+$CLI connect view3d on
+$CLI connect viewdir ISO
+$CLI connect screenshot iso.png   # bore clearly visible in the dump
+```
+
+Rule of thumb: numbers first (steps 0–3 need no GUI and never lie),
+pixels last (step 4 catches what numbers cannot — a part rendered black,
+an assembly exploded across the scene).
+
+---
+
+## 6. Gotchas
 
 - **`H` is HATCH, not HOLE.** `HO` is the HOLE alias. Verified:
   `H 12 T 20,15 1` fails with `invalid number: T` because HATCH expects a
@@ -296,3 +401,9 @@ Never trust a mutation you did not observe. After each step:
   done.
 - **MATE needs two planar faces**, and **PUSHPULL a planar face** — INSPECT
   shows each face's surface type before you commit.
+- **3D screenshots are PPM bytes whatever the extension.** In the 3D view
+  the OCCT framebuffer dump ignores the `.png` suffix (verified: the file
+  starts `P6`). PIL/`gui-smoke.sh` open it by content and don't care;
+  stricter tools do — convert first (`python3 -c "from PIL import Image;
+  Image.open('iso.png').save('iso_real.png')"`). The 2D canvas grab is a
+  real PNG.

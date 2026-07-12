@@ -37,6 +37,7 @@ add_executable(vikicad-tests
     test_describe.cpp
     test_featedit.cpp
     test_subshape_ops.cpp
+    test_solid_metrics.cpp
     test_edgeops_mate_draft.cpp
 )
 

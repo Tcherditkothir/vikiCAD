@@ -9,6 +9,7 @@
 #include "geom/GeomUtil.h"
 #include "render/HitTest.h"
 #include "solid/SolidEntity.h"
+#include "solid/SolidMetrics.h"
 #include "solid/SolidOps.h"
 
 // Measurement / inquiry commands: DIST, ID, AREA, LIST.
@@ -230,6 +231,25 @@ public:
                      .arg(QLatin1String(e->typeName()),
                           layer ? layer->name : QStringLiteral("?"),
                           fmtLen(ctx, b.width(), 2), fmtLen(ctx, b.height(), 2)));
+        // Solids get the quick numbers too — the same metrics DESCRIBE
+        // prints (shared solidops::solidMetrics helper), same formatting.
+        if (const auto* solid = dynamic_cast<const SolidEntity*>(e)) {
+            const auto m = solidops::solidMetrics(solid->shape());
+            const auto num = [](double x) {
+                // Fixed one decimal; normalise the OCCT bbox fringe "-0.0".
+                const QString s = QString::number(x, 'f', 1);
+                return s == QLatin1String("-0.0") ? QStringLiteral("0.0") : s;
+            };
+            const auto triple = [&num](const gp_Pnt& p) {
+                return QStringLiteral("(%1,%2,%3)")
+                    .arg(num(p.X()), num(p.Y()), num(p.Z()));
+            };
+            ctx.info(QStringLiteral(
+                         "volume=%1 mm3 area=%2 mm2 bbox=%3-%4 features=%5")
+                         .arg(num(m.volume), num(m.area), triple(m.bboxMin),
+                              triple(m.bboxMax))
+                         .arg(solid->features ? solid->features->count() : 0));
+        }
         ctx.info(QString::fromUtf8(
             QJsonDocument(e->toJson()).toJson(QJsonDocument::Compact).left(220)));
         return Step::done();

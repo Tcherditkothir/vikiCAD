@@ -2,12 +2,11 @@
 
 #include <map>
 
-#include <BRepGProp.hxx>
-#include <GProp_GProps.hxx>
 #include <gp_Pnt.hxx>
 
 #include "doc/StickyNote.h"
 #include "solid/SolidEntity.h"
+#include "solid/SolidMetrics.h"
 
 namespace viki {
 namespace queryjson {
@@ -173,17 +172,14 @@ QJsonObject describeJson(const Document& doc)
             continue;
         QJsonObject o{{QStringLiteral("id"), qint64(id)},
                       {QStringLiteral("component"), s->component}};
-        GProp_GProps vol;
-        BRepGProp::VolumeProperties(s->shape(), vol);
-        o[QStringLiteral("volume")] = vol.Mass(); // mm3
-        GProp_GProps surf;
-        BRepGProp::SurfaceProperties(s->shape(), surf);
-        o[QStringLiteral("area")] = surf.Mass(); // mm2
-        const BBox2d b = s->bounds();
+        // Shared solid-metrics helper — the same numbers LIST prints.
+        const solidops::SolidMetrics m = solidops::solidMetrics(s->shape());
+        o[QStringLiteral("volume")] = m.volume; // mm3
+        o[QStringLiteral("area")] = m.area;     // mm2
         o[QStringLiteral("bbox")] = QJsonObject{
-            {QStringLiteral("min"), QJsonArray{b.min.x, b.min.y, s->zMin()}},
-            {QStringLiteral("max"), QJsonArray{b.max.x, b.max.y, s->zMax()}}};
-        o[QStringLiteral("centroid")] = xyz(vol.CentreOfMass());
+            {QStringLiteral("min"), xyz(m.bboxMin)},
+            {QStringLiteral("max"), xyz(m.bboxMax)}};
+        o[QStringLiteral("centroid")] = xyz(m.centroid);
         o[QStringLiteral("features")] =
             s->features ? featuresJson(*s->features) : QJsonArray{};
         solids.append(o);
