@@ -551,6 +551,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerPattern3DCommands(p);
     registerParamCommands(p);
     registerSketchCommands(p);
+    registerInspectCommands(p);
 }
 
 } // namespace viki

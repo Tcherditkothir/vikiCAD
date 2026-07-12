@@ -247,6 +247,19 @@ assert_eq "3d: one entity after EXTRUDE" 1 "$(count)"
 solid_id="$(solid_ids)"
 assert_ne "3d: a solid exists" "" "$solid_id"
 
+# INSPECT: the sub-shape discovery verb agents use to learn face/edge
+# indices (deterministic TopExp order) before PUSHPULL/FILLET-style calls.
+out="$(rpc exec "INSPECT $solid_id All")"
+assert_eq "inspect: box has 6 faces" 6 "$(jget "$out" \
+    "sum(1 for m in d['result']['messages'] if m.startswith('face '))")"
+assert_eq "inspect: box has 12 edges" 12 "$(jget "$out" \
+    "sum(1 for m in d['result']['messages'] if m.startswith('edge '))")"
+assert_eq "inspect: face 0 is a plane" True "$(jget "$out" \
+    "any(m.startswith('face 0: plane area=') for m in d['result']['messages'])")"
+out="$(rpc exec "INS $solid_id Edges")"
+assert_eq "inspect: Edges scope lists no faces" 0 "$(jget "$out" \
+    "sum(1 for m in d['result']['messages'] if m.startswith('face '))")"
+
 out="$(rpc view3d on)"
 assert_eq "3d: view3d on" True "$(jget "$out" "d['result'].get('is3d')")"
 

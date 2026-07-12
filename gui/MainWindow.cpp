@@ -892,13 +892,21 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
     if (method == QLatin1String("exec")) {
         const QString line = params[QStringLiteral("line")].toString();
         const auto r = m_processor->submit(line, /*strict=*/true);
+        // Command output (INSPECT listings, MEASURE results...) goes back to
+        // the agent too — capture before refreshPromptAndMessages drains it
+        // into the command-bar history.
+        QJsonArray messages;
+        for (const QString& m : m_ctx->messages())
+            messages.append(m);
         refreshPromptAndMessages();
         m_canvas->markDocumentDirty();
         sync3DView(); // IPC-driven 3D commands must show up too
         if (!r.ok)
-            return {{QStringLiteral("error"), r.error}};
+            return {{QStringLiteral("error"), r.error},
+                    {QStringLiteral("messages"), messages}};
         return {{QStringLiteral("ok"), true},
-                {QStringLiteral("entityCount"), qint64(m_doc->entityCount())}};
+                {QStringLiteral("entityCount"), qint64(m_doc->entityCount())},
+                {QStringLiteral("messages"), messages}};
     }
     if (method == QLatin1String("query")) {
         const QString kind = params[QStringLiteral("kind")].toString();

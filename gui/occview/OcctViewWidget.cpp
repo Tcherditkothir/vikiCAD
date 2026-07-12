@@ -45,6 +45,7 @@
 #include "render/StandardViews.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
+#include "solid/SubShape.h"
 
 namespace viki {
 
@@ -687,9 +688,32 @@ QString OcctViewWidget::pickAtPhysical(int px, int py, bool additive)
     if (faces) parts << QStringLiteral("%1 face").arg(faces);
     if (edges) parts << QStringLiteral("%1 edge").arg(edges);
     if (verts) parts << QStringLiteral("%1 vertex").arg(verts);
+    // Teach the headless vocabulary: report the deterministic sub-shape index
+    // (the one INSPECT prints and index-driven commands consume) so exploring
+    // with the mouse tells an agent exactly what to type.
+    QString indexNote;
+    if (m_pickedSolid != kInvalidEntityId && m_doc) {
+        if (const auto* s =
+                dynamic_cast<const SolidEntity*>(m_doc->entity(m_pickedSolid))) {
+            if (!m_pickedFace.IsNull()) {
+                const int idx = subshape::faceIndexOf(s->shape(), m_pickedFace);
+                if (idx >= 0)
+                    indexNote = QStringLiteral(" — picked face %1 of solid #%2")
+                                    .arg(idx)
+                                    .arg(qlonglong(m_pickedSolid));
+            } else if (!m_pickedEdges.empty()) {
+                const int idx =
+                    subshape::edgeIndexOf(s->shape(), m_pickedEdges.back());
+                if (idx >= 0)
+                    indexNote = QStringLiteral(" — picked edge %1 of solid #%2")
+                                    .arg(idx)
+                                    .arg(qlonglong(m_pickedSolid));
+            }
+        }
+    }
     return parts.isEmpty() ? QStringLiteral("3D: nothing under cursor")
-                           : QStringLiteral("3D selected: %1")
-                                 .arg(parts.join(QStringLiteral(", ")));
+                           : QStringLiteral("3D selected: %1%2")
+                                 .arg(parts.join(QStringLiteral(", ")), indexNote);
 }
 
 QString OcctViewWidget::pickCenter()
@@ -950,14 +974,29 @@ OcctViewWidget::pickCandidatesAt(const QPoint& physical)
         QString label = QStringLiteral("%1 #%2").arg(what).arg(qlonglong(id));
         const Handle(StdSelect_BRepOwner) brep =
             Handle(StdSelect_BRepOwner)::DownCast(owner);
+        // Faces/edges show their deterministic index (INSPECT vocabulary):
+        // "face 3 of solid #2" is directly usable in a headless command.
+        const auto* solidEnt = dynamic_cast<const SolidEntity*>(e);
         if (!brep.IsNull() && brep->HasShape()) {
             switch (brep->Shape().ShapeType()) {
-            case TopAbs_FACE:
-                label = QStringLiteral("face of %1").arg(label);
+            case TopAbs_FACE: {
+                const int idx = solidEnt ? subshape::faceIndexOf(
+                                               solidEnt->shape(), brep->Shape())
+                                         : -1;
+                label = idx >= 0
+                            ? QStringLiteral("face %1 of %2").arg(idx).arg(label)
+                            : QStringLiteral("face of %1").arg(label);
                 break;
-            case TopAbs_EDGE:
-                label = QStringLiteral("edge of %1").arg(label);
+            }
+            case TopAbs_EDGE: {
+                const int idx = solidEnt ? subshape::edgeIndexOf(
+                                               solidEnt->shape(), brep->Shape())
+                                         : -1;
+                label = idx >= 0
+                            ? QStringLiteral("edge %1 of %2").arg(idx).arg(label)
+                            : QStringLiteral("edge of %1").arg(label);
                 break;
+            }
             case TopAbs_VERTEX:
                 label = QStringLiteral("vertex of %1").arg(label);
                 break;

@@ -40,6 +40,7 @@ add_library(vikicore STATIC
     cmd/CommandsPattern3D.cpp
     cmd/CommandsParam.cpp
     cmd/CommandsSketch.cpp
+    cmd/CommandsInspect.cpp
     edit/EditOps.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp
@@ -50,6 +51,7 @@ add_library(vikicore STATIC
     solid/SolidOps.cpp
     solid/FeatureTree.cpp
     solid/FeatureParams.cpp
+    solid/SubShape.cpp
     io/StepIo.cpp
     io/StlIo.cpp
     io/ObjIo.cpp
