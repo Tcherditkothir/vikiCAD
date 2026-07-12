@@ -72,6 +72,11 @@ python3 with PIL (`python3-pil`) — both part of the normal dev setup.
 Internal documentation under `docs/` (DEVLOG, LESSONS, REPRISE...) is written
 in French. Contributions to it may be in French or English.
 
+[docs/AGENT.md](docs/AGENT.md) (English) is the reference for driving
+VikiCAD headlessly — CLI/IPC channels, command grammar, sub-shape indices,
+verification loop. Keep it in sync when you add or change commands; every
+example in it must actually run.
+
 ## License
 
 By contributing you agree that your work is released under the

@@ -56,6 +56,10 @@ vikicad-cli connect exec "LINE 0,0 100,0"   # drive the running GUI
 
 All output is single-line JSON: `{"ok":true,"result":{...}}`.
 
+The complete agent guide — command grammar, sub-shape addressing (INSPECT
+indices), a verified end-to-end modeling example, the verification loop and
+the gotchas — is **[docs/AGENT.md](docs/AGENT.md)**.
+
 ## License
 
 VikiCAD is free software, released under the **GNU General Public License,
