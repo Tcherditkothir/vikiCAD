@@ -26,7 +26,7 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 |---|---|
 | `new` | `$CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" --save-as part.vkd` |
 | `open` | `$CLI open part.vkd --exec "INSPECT 2 All"` — add `--save` / `--save-as out.vkd` to persist |
-| `query` | `$CLI query part.vkd --entities --bounds` (also `--layers --notes --blocks --layouts`) |
+| `query` | `$CLI query part.vkd --entities --bounds` (also `--layers --notes --blocks --layouts --describe`) |
 | `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`) |
 | `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg` and `.step`) |
 | script | `$CLI new --run script.vks --save-as out.vkd` — a `.vks` file, one input line per row (AutoCAD `.scr` semantics) |
@@ -51,7 +51,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 |---|---|---|
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
-| `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `ui` |
+| `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
 | `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj` |
@@ -196,6 +196,48 @@ head -1 part.step                                   # ISO-10303-21;
 
 Never trust a mutation you did not observe. After each step:
 
+0. **DESCRIBE / `query describe`** — the "understand the model" view, one
+   call, two renderings of the SAME computed data.
+
+   Text (`DESCRIBE`, alias `DESC`; add a solid id to scope to that solid):
+   one grep-friendly line per fact — document (units/entity/layer counts),
+   each solid (volume mm³, area mm², bbox, centroid) with its feature
+   history indented under it, each sketch (plane + entity count), each
+   layer (2D entity counts by type). Verified on the §3 part after step 3:
+
+   ```sh
+   $CLI open part.vkd --exec "DESCRIBE"
+   #   messages: ["document: units=mm entities=1 layers=1",
+   #     "solid 3: volume=11497.3 mm3 area=3950.8 mm2 bbox=(0.0,0.0,0.0)-(40.0,30.0,10.0) centroid=(20.0,15.0,5.0)",
+   #     "  base 0",
+   #     "  hole 1 d=8 through @(20,15)",
+   #     "layer '0': 2d=0"]
+   ```
+
+   Machine (`query describe`): the same data as structured JSON — numbers
+   as numbers, `features[]` carries the param-bearing nodes (extrude/hole/
+   shell) with flattened name/value pairs, and **no brep base64 anywhere**
+   (unlike `query entities`, which embeds each solid's brep — prefer
+   `describe` whenever you only need to understand the model). Both query
+   paths serve it: offline `$CLI query part.vkd --describe`, live
+   `$CLI connect query describe`. Verified output (offline, same part):
+
+   ```json
+   {"ok":true,"result":{"count":1,"describe":{
+     "units":"mm","entityCount":1,"layerCount":1,
+     "solids":[{"id":3,"component":"",
+       "volume":11497.345175425633,"area":3950.7964473723105,
+       "bbox":{"min":[-1e-07,-1e-07,-1e-07],
+               "max":[40.0000001,30.0000001,10.0000001]},
+       "centroid":[20.0,15.0,5.0],
+       "features":[{"node":1,"kind":"hole","diameter":8,"through":true,
+                    "center":[20,15]}]}],
+     "sketches":[],"layers":[{"name":"0","count":0,"counts":{}}]},
+   "file":"part.vkd"}}
+   ```
+
+   (The 1e-7 bbox fringe is the OCCT `Bnd_Box` gap — the text view rounds
+   it away; treat it as exact-zero when matching.)
 1. **Counts and bounds** — `$CLI query part.vkd --bounds` offline, or
    `$CLI connect query entities` / `query bounds` live. Entity count and
    bounding box catch "the part vanished" instantly.

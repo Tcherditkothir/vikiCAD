@@ -304,6 +304,25 @@ out="$(rpc exec "FEATEDIT thickness 2 1 $solid_id")"
 assert_eq "featedit: kind mismatch reports" True "$(jget "$out" \
     "any('no editable' in m for m in d['result']['messages'])")"
 
+# DESCRIBE + query describe: the agent's "understand the model" view, both
+# renderings. The live solid is the 40x30x10 box with the d=12 through-hole
+# at (20,15) -> volume = 12000 - pi*36*10, and the feature line/JSON must
+# carry the bore parameters. The machine view must never leak brep blobs.
+out="$(rpc exec "DESCRIBE")"
+assert_eq "describe: document line" True "$(jget "$out" \
+    "any(m.startswith('document: units=mm entities=') for m in d['result']['messages'])")"
+assert_eq "describe: solid volume line" True "$(jget "$out" \
+    "any(m.startswith('solid $solid_id: volume=10869.0 mm3') for m in d['result']['messages'])")"
+assert_eq "describe: hole feature line" True "$(jget "$out" \
+    "'  hole 1 d=12 through @(20,15)' in d['result']['messages']")"
+desc_json="$(rpc query describe)"
+assert_eq "describe: query volume numeric" True "$(jget "$desc_json" \
+    "abs(d['result']['describe']['solids'][0]['volume'] - (12000 - 3.141592653589793*36*10)) < 1e-3")"
+assert_eq "describe: query hole diameter" True "$(jget "$desc_json" \
+    "d['result']['describe']['solids'][0]['features'][0]['diameter'] == 12")"
+assert_eq "describe: no brep key anywhere" True "$(jget "$desc_json" \
+    "'brep' not in json.dumps(d['result']['describe'])")"
+
 solid_id="$(solid_ids)"
 gexec "3d: SPLIT XY z=5" "SPLIT XY 5 $solid_id"
 assert_eq "3d: two solids after SPLIT" 2 "$(count)"

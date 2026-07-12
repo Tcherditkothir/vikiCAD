@@ -61,7 +61,7 @@ int printUsage(FILE* out)
         "  vikicad-cli open FILE.vkd [--exec \"CMD ...\"]... [--run script.vks]\n"
         "              [--save] [--save-as OUT.vkd]\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
-        "              [--notes] [--blocks] [--layouts]\n"
+        "              [--notes] [--blocks] [--layouts] [--describe]\n"
         "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
@@ -89,8 +89,9 @@ int cmdQuery(const QStringList& args)
     const bool wantNotes = args.contains(QLatin1String("--notes"));
     const bool wantBlocks = args.contains(QLatin1String("--blocks"));
     const bool wantLayouts = args.contains(QLatin1String("--layouts"));
-    const bool anyFlag =
-        wantEntities || wantLayers || wantBounds || wantNotes || wantBlocks || wantLayouts;
+    const bool wantDescribe = args.contains(QLatin1String("--describe"));
+    const bool anyFlag = wantEntities || wantLayers || wantBounds || wantNotes ||
+                         wantBlocks || wantLayouts || wantDescribe;
 
     QJsonObject result;
     result[QStringLiteral("file")] = path;
@@ -108,6 +109,8 @@ int cmdQuery(const QStringList& args)
         result[QStringLiteral("blocks")] = queryjson::blocksJson(*doc);
     if (wantLayouts)
         result[QStringLiteral("layouts")] = queryjson::layoutsJson(*doc);
+    if (wantDescribe)
+        result[QStringLiteral("describe")] = queryjson::describeJson(*doc);
     return emitOk(result);
 }
 

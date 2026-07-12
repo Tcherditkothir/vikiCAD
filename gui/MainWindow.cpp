@@ -923,6 +923,8 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
             result[QStringLiteral("blocks")] = queryjson::blocksJson(*m_doc);
         if (kind == QLatin1String("layouts"))
             result[QStringLiteral("layouts")] = queryjson::layoutsJson(*m_doc);
+        if (kind == QLatin1String("describe"))
+            result[QStringLiteral("describe")] = queryjson::describeJson(*m_doc);
         if (kind == QLatin1String("ui")) {
             // Layout self-description for the gui-smoke harness: the tool tab
             // strip and the tabified right-side docks.

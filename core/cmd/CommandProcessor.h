@@ -78,6 +78,7 @@ void registerPattern3DCommands(CommandProcessor& processor);
 void registerParamCommands(CommandProcessor& processor);
 void registerSketchCommands(CommandProcessor& processor);
 void registerInspectCommands(CommandProcessor& processor);
+void registerDescribeCommands(CommandProcessor& processor);
 void registerFeatEditCommands(CommandProcessor& processor);
 void registerSubShapeOpCommands(CommandProcessor& processor);
 

@@ -552,6 +552,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerParamCommands(p);
     registerSketchCommands(p);
     registerInspectCommands(p);
+    registerDescribeCommands(p);
     registerFeatEditCommands(p);
     registerSubShapeOpCommands(p);
 }
