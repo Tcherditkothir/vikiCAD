@@ -5,7 +5,8 @@ complet) et LESSONS.md (pièges connus — dont les gros du 10-11 juillet).
 
 ## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
 
-- **Arbre propre, dernier commit `8d1091b`** (« Selection you can trust »).
+- **Arbre propre** — dernier lot : File > Export (STEP/DXF/STL/OBJ) dans la
+  GUI + verbe IPC `export` (testé par le harnais : 59 checks).
 - **Suite : 1717 assertions / 218 cas verts. Harnais GUI : 55/55 verts.**
 - Depuis le 09 : 21 features de nuit autonome, passe « professionnel »
   (causes racines : Ctrl+Z ambigu jamais fonctionnel, booléens vides =
