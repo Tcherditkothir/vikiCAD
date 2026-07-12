@@ -446,3 +446,21 @@ surbrillance contrastée du popup ; curseur flèche épinglé sur menus/onglets.
 
 **État en pause : 1717 assertions / 218 cas + gui-smoke 55/55 verts.**
 Pause décidée par Lex le 2026-07-11 ; reprise la semaine suivante.
+
+## 2026-07-12 — FEATEDIT : l'éditeur de features headless
+
+Le panneau Properties savait éditer les paramètres de trou/coque ; les agents
+non. **FEATEDIT** (core/cmd/CommandsFeatEdit.cpp) expose EXACTEMENT le même
+chemin (featureparams::set + SolidEntity::regenerateFeatures, UNE transaction)
+en grammaire headless « paramètres avant sélection, id en dernier » :
+`FEATEDIT <param> <valeur> <nodeIndex> <solidId>` avec param ∈ {diameter,
+depth, centerx, centery, height, thickness} (centerx/centery → « center x/y »,
+signés : DÉPLACENT le perçage) ; `FEATEDIT LIST <solidId>` imprime chaque
+paramètre éditable « hole 1: diameter = 4.0 » (une décimale, contrat INSPECT).
+Erreurs claires : id non-solide, solide sans historique, param/nœud
+incompatible (rollback, rien sur la pile d'undo), régénération échouée.
+Tests tests/test_featedit.cpp (LIST, volume après élargissement, déplacement
+du perçage sondé par interferenceVolume, UNDO/REDO, tous les chemins
+d'erreur) ; harnais gui-smoke étendu (LIST via IPC, élargissement visible à
+l'écran, UNDO restaure le rendu, mismatch rapporté). Suite : 1951 assertions /
+227 cas ; gui-smoke 72/72 verts.

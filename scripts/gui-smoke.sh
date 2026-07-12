@@ -280,7 +280,31 @@ shot "3d: screenshot B' (redo)" "$TMP/b2.png"
 assert_le "3d: B' == B (redo restores render)" \
     "$(img_hash_dist "$TMP/b.png" "$TMP/b2.png")" "$SAME_HASH_MAX"
 
+# FEATEDIT: the headless twin of the Properties panel. LIST discovers the
+# bore parameters; an edit regenerates the solid (render changes); one UNDO
+# restores it; a param/node mismatch reports cleanly over IPC.
 solid_id="$(solid_ids)" # id may have changed across undo/redo
+out="$(rpc exec "FEATEDIT LIST $solid_id")"
+assert_eq "featedit: LIST shows bore diameter" True "$(jget "$out" \
+    "any(m == 'hole 1: diameter = 12.0' for m in d['result']['messages'])")"
+assert_eq "featedit: LIST shows bore centre" True "$(jget "$out" \
+    "any(m == 'hole 1: center x = 20.0' for m in d['result']['messages'])")"
+
+gexec "featedit: widen bore to d=16" "FEATEDIT diameter 16 1 $solid_id"
+shot "featedit: screenshot C (wider bore)" "$TMP/c.png"
+assert_ge "featedit: C differs from B (bore widened)" \
+    "$(img_pixel_bp "$TMP/b2.png" "$TMP/c.png")" "$DIFF_PIXELS_MIN"
+
+gexec "featedit: UNDO edit" "UNDO"
+shot "featedit: screenshot B'' (undo)" "$TMP/b3.png"
+assert_le "featedit: B'' == B (undo restores bore)" \
+    "$(img_hash_dist "$TMP/b.png" "$TMP/b3.png")" "$SAME_HASH_MAX"
+
+out="$(rpc exec "FEATEDIT thickness 2 1 $solid_id")"
+assert_eq "featedit: kind mismatch reports" True "$(jget "$out" \
+    "any('no editable' in m for m in d['result']['messages'])")"
+
+solid_id="$(solid_ids)"
 gexec "3d: SPLIT XY z=5" "SPLIT XY 5 $solid_id"
 assert_eq "3d: two solids after SPLIT" 2 "$(count)"
 
