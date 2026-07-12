@@ -333,6 +333,22 @@ PYEOF
 if [[ "$stl_check" == ok-* ]]; then record PASS "stl: header + size" "$stl_check"
 else record FAIL "stl: header + size" "$stl_check"; fi
 
+# --- GUI-path exports (File>Export / IPC "export" verb) -----------------------
+out="$(rpc export "$TMP/smoke.step")"
+assert_eq "export: STEP via GUI ok" True "$(jget "$out" "d['result'].get('ok')")"
+if head -c 12 "$TMP/smoke.step" 2>/dev/null | grep -q "ISO-10303"; then
+  record PASS "export: STEP header" "ISO-10303"
+else
+  record FAIL "export: STEP header" "missing ISO-10303"
+fi
+out="$(rpc export "$TMP/smoke.dxf")"
+assert_eq "export: DXF via GUI ok" True "$(jget "$out" "d['result'].get('ok')")"
+if grep -q "ENTITIES" "$TMP/smoke.dxf" 2>/dev/null; then
+  record PASS "export: DXF has ENTITIES" "yes"
+else
+  record FAIL "export: DXF has ENTITIES" "no"
+fi
+
 # ---- (5) report -------------------------------------------------------------
 
 print_table

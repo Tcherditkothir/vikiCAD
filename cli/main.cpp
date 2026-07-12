@@ -376,7 +376,8 @@ int cmdConnect(const QStringList& args)
         params[QStringLiteral("kind")] = args[1];
     else if ((method == QLatin1String("open") || method == QLatin1String("save") ||
               method == QLatin1String("screenshot") ||
-              method == QLatin1String("insertstep")) &&
+              method == QLatin1String("insertstep") ||
+              method == QLatin1String("export")) &&
              args.size() > 1)
         params[QStringLiteral("path")] = args[1];
     else if (method == QLatin1String("view3d") && args.size() > 1)

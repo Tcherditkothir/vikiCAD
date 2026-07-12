@@ -30,10 +30,13 @@
 #include "Version.h"
 #include "canvas/CanvasWidget.h"
 #ifdef VIKICAD_HAS_DXF
+#include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
 #include "io/NativeStore.h"
+#include "io/ObjIo.h"
 #include "io/StepIo.h"
+#include "io/StlIo.h"
 #include "io/QueryJson.h"
 #include "ipc/RpcServer.h"
 #include "occview/OcctViewWidget.h"
@@ -171,6 +174,19 @@ MainWindow::MainWindow()
 #endif
     fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
                         &MainWindow::insertStepComponent);
+    // Leaving the .vkd world: export to the planet's formats. The engines
+    // existed since M3/M7 (the CLI always could) — the menu was just missing.
+    QMenu* exportMenu = fileMenu->addMenu(QStringLiteral("&Export"));
+    exportMenu->addAction(QStringLiteral("STEP (3D solids)..."), this,
+                          [this] { exportAs(QStringLiteral("step")); });
+#ifdef VIKICAD_HAS_DXF
+    exportMenu->addAction(QStringLiteral("DXF (2D drawing)..."), this,
+                          [this] { exportAs(QStringLiteral("dxf")); });
+#endif
+    exportMenu->addAction(QStringLiteral("STL (3D-print mesh)..."), this,
+                          [this] { exportAs(QStringLiteral("stl")); });
+    exportMenu->addAction(QStringLiteral("OBJ (mesh)..."), this,
+                          [this] { exportAs(QStringLiteral("obj")); });
     fileMenu->addSeparator();
     // Output commands (they run through the processor like typed commands).
     fileMenu->addAction(QStringLiteral("Page &Layout..."), this,
@@ -863,6 +879,16 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
 {
     if (method == QLatin1String("ping"))
         return {{QStringLiteral("pong"), true}};
+    if (method == QLatin1String("export")) {
+        const QString path = params[QStringLiteral("path")].toString();
+        if (path.isEmpty())
+            return {{QStringLiteral("error"), QStringLiteral("export needs a path")}};
+        QString message;
+        const bool ok = exportToPath(path, message);
+        if (!ok)
+            return {{QStringLiteral("error"), message}};
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("message"), message}};
+    }
     if (method == QLatin1String("exec")) {
         const QString line = params[QStringLiteral("line")].toString();
         const auto r = m_processor->submit(line, /*strict=*/true);
@@ -1467,6 +1493,83 @@ void MainWindow::insertStepComponent()
         QMessageBox::warning(this, QStringLiteral("Insert failed"),
                              error.isEmpty() ? QStringLiteral("STEP import failed")
                                              : error);
+}
+
+bool MainWindow::exportToPath(const QString& path, QString& message)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QLatin1String("step") || suffix == QLatin1String("stp")) {
+        const StepResult r = exportStep(*m_doc, path);
+        message = r.ok ? QStringLiteral("STEP: %1 solid(s), %2 note(s) → %3")
+                             .arg(r.solids).arg(r.notes).arg(path)
+                       : r.error;
+        return r.ok;
+    }
+#ifdef VIKICAD_HAS_DXF
+    if (suffix == QLatin1String("dxf")) {
+        const DxfExportResult r = exportDxf(*m_doc, path);
+        message = r.ok ? QStringLiteral("DXF: %1 entit%2 exported%3 → %4")
+                             .arg(r.exported)
+                             .arg(r.exported == 1 ? QStringLiteral("y")
+                                                  : QStringLiteral("ies"))
+                             .arg(r.skipped
+                                      ? QStringLiteral(", %1 skipped (%2)")
+                                            .arg(r.skipped)
+                                            .arg(r.skippedTypes.join(
+                                                QStringLiteral(", ")))
+                                      : QString())
+                             .arg(path)
+                       : r.error;
+        return r.ok;
+    }
+#endif
+    if (suffix == QLatin1String("stl")) {
+        const StlResult r = exportStl(*m_doc, path);
+        message = r.ok ? QStringLiteral("STL: %1 solid(s) meshed → %2")
+                             .arg(r.solids).arg(path)
+                       : r.error;
+        return r.ok;
+    }
+    if (suffix == QLatin1String("obj")) {
+        const ObjResult r = exportObj(*m_doc, path);
+        message = r.ok ? QStringLiteral("OBJ: %1 solid(s), %2 vertices, %3 "
+                                        "faces → %4")
+                             .arg(r.solids).arg(r.vertices).arg(r.faces)
+                             .arg(path)
+                       : r.error;
+        return r.ok;
+    }
+    message = QStringLiteral("unsupported export format: .%1 "
+                             "(step/stp, dxf, stl, obj)").arg(suffix);
+    return false;
+}
+
+void MainWindow::exportAs(const QString& kind)
+{
+    QString filter;
+    if (kind == QLatin1String("step"))
+        filter = QStringLiteral("STEP (*.step *.stp)");
+    else if (kind == QLatin1String("dxf"))
+        filter = QStringLiteral("DXF drawing (*.dxf)");
+    else if (kind == QLatin1String("stl"))
+        filter = QStringLiteral("STL mesh (*.stl)");
+    else
+        filter = QStringLiteral("Wavefront OBJ (*.obj)");
+    QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export %1").arg(kind.toUpper()), QString(),
+        filter);
+    if (path.isEmpty())
+        return;
+    if (QFileInfo(path).suffix().isEmpty())
+        path += QLatin1Char('.') + kind;
+    QString message;
+    if (exportToPath(path, message)) {
+        m_commandBar->appendHistory(message);
+        statusBar()->showMessage(message, 4000);
+    } else {
+        m_commandBar->appendHistory(QStringLiteral("! export: %1").arg(message));
+        QMessageBox::warning(this, QStringLiteral("Export failed"), message);
+    }
 }
 
 bool MainWindow::insertStepFile(const QString& path, QString& error)

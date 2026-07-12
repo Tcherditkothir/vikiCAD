@@ -53,6 +53,10 @@ private:
     // failure, shows a dialog when interactive, else logs to the command bar.
     bool loadFile(const QString& path, bool interactive);
     bool insertStepFile(const QString& path, QString& error); // additive, shared
+    // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj) — shared
+    // by the File>Export dialogs and the IPC "export" verb.
+    bool exportToPath(const QString& path, QString& message);
+    void exportAs(const QString& kind); // "step" | "dxf" | "stl" | "obj"
     void beginSketchOnFace(); // set the work plane to the picked 3D face
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
