@@ -23,6 +23,7 @@
 #include <TopoDS_Compound.hxx>
 #include <Geom_Axis2Placement.hxx>
 #include <Graphic3d_TransformPers.hxx>
+#include <Graphic3d_ZLayerId.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_TypeOfHighlight.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -1056,10 +1057,38 @@ void OcctViewWidget::previewCandidate(const PickCandidate& candidate)
         return;
     if (m_previewOwner == candidate.owner)
         return; // already previewing this exact sub-shape
-    // Orange-highlight ONLY the hovered candidate (drop any prior preview and
-    // the committed selection highlight — restored by clearPreview()).
-    m_context->ClearSelected(false);
-    m_context->AddOrRemoveSelected(candidate.owner, false);
+    // X-RAY preview: draw the hovered candidate in the TOPMOST Z layer so it
+    // shows THROUGH every other solid — in a dense assembly most candidates
+    // are occluded and a depth-tested highlight was invisible. This is an
+    // independent ghost object: the committed selection is never touched.
+    TopoDS_Shape shape;
+    const Handle(StdSelect_BRepOwner) brep =
+        Handle(StdSelect_BRepOwner)::DownCast(candidate.owner);
+    if (!brep.IsNull() && brep->HasShape()) {
+        shape = brep->Shape();
+    } else {
+        // Whole-object candidate: take the displayed AIS shape.
+        const Handle(AIS_Shape) ais = Handle(AIS_Shape)::DownCast(
+            candidate.owner->Selectable());
+        if (!ais.IsNull())
+            shape = ais->Shape();
+    }
+    if (shape.IsNull())
+        return;
+    if (!m_previewAis.IsNull())
+        m_context->Remove(m_previewAis, false);
+    Handle(AIS_Shape) preview = new AIS_Shape(shape);
+    preview->SetColor(Quantity_Color(1.0, 0.55, 0.0, Quantity_TOC_RGB));
+    preview->SetWidth(4.0);
+    const bool areal = shape.ShapeType() == TopAbs_FACE ||
+                       shape.ShapeType() == TopAbs_SOLID ||
+                       shape.ShapeType() == TopAbs_COMPOUND;
+    if (areal)
+        preview->SetTransparency(0.45f); // see the context behind the glow
+    preview->SetZLayer(Graphic3d_ZLayerId_Topmost); // draws THROUGH solids
+    m_context->Display(preview, areal ? AIS_Shaded : 0, -1, false);
+    m_context->Deactivate(preview); // a ghost, never a pick target
+    m_previewAis = preview;
     m_previewOwner = candidate.owner;
     if (!m_view.IsNull())
         m_view->Redraw();
@@ -1067,12 +1096,14 @@ void OcctViewWidget::previewCandidate(const PickCandidate& candidate)
 
 void OcctViewWidget::clearPreview()
 {
-    if (m_context.IsNull() || m_previewOwner.IsNull())
+    if (m_previewOwner.IsNull() && m_previewAis.IsNull())
         return;
     m_previewOwner.Nullify();
-    // Restore the real document-selection highlight.
-    m_keepPickHighlight = false;
-    syncHighlight(); // ClearSelected + re-apply from m_selection + Redraw
+    if (!m_previewAis.IsNull() && !m_context.IsNull())
+        m_context->Remove(m_previewAis, false);
+    m_previewAis.Nullify();
+    if (!m_view.IsNull())
+        m_view->Redraw();
 }
 
 void OcctViewWidget::wireCandidatePreview(QMenu* menu,

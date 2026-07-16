@@ -202,8 +202,10 @@ private:
     // Left-drag window-selection rubber band.
     Handle(AIS_InteractiveObject) m_band;
     bool m_banding = false;
-    // Sub-shape currently preview-highlighted from a menu hover.
+    // Sub-shape currently preview-highlighted from a menu hover: an X-ray
+    // ghost in the topmost Z layer (visible through every solid).
     Handle(SelectMgr_EntityOwner) m_previewOwner;
+    Handle(AIS_InteractiveObject) m_previewAis;
     // What the cursor last resolved to during a Point prompt.
     bool m_hoverValid = false;
     Vec2d m_hoverUv;
