@@ -15,6 +15,9 @@
 #include "doc/Document.h"
 #include "doc/SelectionSet.h"
 
+class QAction;
+class QMenu;
+
 namespace viki {
 
 class CommandProcessor;
@@ -148,6 +151,14 @@ private:
     };
     std::vector<PickCandidate> pickCandidatesAt(const QPoint& physical);
     void chooseCandidate(const PickCandidate& candidate);
+    // Live PREVIEW highlight while hovering a "Select ▸" / Alt+click menu row:
+    // a flat label list is abstract, so the actual sub-shape lights up in the
+    // view. clearPreview() restores the real document-selection highlight.
+    void previewCandidate(const PickCandidate& candidate);
+    void clearPreview();
+    // Attach hover-preview to a menu listing `candidates` via `acts`.
+    void wireCandidatePreview(QMenu* menu, const std::vector<PickCandidate>& candidates,
+                              const std::vector<QAction*>& acts);
     // Left-drag box selection (window select) with an OCCT rubber band.
     void updateRubberBand(const QPoint& fromLogical, const QPoint& toLogical);
     void finishBoxSelect(const QPoint& fromLogical, const QPoint& toLogical);
@@ -191,6 +202,8 @@ private:
     // Left-drag window-selection rubber band.
     Handle(AIS_InteractiveObject) m_band;
     bool m_banding = false;
+    // Sub-shape currently preview-highlighted from a menu hover.
+    Handle(SelectMgr_EntityOwner) m_previewOwner;
     // What the cursor last resolved to during a Point prompt.
     bool m_hoverValid = false;
     Vec2d m_hoverUv;

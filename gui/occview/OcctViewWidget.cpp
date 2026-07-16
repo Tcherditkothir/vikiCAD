@@ -823,10 +823,16 @@ void OcctViewWidget::mouseReleaseEvent(QMouseEvent* event)
         std::vector<QAction*> acts;
         for (const PickCandidate& c : candidates)
             acts.push_back(menu.addAction(c.label));
+        wireCandidatePreview(&menu, candidates, acts); // hover = light it up
         QAction* chosen = menu.exec(event->globalPosition().toPoint());
+        bool picked = false;
         for (size_t i = 0; i < acts.size(); ++i)
-            if (chosen == acts[i])
+            if (chosen == acts[i]) {
                 chooseCandidate(candidates[i]);
+                picked = true;
+            }
+        if (!picked)
+            clearPreview();
         return;
     }
 
@@ -1044,6 +1050,48 @@ void OcctViewWidget::chooseCandidate(const PickCandidate& candidate)
     emit interaction();
 }
 
+void OcctViewWidget::previewCandidate(const PickCandidate& candidate)
+{
+    if (m_context.IsNull() || candidate.owner.IsNull())
+        return;
+    if (m_previewOwner == candidate.owner)
+        return; // already previewing this exact sub-shape
+    // Orange-highlight ONLY the hovered candidate (drop any prior preview and
+    // the committed selection highlight — restored by clearPreview()).
+    m_context->ClearSelected(false);
+    m_context->AddOrRemoveSelected(candidate.owner, false);
+    m_previewOwner = candidate.owner;
+    if (!m_view.IsNull())
+        m_view->Redraw();
+}
+
+void OcctViewWidget::clearPreview()
+{
+    if (m_context.IsNull() || m_previewOwner.IsNull())
+        return;
+    m_previewOwner.Nullify();
+    // Restore the real document-selection highlight.
+    m_keepPickHighlight = false;
+    syncHighlight(); // ClearSelected + re-apply from m_selection + Redraw
+}
+
+void OcctViewWidget::wireCandidatePreview(QMenu* menu,
+                                          const std::vector<PickCandidate>& candidates,
+                                          const std::vector<QAction*>& acts)
+{
+    // Hovering a candidate ROW lights up its sub-shape; hovering any other
+    // action (or leaving) clears the preview.
+    connect(menu, &QMenu::hovered, this, [this, candidates, acts](QAction* a) {
+        for (size_t i = 0; i < acts.size(); ++i)
+            if (acts[i] == a) {
+                previewCandidate(candidates[i]);
+                return;
+            }
+        clearPreview();
+    });
+    connect(menu, &QMenu::aboutToHide, this, [this] { clearPreview(); });
+}
+
 void OcctViewWidget::showContextMenu(const QPoint& globalPos)
 {
     // During a KEYWORD prompt (e.g. EXTRUDE "Mode [New/Join/Cut/Symmetric]"),
@@ -1141,6 +1189,8 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         QMenu* selMenu = menu.addMenu(QStringLiteral("Select ▸"));
         for (const PickCandidate& c : candidates)
             candidateActs.push_back(selMenu->addAction(c.label));
+        // Hovering a row lights up that exact sub-shape in the view.
+        wireCandidatePreview(selMenu, candidates, candidateActs);
     }
     QAction* chosen = menu.exec(globalPos);
     for (size_t i = 0; i < candidateActs.size(); ++i)
@@ -1148,6 +1198,7 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
             chooseCandidate(candidates[i]);
             return;
         }
+    clearPreview(); // any other outcome: restore the committed highlight
     bool ok = false;
     if (holeNode >= 0 && chosen == mvHole && tree) {
         const Vec2d cur = tree->nodeAt(holeNode).holeCenter;
