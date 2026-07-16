@@ -495,3 +495,19 @@ export STEP (ISO-10303 valide). Verdict : le guide seul a suffi, zéro lecture
 de source, zéro tâtonnement.
 
 **État : 2182 assertions / 243 cas + gui-smoke 124 checks, tout vert.**
+
+## 2026-07-12 (suite) — Export GUI, résolveur visuel, aperçu rayon X
+
+- **File > Export** (STEP/DXF/STL/OBJ) : les moteurs existaient depuis M3/M7,
+  le menu manquait ; verbe IPC `export` + 4 checks harnais (c263769). DWG =
+  import seulement (écrire du DWG demande une licence ODA — DXF est la voie).
+- **Résolveur de sélection VISUEL** : survoler une ligne de « Select ▸ » /
+  Alt+clic surligne l'élément dans la vue (ae8952c) ; puis **aperçu RAYON X**
+  (ad45f5b) : le candidat survolé est un fantôme AIS dans la couche
+  Graphic3d_ZLayerId_Topmost — il brille orange AU TRAVERS de tous les
+  solides (assemblages denses = candidats occlus, une surbrillance avec test
+  de profondeur était invisible). L'aperçu ne touche plus jamais la vraie
+  sélection (objet indépendant).
+- État : **2182 assertions / 243 cas + gui-smoke 124 checks verts.**
+- Prochaine étape convenue avec Lex : TOUR de l'appli + BRAINSTORM d'une
+  nouvelle fonctionnalité (session suivante, après compaction).

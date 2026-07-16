@@ -1,7 +1,15 @@
-# REPRISE — PAUSE au 2026-07-11, reprise semaine du 14 juillet
+# REPRISE — état au 2026-07-12 ; PROCHAINE ÉTAPE : tour + brainstorm
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
-complet) et LESSONS.md (pièges connus — dont les gros du 10-11 juillet).
+complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
+
+## 🎯 PROCHAINE SESSION (convenu avec Lex le 2026-07-12)
+
+Lex veut : (1) continuer le TOUR de l'appli (valider les derniers lots en
+GUI, remonter ce qui accroche), puis (2) BRAINSTORMER une NOUVELLE
+FONCTIONNALITÉ ensemble. Ne rien implémenter de gros sans ce brainstorm.
+Candidats déjà identifiés (§ prochains chantiers plus bas) : gizmo de drag,
+EXTRUDE/REVOLVE dans FeatureTree, contraintes de sketch, release GPLv3.
 
 ## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
 
