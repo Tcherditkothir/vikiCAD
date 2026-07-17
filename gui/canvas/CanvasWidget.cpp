@@ -122,6 +122,26 @@ void CanvasWidget::rebuildStaticLayer()
     if (m_gridSnap)
         drawGrid(painter);
 
+    paintDocument(painter);
+    m_staticDirty = false;
+}
+
+QImage CanvasWidget::contentImage()
+{
+    m_camera.setViewport(size());
+    QImage image(size() * devicePixelRatioF(),
+                 QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(devicePixelRatioF());
+    image.fill(kBackground);
+    if (m_doc) {
+        QPainter painter(&image);
+        paintDocument(painter);
+    }
+    return image;
+}
+
+void CanvasWidget::paintDocument(QPainter& painter)
+{
     painter.setRenderHint(QPainter::Antialiasing);
 
     RenderContext ctx;
@@ -185,7 +205,6 @@ void CanvasWidget::rebuildStaticLayer()
         e->buildPrimitives(ctx, list);
         drawPrimitives(painter, list);
     }
-    m_staticDirty = false;
 }
 
 void CanvasWidget::composeLpcLayer(QPainter& target, int64_t layerId,

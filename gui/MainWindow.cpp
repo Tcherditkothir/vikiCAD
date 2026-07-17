@@ -1026,6 +1026,16 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                          QStringLiteral("3D dump failed")}};
             return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
         }
+        // Optional "overlays": false (CLI: `screenshot PATH clean`) captures
+        // the 2D document WITHOUT decorations (grid, UCS icon, crosshair,
+        // snap glyphs) — geometry-only, for image diffs against reference
+        // renderers. Absent = historic behavior (full widget grab).
+        if (!params[QStringLiteral("overlays")].toBool(true)) {
+            if (!m_canvas->contentImage().save(path))
+                return {{QStringLiteral("error"),
+                         QStringLiteral("cannot write %1").arg(path)}};
+            return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+        }
         const QPixmap shot = m_canvas->grab();
         if (!shot.save(path))
             return {{QStringLiteral("error"), QStringLiteral("cannot write %1").arg(path)}};

@@ -426,8 +426,14 @@ int cmdConnect(const QStringList& args)
               method == QLatin1String("screenshot") ||
               method == QLatin1String("insertstep") ||
               method == QLatin1String("export")) &&
-             args.size() > 1)
+             args.size() > 1) {
         params[QStringLiteral("path")] = args[1];
+        // `screenshot PATH clean` = 2D capture without overlay decorations
+        // (grid/axes/crosshair) — geometry only, for reference image diffs.
+        if (method == QLatin1String("screenshot") && args.size() > 2 &&
+            args[2] == QLatin1String("clean"))
+            params[QStringLiteral("overlays")] = false;
+    }
     else if (method == QLatin1String("view3d") && args.size() > 1)
         params[QStringLiteral("on")] = args[1] != QLatin1String("off");
     else if (method == QLatin1String("viewdir") && args.size() > 1)

@@ -32,6 +32,13 @@ public:
     void setSketchReference(std::vector<std::vector<Vec2d>> loops);
     void clearSketchReference() { m_sketchRef.clear(); update(); }
 
+    // Overlay-free render of the committed document (no grid, no UCS icon,
+    // no crosshair/snap/selection decorations): what the IPC screenshot verb
+    // saves when asked for a clean capture, so image diffs against reference
+    // renderers (gerbv) compare GEOMETRY only. Never used by paintEvent —
+    // the interactive render is untouched.
+    QImage contentImage();
+
     // Input-mode toggles (status bar buttons).
     SnapSettings& snapSettings() { return m_snapSettings; }
     void setOrtho(bool on) { m_ortho = on; }
@@ -67,6 +74,9 @@ protected:
 
 private:
     void rebuildStaticLayer();
+    // The committed entities, painted in strict document draw order (the
+    // shared body of rebuildStaticLayer and contentImage).
+    void paintDocument(QPainter& painter);
     // Gerber layers holding clear-polarity (LPC) entities: composed in a
     // transparent offscreen image (dark paints, clear erases via
     // CompositionMode_Clear) then blitted, so LPC only punches holes in its
