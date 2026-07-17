@@ -1,0 +1,12 @@
+G04 #@! TF.GenerationSoftware,Altium Limited,Altium Designer,18.0.9 (584)*
+G04 synthetic golden: X2 attributes in BOTH forms - naked %TF and G04 #@! comment*
+%TF.FileFunction,Copper,L1,Top*%
+%TF.Part,Single*%
+%FSLAX25Y25*%
+%MOIN*%
+G01*
+%ADD10C,0.01*%
+D10*
+X0Y0D02*
+X100000D01*
+M02*

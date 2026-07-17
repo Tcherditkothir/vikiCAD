@@ -78,6 +78,11 @@ bool plotToPdf(const Document& doc, const Layout& layout, const QString& path,
                     qp.closeSubpath();
                 if (s.filled) {
                     painter.fillPath(qp, Qt::black);
+                } else if (s.width > 0.0) {
+                    // World-width stroke: round caps/joins (Gerber trace).
+                    painter.setPen(QPen(Qt::black, s.width * vp.scale * dotsPerMm,
+                                        Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                    painter.drawPath(qp);
                 } else {
                     painter.setPen(QPen(Qt::black, penWidthDots));
                     painter.drawPath(qp);

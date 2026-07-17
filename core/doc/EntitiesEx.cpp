@@ -75,6 +75,9 @@ BBox2d PolylineEntity::bounds() const
             box.expand(tmp.bounds());
         }
     }
+    // A wide stroke (round caps/joins) spills width/2 past the centerline.
+    if (m_width > 0.0 && box.isValid())
+        box = box.inflated(m_width * 0.5);
     return box;
 }
 
@@ -86,6 +89,7 @@ void PolylineEntity::transform(const Xform2d& xf)
         if (mirrored)
             v.bulge = -v.bulge;
     }
+    m_width *= xf.uniformScale();
 }
 
 void PolylineEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out) const
@@ -94,6 +98,7 @@ void PolylineEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& ou
         return;
     StrokePrimitive s;
     s.rgb = ctx.resolvedColor;
+    s.width = m_width;
     s.closed = false; // closure handled explicitly so the last bulge renders
     s.points.push_back(m_vertices.front().pos);
     const size_t n = m_vertices.size();
@@ -117,6 +122,8 @@ void PolylineEntity::geomToJson(QJsonObject& obj) const
     }
     obj[QStringLiteral("vertices")] = verts;
     obj[QStringLiteral("closed")] = m_closed;
+    if (m_width > 0.0)
+        obj[QStringLiteral("width")] = m_width;
 }
 
 void PolylineEntity::geomFromJson(const QJsonObject& obj)
@@ -130,6 +137,7 @@ void PolylineEntity::geomFromJson(const QJsonObject& obj)
         m_vertices.push_back(vert);
     }
     m_closed = obj[QStringLiteral("closed")].toBool();
+    m_width = std::max(0.0, obj[QStringLiteral("width")].toDouble(0.0));
 }
 
 // ---- EllipseEntity ----------------------------------------------------------

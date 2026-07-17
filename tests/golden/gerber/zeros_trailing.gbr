@@ -1,0 +1,9 @@
+G04 synthetic golden: FST trailing-zero suppression - digits pad on the RIGHT*
+%FSTAX25Y25*%
+%MOIN*%
+G01*
+%ADD10C,0.01*%
+D10*
+X1Y-1D02*
+X94488Y2D01*
+M02*

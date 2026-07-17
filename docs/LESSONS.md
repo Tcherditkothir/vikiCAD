@@ -74,3 +74,23 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   (`scripts/gui-smoke.sh`, 40 checks) AVANT de livrer. Les allers-retours
   « corrigé → non ça marche pas » venaient de corrections plausibles jamais
   exécutées dans la GUI réelle.
+
+## 2026-07-16 — Parseur Gerber (G1)
+
+- **Dialecte Altium 18 vérifié sur kits réels** : les flashes du GTL sont des
+  `D02` suivis d'un `D03*` NU (flash au point courant, zéro coordonnée) — un
+  parseur qui exige des coordonnées sur D03 rate 100 % des flashes. Idem
+  `D02*` nu pour fermer les contours de région.
+- **Macros Altium** : dans `ROUNDEDRECT` la rotation n'est portée QUE par les
+  primitives 21 (rect) ; les cercles de coin (prim 1, 4 paramètres, sans champ
+  rotation) ont leurs centres DÉJÀ tournés par Altium. Comparer les macros D15
+  (rot 270) et D16 (rot 0) du même fichier l'a prouvé. Appliquer la rotation
+  autour de l'origine macro reste correct dans les deux cas.
+- **Vérité indépendante** : le `.REP` d'Altium (« Used DCodes » par fichier)
+  égale exactement l'ensemble des apertures sélectionnées ET utilisées par des
+  opérations — vérifié sur les 30 couches des 2 kits. Excellente vérité de
+  test qui ne dépend pas de notre propre parseur.
+- **Suppression de zéros** : FSLA (leading omis) => valeur = entier/10^déc ;
+  FST (trailing omis) => compléter à DROITE jusqu'à int+déc chiffres d'abord.
+  Les deux se confondent sur la plupart des nombres (94488 -> 0.94488 vs
+  94.488) — tester les bornes (`X1`, `X1000000`) qui, elles, divergent.

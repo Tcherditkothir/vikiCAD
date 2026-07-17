@@ -39,7 +39,12 @@ add_executable(vikicad-tests
     test_subshape_ops.cpp
     test_solid_metrics.cpp
     test_edgeops_mate_draft.cpp
+    test_gerber.cpp
 )
+
+# Committed golden files (synthetic Gerber fixtures, ...).
+target_compile_definitions(vikicad-tests PRIVATE
+    VIKICAD_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 
 if(VIKICAD_HAS_DXF)
     target_sources(vikicad-tests PRIVATE test_dxf_import.cpp test_dxf_roundtrip.cpp)

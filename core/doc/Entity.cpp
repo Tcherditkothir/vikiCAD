@@ -28,7 +28,8 @@ ColorSpec ColorSpec::fromJson(const QJsonValue& v)
 
 QJsonObject Entity::toJson() const
 {
-    QJsonObject obj;
+    // Extras first: reserved keys below always win on collision.
+    QJsonObject obj = m_extra;
     obj[QStringLiteral("type")] = QLatin1String(typeName());
     obj[QStringLiteral("layer")] = qint64(m_layerId);
     obj[QStringLiteral("color")] = m_color.toJson();
@@ -43,6 +44,15 @@ void Entity::fromJson(const QJsonObject& obj)
     m_layerId = obj[QStringLiteral("layer")].toInteger(0);
     m_color = ColorSpec::fromJson(obj[QStringLiteral("color")]);
     geomFromJson(obj[QStringLiteral("geom")].toObject());
+    // Unknown top-level keys ride along untouched (importer flags, forward
+    // compatibility): everything but the reserved four.
+    m_extra = QJsonObject();
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+        if (it.key() == QLatin1String("type") || it.key() == QLatin1String("layer") ||
+            it.key() == QLatin1String("color") || it.key() == QLatin1String("geom"))
+            continue;
+        m_extra[it.key()] = it.value();
+    }
 }
 
 QJsonArray pointToJson(const Vec2d& p)

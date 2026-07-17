@@ -1,0 +1,9 @@
+G04 synthetic golden: FSLA leading-zero suppression at both extremes*
+%FSLAX25Y25*%
+%MOIN*%
+G01*
+%ADD10C,0.01*%
+D10*
+X1Y-1D02*
+X1000000Y0D01*
+M02*

@@ -1,0 +1,22 @@
+G04 synthetic golden: LPD flash, LPC region punched over it, LPD trace - paint order matters*
+%FSLAX25Y25*%
+%MOIN*%
+G01*
+G75*
+%ADD10C,0.05*%
+%ADD11C,0.01*%
+D10*
+X50000Y50000D03*
+%LPC*%
+G36*
+X30000Y30000D02*
+X70000D01*
+Y70000D01*
+X30000D01*
+Y30000D01*
+G37*
+%LPD*%
+D11*
+X0Y50000D02*
+X100000D01*
+M02*

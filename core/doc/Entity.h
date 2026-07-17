@@ -84,6 +84,15 @@ public:
     const ColorSpec& color() const { return m_color; }
     void setColor(const ColorSpec& c) { m_color = c; }
 
+    // Open extension bag: extra top-level JSON keys carried verbatim through
+    // toJson/fromJson (and therefore .vkd, undo snapshots and queries).
+    // Used by format importers for flags VikiCAD itself does not interpret
+    // yet — e.g. Gerber clear polarity ("gpol":"C") or X2 attributes.
+    // Reserved keys (type/layer/color/geom) cannot be overridden.
+    const QJsonObject& extra() const { return m_extra; }
+    void setExtra(const QJsonObject& e) { m_extra = e; }
+    void setExtraValue(const QString& key, const QJsonValue& v) { m_extra[key] = v; }
+
 protected:
     virtual void geomToJson(QJsonObject& obj) const = 0;
     virtual void geomFromJson(const QJsonObject& obj) = 0;
@@ -93,6 +102,7 @@ private:
     EntityId m_id = kInvalidEntityId;
     int64_t m_layerId = 0;
     ColorSpec m_color;
+    QJsonObject m_extra;
 };
 
 // Helpers shared by entity serializers.

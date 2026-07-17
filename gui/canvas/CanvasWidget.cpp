@@ -167,7 +167,15 @@ void CanvasWidget::drawPrimitives(QPainter& painter, const PrimitiveList& list,
         const QColor color =
             overrideColor.isValid() ? overrideColor : QColor::fromRgb(s.rgb);
         QPen pen(color);
-        pen.setWidthF(overrideColor.isValid() ? 2.0 : 0.0); // 0 = cosmetic 1px
+        if (s.width > 0.0) {
+            // World-width stroke (Gerber round-aperture trace): round caps
+            // and joins reproduce the aperture footprint exactly.
+            pen.setWidthF(s.width * m_camera.scale());
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+        } else {
+            pen.setWidthF(overrideColor.isValid() ? 2.0 : 0.0); // 0 = cosmetic 1px
+        }
         pen.setCosmetic(true);
         painter.setPen(pen);
 

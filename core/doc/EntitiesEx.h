@@ -31,6 +31,10 @@ public:
 
     const std::vector<PolyVertex>& vertices() const { return m_vertices; }
     bool isClosed() const { return m_closed; }
+    // Stroke width in mm (0 = thin/cosmetic, the historic behaviour). Wide
+    // polylines render with round caps/joins — Gerber round-aperture traces.
+    double width() const { return m_width; }
+    void setWidth(double w) { m_width = std::max(0.0, w); }
 
 protected:
     void geomToJson(QJsonObject& obj) const override;
@@ -39,6 +43,7 @@ protected:
 private:
     std::vector<PolyVertex> m_vertices;
     bool m_closed = false;
+    double m_width = 0.0;
 };
 
 // Ellipse (or elliptical arc when [startParam, endParam) != full turn).

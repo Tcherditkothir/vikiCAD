@@ -72,5 +72,6 @@
 
 ## Prérequis en attente
 
-- [ ] Kits Gerber réels fournis par Lex → `/home/lex/computer/pcb-ref/`
+- [x] Kits Gerber réels fournis par Lex → `/home/lex/computer/pcb-ref/`
+      (S5M0PCBA + S5M0PCBB, Altium Designer 18.0.9)
 - [ ] `sudo apt install gerbv` (2.10.0 dispo au pool Ubuntu — IPv6 OK)

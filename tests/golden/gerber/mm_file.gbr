@@ -1,0 +1,10 @@
+G04 synthetic golden: metric file, 4.3 format - no inch conversion anywhere*
+%FSLAX43Y43*%
+%MOMM*%
+G01*
+G75*
+%ADD10C,0.25*%
+D10*
+X10000Y20000D02*
+X30000Y20000D01*
+M02*

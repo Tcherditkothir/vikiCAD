@@ -17,6 +17,10 @@ struct StrokePrimitive {
     uint32_t rgb = 0xFFFFFF;     // resolved color (ByLayer already applied)
     bool closed = false;
     bool filled = false;         // closed + filled (arrowheads, solid hatch)
+    // Stroke thickness in world mm; 0 = cosmetic hairline (the default).
+    // Renderers draw wide strokes with ROUND caps and joins — the exact
+    // footprint of a Gerber round-aperture draw.
+    double width = 0.0;
 };
 
 enum class TextHAlign { Left, Center, Right };

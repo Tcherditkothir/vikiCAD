@@ -1,0 +1,15 @@
+G04 synthetic golden: G75 multi-quadrant arcs - 270 deg CCW arc and a CW full circle*
+%FSLAX25Y25*%
+%MOIN*%
+G01*
+G75*
+%ADD10C,0.01*%
+D10*
+X100000Y0D02*
+G03*
+X0Y-100000I-100000J0D01*
+G01*
+X300000Y0D02*
+G02*
+X300000Y0I100000J0D01*
+M02*
