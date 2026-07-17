@@ -75,7 +75,7 @@ file VikiCAD EXPORTED — the fabrication truth, tight thresholds, ~5 s).
 
 ## Docs
 
-Internal documentation under `docs/` (DEVLOG, LESSONS, REPRISE...) is written
+Internal documentation under `docs/` (DEVLOG, LESSONS, PCB_CAM...) is written
 in French. Contributions to it may be in French or English.
 
 [docs/AGENT.md](docs/AGENT.md) (English) is the reference for driving

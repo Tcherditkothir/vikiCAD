@@ -2,3 +2,8 @@ build/
 compile_commands.json
 .cache/
 *.user
+
+# Private working files — kept locally, not part of the public repo:
+# session-handoff notes and internal agent-orchestration scripts.
+docs/REPRISE.md
+scripts/overnight-*.mjs
