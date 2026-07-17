@@ -75,6 +75,10 @@ void CircleEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out)
     StrokePrimitive s;
     s.rgb = ctx.resolvedColor;
     s.closed = true;
+    // Excellon drill hits (tagged "plated" by the importer, true or false)
+    // are physical holes: render them as filled disks, like gerbv and the
+    // other reference fab viewers do. Plain CAD circles stay outlines.
+    s.filled = extra().contains(QLatin1String("plated"));
     flattenArc(m_center, m_radius, 0.0, 2.0 * M_PI, ctx.chordTolerance, s.points);
     out.strokes.push_back(std::move(s));
 }

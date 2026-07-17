@@ -19,6 +19,7 @@
 #include "doc/Document.h"
 #include "doc/Entities.h"
 #include "io/ExcellonIo.h"
+#include "render/Primitives.h"
 
 using namespace viki;
 using Catch::Approx;
@@ -127,6 +128,24 @@ TEST_CASE("Excellon: Altium dialect — FILE_FORMAT comment, INCH,TZ, sections, 
     CHECK(circles[3]->radius() == Approx(0.499999).margin(1e-9));
     CHECK(circles[4]->radius() == Approx(1.200023).margin(1e-9));
     CHECK_FALSE(circles[4]->extra().value(QLatin1String("plated")).toBool(true));
+
+    // Drill hits render as FILLED disks (like gerbv), plated or not; a plain
+    // CAD circle (no "plated" tag) stays an outline.
+    RenderContext ctx;
+    ctx.chordTolerance = 0.01;
+    PrimitiveList drillPrims;
+    circles[0]->buildPrimitives(ctx, drillPrims);
+    REQUIRE(drillPrims.strokes.size() == 1);
+    CHECK(drillPrims.strokes[0].filled);
+    PrimitiveList unplatedPrims;
+    circles[4]->buildPrimitives(ctx, unplatedPrims);
+    REQUIRE(unplatedPrims.strokes.size() == 1);
+    CHECK(unplatedPrims.strokes[0].filled);
+    const CircleEntity plain({0.0, 0.0}, 1.0);
+    PrimitiveList plainPrims;
+    plain.buildPrimitives(ctx, plainPrims);
+    REQUIRE(plainPrims.strokes.size() == 1);
+    CHECK_FALSE(plainPrims.strokes[0].filled);
 
     // The whole import is ONE transaction: a single undo clears it.
     CHECK(doc.undo() == QStringLiteral("EXCELLONIMPORT"));

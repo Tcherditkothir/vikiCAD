@@ -56,6 +56,10 @@ private:
     bool loadFile(const QString& path, bool interactive);
     // Gerber kit import (directory or single fab file) into a fresh document.
     bool loadGerberKit(const QString& path, bool interactive);
+    // Importer warnings from the last loadFile() call (e.g. "valid but
+    // empty" fab files) — surfaced in the IPC "open" reply, mirroring the
+    // CLI "import" JSON. Cleared on every loadFile().
+    QStringList m_openWarnings;
     bool insertStepFile(const QString& path, QString& error); // additive, shared
     // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj) — shared
     // by the File>Export dialogs and the IPC "export" verb.

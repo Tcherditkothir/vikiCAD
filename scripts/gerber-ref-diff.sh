@@ -43,11 +43,11 @@ DPI=400
 
 # Calibrated 2026-07-17 (32 layers, all PASS). Observed dhash: median ~25,
 # worst 132 (PCBB.GBL) — copper layers run high on pure edge-halo noise
-# (1-2 px AA/stroke rounding around a LOT of edge length), and .TXT drill
-# layers (58/104) because drills are RINGS in the CAD view vs FILLED dots
-# in gerbv (known display divergence, G2 candidate: filled drill display).
+# (1-2 px AA/stroke rounding around a LOT of edge length); all other layers
+# are <= 40. .TXT drill layers sit at 11/40 since drills render as FILLED
+# disks like gerbv (they used to be outlines: dhash 58/104 before the fix).
 # Observed ink-delta: 0-2 points. Thresholds = observed max + ~30%.
-REF_HASH_MAX=170 # dhash bits out of 1024 (observed max 132)
+REF_HASH_MAX=170 # dhash bits out of 1024 (observed max 132, PCBB.GBL copper)
 INK_DELTA_MAX=3  # |ink% A - ink% B| in percent points (observed max 2)
 
 FAILS=0

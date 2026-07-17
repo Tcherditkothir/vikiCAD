@@ -954,7 +954,14 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         if (!loadFile(path, /*interactive=*/false))
             return {{QStringLiteral("error"),
                      QStringLiteral("could not open %1").arg(path)}};
-        return {{QStringLiteral("ok"), true}};
+        QJsonObject reply{{QStringLiteral("ok"), true}};
+        // Mirror the CLI "import" JSON: importer warnings (e.g. "valid but
+        // empty" fab files) must reach the IPC caller too, not only the
+        // command-bar history.
+        if (!m_openWarnings.isEmpty())
+            reply[QStringLiteral("warnings")] =
+                QJsonArray::fromStringList(m_openWarnings);
+        return reply;
     }
     if (method == QLatin1String("save")) {
         QString path = params[QStringLiteral("path")].toString();
@@ -1016,6 +1023,18 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         const QString path = params[QStringLiteral("path")].toString();
         if (path.isEmpty())
             return {{QStringLiteral("error"), QStringLiteral("path required")}};
+        // Optional "overlays": false (CLI: `screenshot PATH clean`) captures
+        // the 2D document WITHOUT decorations (grid, UCS icon, crosshair,
+        // snap glyphs) — geometry-only, for image diffs against reference
+        // renderers. By definition a 2D document render, so it applies even
+        // while the 3D view is active (it must not be silently ignored).
+        // Absent = historic behavior (active-view grab).
+        if (!params[QStringLiteral("overlays")].toBool(true)) {
+            if (!m_canvas->contentImage().save(path))
+                return {{QStringLiteral("error"),
+                         QStringLiteral("cannot write %1").arg(path)}};
+            return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+        }
         // In 3D, dump the OCCT framebuffer (QWidget::grab can't capture a
         // native GL window). Otherwise grab the 2D canvas.
         const bool in3d = m_occtView && m_viewStack &&
@@ -1024,16 +1043,6 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
             if (!m_occtView->dumpToFile(path))
                 return {{QStringLiteral("error"),
                          QStringLiteral("3D dump failed")}};
-            return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
-        }
-        // Optional "overlays": false (CLI: `screenshot PATH clean`) captures
-        // the 2D document WITHOUT decorations (grid, UCS icon, crosshair,
-        // snap glyphs) — geometry-only, for image diffs against reference
-        // renderers. Absent = historic behavior (full widget grab).
-        if (!params[QStringLiteral("overlays")].toBool(true)) {
-            if (!m_canvas->contentImage().save(path))
-                return {{QStringLiteral("error"),
-                         QStringLiteral("cannot write %1").arg(path)}};
             return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
         }
         const QPixmap shot = m_canvas->grab();
@@ -1320,6 +1329,7 @@ void MainWindow::toggleUnits()
 
 bool MainWindow::loadFile(const QString& path, bool interactive)
 {
+    m_openWarnings.clear();
     const auto reportError = [&](const QString& msg) {
         if (interactive)
             QMessageBox::warning(this, QStringLiteral("Open failed"), msg);
@@ -1476,6 +1486,7 @@ bool MainWindow::loadGerberKit(const QString& path, bool interactive)
             QStringLiteral("  %1 warning(s), first: %2")
                 .arg(r.warnings.size())
                 .arg(r.warnings.first()));
+    m_openWarnings = r.warnings; // surfaced by the IPC "open" reply
     return true;
 }
 
