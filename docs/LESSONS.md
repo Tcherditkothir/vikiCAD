@@ -94,3 +94,12 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   FST (trailing omis) => compléter à DROITE jusqu'à int+déc chiffres d'abord.
   Les deux se confondent sur la plupart des nombres (94488 -> 0.94488 vs
   94.488) — tester les bornes (`X1`, `X1000000`) qui, elles, divergent.
+- **Piège Qt (récidive du `emit`)** : `slots` est aussi une macro Qt (keywords)
+  — un champ `std::vector<...> slots;` casse la compilation avec un message
+  cryptique (« declaration does not declare anything »). Renommé `drillSlots`
+  dans ExcellonIo. Liste noire pour les noms : `emit`, `signals`, `slots`,
+  `foreach`.
+- **Excellon vs Gerber (nommage inversé des zéros)** : Excellon `TZ`/`LZ`
+  nomme les zéros CONSERVÉS (TZ = trailing gardés = leading supprimés),
+  alors que Gerber %FS L/T nomme les zéros OMIS. Même arithmétique, noms
+  croisés — les deux parseurs le documentent côte à côte.
