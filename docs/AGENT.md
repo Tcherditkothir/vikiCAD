@@ -407,3 +407,47 @@ an assembly exploded across the scene).
   stricter tools do — convert first (`python3 -c "from PIL import Image;
   Image.open('iso.png').save('iso_real.png')"`). The 2D canvas grab is a
   real PNG.
+
+---
+
+## 7. Gerber kits headless (G1)
+
+Open a fabrication-output directory (or a LONE Gerber/Excellon file — the
+content sniff routes it through the same importer) and query it, offline or
+against the live GUI. Every line below RAN; outputs are real (trimmed).
+
+```bash
+# Offline batch: directory -> .vkd. One layer per recognized file, whole kit
+# in ONE transaction, reports/support files skipped by content sniff.
+$CLI import /home/lex/computer/pcb-ref/S5M0PCBA --save-as kitA.vkd
+#  {"ok":true,"result":{"entities":2572,"files":14,
+#    "layers":["Bottom-Copper","Top-Copper",...,"Mech-15","Outline","Drill",
+#              "Drill-NPTH"],   <- paint order: copper first, drills last
+#    "skipped":["S5M0PCBA1.GKO: no graphical objects (empty layer skipped)",
+#               "Status Report.Txt: not a Gerber/Excellon file (content sniff)",
+#               ...],"warnings":[]}}
+# PCBA's Outline comes from GM13 (GKO/GM1 are header-only): the outline
+# election takes the best of GKO > GM1 > GM13 that LOOKS like a contour
+# (has strokes + spans >= 60 % of the board on one axis). On PCBB the GKO
+# is a filled antenna keepout: it stays "Keepout" and paints BELOW copper.
+
+$CLI query kitA.vkd --layers   # colors: Top-Copper #e53935, Outline #ff00ff...
+$CLI query kitA.vkd --bounds
+#  {"ok":true,"result":{"bounds":[-0.0127,-20.0127,90.0749,30.8445],
+#    "count":2572,...}}   <- mm, always
+
+# Live GUI (start the unit as in §1b, then):
+$CLI connect open /home/lex/computer/pcb-ref/S5M0PCBB   # {"ok":true,...}
+$CLI connect query entities   # count: 3075
+$CLI connect open /home/lex/computer/pcb-ref/S5M0PCBB/S5M0PCBB1.TXT
+$CLI connect query entities   # count: 330 <- lone drill file = 330 circles
+$CLI connect screenshot /tmp/drills.png
+# UNDO once = the whole kit vanishes; REDO restores it (single transaction).
+```
+
+Gotchas: `connect open` REPLACES the document (fresh Document per kit, like
+File > Open); entity `extra()` keeps `gpol:"C"` on clear-polarity (LPC)
+objects and `plated:true/false` on drill hits; independent ground truths for
+assertions live next to the kits (.DRR = hole counts per tool, .REP = used
+D-codes). Reference render diff: `scripts/gerber-ref-diff.sh` (SKIPs until
+gerbv is installed).

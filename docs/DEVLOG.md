@@ -537,3 +537,54 @@ regénération de la table d'apertures à l'export, perf des cartes denses —
 phases G1 import/rendu, G2 ergonomie CAM, G3 édition/export/panélisation/
 pont DXF↔Gerber). En attente : kits de Lex dans ~/computer/pcb-ref/ et
 `sudo apt install gerbv`.
+
+## 2026-07-16 — Clôture G1 : import Gerber/Excellon + rendu fidèle, durci post-revue ✅
+
+**Ce qui est construit (commits 0aab919, 5f3f160, 697b68a + durcissement).**
+Parseur RS-274X complet pour le dialecte Altium (FSLAX25/MOIN, macros %AM
+prim 21+1 avec rotation origine-macro, G36/G37, arcs G74/G75, LPC/LPD,
+attributs X2 nus ET en commentaires `G04 #@!`), parseur Excellon (INCH/
+METRIC, TZ/LZ, sections PLATED/NON_PLATED, slots), « ouvrir un kit » =
+répertoire → un calque nommé/coloré par fichier, ordre de peinture cuivre→
+silk→outline→perçages, TOUT le kit dans UNE transaction. Rendu LPC par
+pixmap ARGB par calque (CompositionMode_Clear intra-calque). CLI `import`
+et GUI (File > Open Gerber kit + IPC `open`).
+
+**Durcissement post-revue adversariale (cette session) :**
+- *Élection de contour corrigée (major)* : le GKO de S5M0PCBB est une ZONE
+  keepout pleine (rectangle G36 sur l'antenne ESP32) — elle était élue
+  « Outline » et rendue en pavé magenta opaque au-dessus de tout. Nouvelle
+  élection : candidats GKO > GM1 > GM13, mais un candidat n'est plausible
+  que s'il contient au moins un TRAIT (un fichier régions-seules = zone
+  pleine) et s'il s'étend sur ≥ 60 % de la carte sur au moins un axe.
+  Résultat vérifié : PCBB → Outline = GM1 (le profil du bord haut, encoches
+  + languettes), Keepout = GKO peint SOUS le cuivre (rang 5, violet) ;
+  PCBA → Outline = GM13 (GKO/GM1 vides). Fini le pavé qui masque l'antenne,
+  fini le kit sans contour.
+- *D00 rejeté* : `X..Y..D00*` était silencieusement dessiné comme un D01
+  (trou du test `dnum > 3`). Désormais erreur explicite ligne N.
+- *Un fichier cassé ne tue plus le kit* : en import RÉPERTOIRE, un fichier
+  sniffé fab mais imparsable est skippé avec warning ; en import FICHIER
+  explicite, l'erreur reste dure.
+- *GUI : un fichier Gerber/Excellon SEUL s'ouvre* (sniff de contenu dans
+  MainWindow::loadFile → chemin kit) — parité avec le CLI ; vérifié par
+  gui-smoke (« open lone .GTL »).
+- *scripts/gerber-ref-diff.sh* : diff visuel par couche contre gerbv
+  (export PNG CLI, masques d'encre binarisés + dhash gui-smoke). SKIP
+  propre tant que gerbv n'est pas installé ; seuils premier-run à
+  calibrer à la première exécution réelle.
+
+**Pièges rencontrés** : le « contour » d'une carte réelle peut n'être qu'un
+fragment (PCBB : GM1 ne dessine QUE le bord haut façonné, 68 % de la largeur,
+24 % de la hauteur) — d'où le critère un-seul-axe ; et un GKO non vide n'est
+pas forcément un contour (keepout d'antenne) — d'où le critère « au moins un
+trait ». Détails dans LESSONS.md.
+
+**État des tests : 3807 assertions / 274 cas ctest TOUS verts (2182/243 au
+départ du chantier) ; gui-smoke 149 checks verts (124 au départ).** Captures
+de validation : scratchpad `g1-fix/kitA-after.png`, `g1-fix/kitB-after.png`.
+
+**Dette assumée (voir PCB_CAM.md)** : %SR non-identité refusé, G85 slots
+Gerber absents du dialecte, exposure 0 macro refusée, tracé rectangle =
+approximation ronde (aperture R en D01), import kit tout-ou-rien seulement
+assoupli côté répertoire. En attente Lex : `sudo apt install gerbv`.

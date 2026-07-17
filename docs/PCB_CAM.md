@@ -45,12 +45,29 @@
 
 ## Phases
 
-- **G1 — Import + rendu fidèle** : parseur RS-274X (FS/MO/AD/ADD, D01/02/03,
-  G01/02/03/36/37/75, LP, SR step-repeat, attributs X2 TF/TA/TO préservés) ;
-  parseur Excellon ; « ouvrir un kit » = pile de fichiers → calques nommés
-  par fonction ; rendu incluant polarité. Validation : diff visuel contre
-  gerbv (export PNG CLI) sur les kits réels de Lex + goldens synthétiques
-  commités.
+- [x] **G1 — Import + rendu fidèle** — **FAIT (clôturé le 2026-07-16, voir
+  DEVLOG)** : parseur RS-274X (FS/MO/AD/ADD/AM, D01/02/03,
+  G01/02/03/36/37/74/75, LPC/LPD, attributs X2 nus + forme commentaire
+  Altium) ; parseur Excellon (TZ/LZ, PLATED/NON_PLATED, slots) ; « ouvrir
+  un kit » = répertoire OU fichier seul (CLI + GUI + IPC), calques nommés/
+  colorés par fonction, élection de contour tolérante (GKO>GM1>GM13 +
+  plausibilité trait/étendue), keepout peint sous le cuivre, kit entier =
+  UNE transaction ; rendu LPC par pixmap ARGB par calque. Validé sur les
+  2 kits Altium réels (décodage manuel ligne à ligne + .DRR/.REP comme
+  vérités indépendantes) + goldens synthétiques + gui-smoke (149 checks).
+
+  **Dette G1 assumée (à réévaluer en G2/G3)** :
+  - `%SR` non-identité = erreur explicite (aucun kit réel ne l'utilise) ;
+  - G85 (slots au format Gerber) absent ; exposure 0 dans les macros = refus ;
+  - tracé à aperture RECTANGLE (D01 avec ADD..R) rendu en trait à bouts
+    ronds — exact seulement pour les apertures C ; à faire exact en G3
+    (l'export doit régénérer la vraie empreinte) ;
+  - `gerber-ref-diff.sh` écrit mais jamais exécuté en réel : gerbv pas
+    installé (sudo → Lex) ; seuils premier-run à calibrer ;
+  - l'élection de contour est une heuristique : un kit dont le contour vit
+    ailleurs que GKO/GM1/GM13 (ou X2 Profile) n'aura pas d'Outline ; G2
+    devrait offrir un « réassigner le rôle d'un calque » à la souris ;
+  - couche « 0 » vide toujours présente après import kit (défaut Document).
 - **G2 — Ergonomie CAM** : gestion de pile (board multi-fichiers, presets de
   couleurs/visibilité, transparence), mesures et cotes SUR les gerbers,
   inspecteur d'apertures, rapport (compte de perçages par diamètre…).

@@ -1,17 +1,32 @@
-# REPRISE — état au 2026-07-16 ; CHANTIER EN COURS : PCB CAM (Gerber/Excellon)
+# REPRISE — état au 2026-07-16 ; CHANTIER PCB CAM : G1 FAIT, G2 ENSUITE
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
 complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
 
-## 🎯 CHANTIER DÉCIDÉ (brainstorm avec Lex le 2026-07-16)
+## 🎯 CHANTIER PCB CAM (brainstorm avec Lex le 2026-07-16) — G1 CLÔTURÉ
 
 **PCB CAM — lire/éditer/réexporter Gerber RS-274X + Excellon** sans passer
-par un gros EDA. Plan complet, périmètre, phases G1/G2/G3 et stratégie de
-test : **`docs/PCB_CAM.md`**. Décisions fermes : PAS d'EDA complet
-(nets/routage/DRC = territoire KiCad) ; schémas = chantier SUIVANT (scope
-pré-réfléchi dans PCB_CAM.md). En attente de Lex : kits Gerber réels →
-`/home/lex/computer/pcb-ref/` + `sudo apt install gerbv` (renderer de
-référence pour les goldens).
+par un gros EDA. Plan, périmètre, phases et dette : **`docs/PCB_CAM.md`**.
+Décisions fermes : PAS d'EDA complet (nets/routage/DRC = territoire KiCad) ;
+schémas = chantier SUIVANT.
+
+- **G1 (import + rendu fidèle) : FAIT le 2026-07-16** — kits Altium réels
+  ouverts de bout en bout (répertoire OU fichier seul, CLI+GUI+IPC),
+  polarité LPC rendue, élection de contour durcie post-revue adversariale
+  (PCBB : keepout d'antenne SOUS le cuivre, contour = GM1 ; PCBA :
+  contour = GM13). État : **3807 assertions / 274 cas ctest + gui-smoke
+  149 checks, tous verts.** Kit en headless : § dédié de docs/AGENT.md.
+- **Prochaine étape : G2 — ergonomie CAM** (pile de couches, visibilité/
+  transparence, mesures sur gerbers, inspecteur d'apertures ; PCB_CAM.md).
+- **En attente de Lex** : `sudo apt install gerbv` puis premier run réel de
+  `scripts/gerber-ref-diff.sh` (diff par couche contre gerbv — SKIP propre
+  tant que gerbv manque ; seuils premier-run à calibrer à ce moment-là).
+- **À valider À LA SOURIS par Lex (G1)** : File > Open d'un .GTL/.TXT seul ;
+  File > Open Gerber kit sur pcb-ref/S5M0PCBA et B ; sur PCBB la zone
+  antenne = violet discret (keepout sous le cuivre, plus de pavé magenta
+  opaque) et le bord haut à encoches/languettes = traits magenta (Outline) ;
+  sur PCBA des contours magenta (GM13) ; UN seul Ctrl+Z vide le kit entier,
+  Ctrl+Y le restaure à l'identique.
 
 Le TOUR de validation GUI (§ 👀 plus bas) reste ouvert en parallèle.
 

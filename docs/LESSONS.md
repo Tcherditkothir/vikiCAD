@@ -120,3 +120,25 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   exige un mode G01 avant le premier D01 — un fixture minimal sans `G01*`
   échoue avec « D01 before any G01/G02/G03 mode ». Toujours copier l'en-tête
   des goldens existants (`%FS` + `%MO` + `G01*`).
+
+## 2026-07-16 — Élection de contour (durcissement G1)
+
+- **Un GKO non vide n'est PAS forcément le contour** : sur S5M0PCBB c'est
+  une vraie zone keepout (UN rectangle G36 plein sur l'antenne ESP32).
+  L'élire « Outline » (magenta, peint en dernier) = pavé opaque qui masque
+  le cuivre. Critère qui discrimine : un contour contient des TRAITS
+  (Draw/Arc) ; un fichier fait uniquement de régions pleines est une zone.
+  En plus : « Keepout » se peint désormais SOUS le cuivre (rang 5).
+- **Le « contour » réel peut n'être qu'un fragment** : le GM1 de PCBB ne
+  dessine QUE le bord haut façonné (encoches + languettes — 68 % de la
+  largeur, 24 % de la hauteur de la carte). Exiger une couverture sur les
+  DEUX axes rejette le vrai contour ; l'heuristique retenue = ≥ 60 % de
+  l'étendue de la carte sur AU MOINS un axe.
+- **Bbox « grep » trompeuse** : estimer l'étendue d'un Gerber en regexant
+  tous les X/Y du fichier compte aussi les D02 (déplacements) — le GM1 de
+  PCBB semblait couvrir 88×50 mm alors que ses objets DESSINÉS tiennent
+  dans 67×13. Toujours mesurer sur les objets parsés (fileBbox), jamais
+  sur le texte brut.
+- **Excellon seul via IPC** : `connect open` d'un .TXT de perçage marche
+  depuis le fix single-file (sniff M48) — 330 cercles pour PCBB1.TXT,
+  utile pour inspecter les perçages sans le reste du kit.
