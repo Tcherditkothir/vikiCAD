@@ -1,6 +1,8 @@
 #include "CanvasWidget.h"
 
+#include <algorithm>
 #include <set>
+#include <unordered_map>
 
 #include <QFontMetrics>
 #include <QImage>
@@ -72,6 +74,14 @@ void CanvasWidget::zoomWindow(const BBox2d& box)
     markDocumentDirty();
 }
 
+void CanvasWidget::setMirroredX(bool on)
+{
+    if (m_camera.mirroredX() == on)
+        return;
+    m_camera.setMirroredX(on);
+    markDocumentDirty();
+}
+
 void CanvasWidget::setSketchReference(std::vector<std::vector<Vec2d>> loops)
 {
     m_sketchRef = std::move(loops);
@@ -90,8 +100,12 @@ void CanvasWidget::drawGrid(QPainter& painter) const
     if (pxPerMinor < 5.0)
         return; // too dense — draw nothing rather than noise
 
-    const Vec2d topLeft = m_camera.screenToWorld({0, 0});
-    const Vec2d bottomRight = m_camera.screenToWorld({double(width()), double(height())});
+    // Normalized world window (the mirrored view swaps left/right).
+    const Vec2d corner1 = m_camera.screenToWorld({0, 0});
+    const Vec2d corner2 = m_camera.screenToWorld({double(width()), double(height())});
+    const BBox2d win(corner1, corner2);
+    const Vec2d topLeft{win.min.x, win.max.y};
+    const Vec2d bottomRight{win.max.x, win.min.y};
     const double x0 = std::floor(topLeft.x / m_gridSpacing) * m_gridSpacing;
     const double y0 = std::floor(bottomRight.y / m_gridSpacing) * m_gridSpacing;
 
@@ -161,17 +175,50 @@ void CanvasWidget::paintDocument(QPainter& painter)
     // transparent hole with CompositionMode_Clear) and composited onto the
     // canvas in one blit when its first entity comes up in draw order —
     // paint order inside the layer AND the layer's place in the global
-    // stack are both preserved. Layers without LPC keep the direct path.
-    std::set<int64_t> lpcLayers;
+    // stack are both preserved. Translucent layers (alpha < 100) take the
+    // same offscreen path: the whole-layer image is blitted with the
+    // layer's opacity, so a faded layer fades as ONE surface (overlapping
+    // traces do not darken). Opaque LPC-free layers keep the direct path.
+    std::set<int64_t> composeSet;
     for (const EntityId id : m_doc->drawOrder()) {
         const Entity* e = m_doc->entity(id);
         if (e && e->extra().value(QLatin1String("gpol")).toString() ==
                      QLatin1String("C"))
-            lpcLayers.insert(e->layerId());
+            composeSet.insert(e->layerId());
     }
+    for (const Layer& l : m_doc->layers())
+        if (l.alpha < 100)
+            composeSet.insert(l.id);
     std::set<int64_t> composedLayers;
 
-    for (const EntityId id : m_doc->drawOrder()) {
+    // Paint order (G2 layer stack): entities are stable-sorted by their
+    // layer's rank — lower ranks paint first, ties keep pure document draw
+    // order. When every rank is 0 (any pre-G2 document) the sort is a
+    // no-op and rendering is bit-identical to the historic behavior.
+    std::vector<EntityId> paintOrder = m_doc->drawOrder();
+    {
+        std::unordered_map<int64_t, int> rankOf;
+        bool anyRank = false;
+        for (const Layer& l : m_doc->layers()) {
+            rankOf[l.id] = l.rank;
+            anyRank = anyRank || l.rank != 0;
+        }
+        if (anyRank) {
+            const auto rankOfEntity = [&](EntityId id) {
+                const Entity* e = m_doc->entity(id);
+                if (!e)
+                    return 0;
+                const auto it = rankOf.find(e->layerId());
+                return it == rankOf.end() ? 0 : it->second;
+            };
+            std::stable_sort(paintOrder.begin(), paintOrder.end(),
+                             [&](EntityId a, EntityId b) {
+                                 return rankOfEntity(a) < rankOfEntity(b);
+                             });
+        }
+    }
+
+    for (const EntityId id : paintOrder) {
         const Entity* e = m_doc->entity(id);
         if (!e)
             continue;
@@ -190,11 +237,11 @@ void CanvasWidget::paintDocument(QPainter& painter)
             if (active != 0 && m_doc->entitySketch(id) != active)
                 continue;
         }
-        if (lpcLayers.count(e->layerId())) {
+        if (composeSet.count(e->layerId())) {
             // Composed as a whole (with its own culling) on first contact;
             // later entities of the layer are already in the blit.
             if (composedLayers.insert(e->layerId()).second)
-                composeLpcLayer(painter, e->layerId(), ctx);
+                composeLayer(painter, e->layerId(), ctx);
             continue;
         }
         // View culling.
@@ -207,8 +254,8 @@ void CanvasWidget::paintDocument(QPainter& painter)
     }
 }
 
-void CanvasWidget::composeLpcLayer(QPainter& target, int64_t layerId,
-                                   RenderContext& ctx)
+void CanvasWidget::composeLayer(QPainter& target, int64_t layerId,
+                                RenderContext& ctx)
 {
     QImage image(size() * devicePixelRatioF(),
                  QImage::Format_ARGB32_Premultiplied);
@@ -235,7 +282,18 @@ void CanvasWidget::composeLpcLayer(QPainter& target, int64_t layerId,
         drawPrimitives(p, list);
     }
     p.end();
-    target.drawImage(QPointF(0, 0), image);
+    // Layer opacity applies to the composite as a whole (default 100 =
+    // opaque, the historic blit).
+    const Layer* layer = m_doc->layer(layerId);
+    const int alpha = layer ? layer->alpha : 100;
+    if (alpha >= 100) {
+        target.drawImage(QPointF(0, 0), image);
+    } else {
+        const qreal saved = target.opacity();
+        target.setOpacity(saved * (alpha / 100.0));
+        target.drawImage(QPointF(0, 0), image);
+        target.setOpacity(saved);
+    }
 }
 
 void CanvasWidget::drawPrimitives(QPainter& painter, const PrimitiveList& list,

@@ -268,6 +268,71 @@ void Document::setLayerPrintable(LayerId id, bool printable)
             l.printable = printable;
 }
 
+void Document::setLayerAlpha(LayerId id, int alphaPct)
+{
+    for (Layer& l : m_layers) {
+        if (l.id == id) {
+            l.alpha = std::clamp(alphaPct, 0, 100);
+            notifyChanged();
+            return;
+        }
+    }
+}
+
+void Document::setLayerRank(LayerId id, int rank)
+{
+    for (Layer& l : m_layers) {
+        if (l.id == id) {
+            l.rank = rank;
+            notifyChanged();
+            return;
+        }
+    }
+}
+
+void Document::setLayerGerberRole(LayerId id, const QString& role)
+{
+    for (Layer& l : m_layers) {
+        if (l.id == id) {
+            l.gerberRole = role;
+            notifyChanged();
+            return;
+        }
+    }
+}
+
+std::vector<const Layer*> Document::layersByPaintOrder() const
+{
+    std::vector<const Layer*> out;
+    out.reserve(m_layers.size());
+    for (const Layer& l : m_layers)
+        out.push_back(&l);
+    std::stable_sort(out.begin(), out.end(),
+                     [](const Layer* a, const Layer* b) { return a->rank < b->rank; });
+    return out;
+}
+
+bool Document::moveLayerPaintOrder(LayerId id, int delta)
+{
+    if (delta == 0 || !layer(id))
+        return false;
+    std::vector<const Layer*> order = layersByPaintOrder();
+    int index = -1;
+    for (size_t i = 0; i < order.size(); ++i)
+        if (order[i]->id == id)
+            index = int(i);
+    const int target = index + (delta > 0 ? 1 : -1);
+    if (index < 0 || target < 0 || target >= int(order.size()))
+        return false; // already at the bottom/top of the stack
+    std::swap(order[size_t(index)], order[size_t(target)]);
+    // Materialize the new order as ranks 0..n-1 (an explicit stack from now
+    // on; before the first move all-zero ranks keep pure draw order).
+    for (size_t i = 0; i < order.size(); ++i)
+        const_cast<Layer*>(order[i])->rank = int(i);
+    notifyChanged();
+    return true;
+}
+
 bool Document::removeLayer(LayerId id)
 {
     if (id == 0 || id == m_currentLayer)

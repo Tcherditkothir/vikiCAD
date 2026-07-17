@@ -537,6 +537,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     p.registerCommand(&make<RedoCommand>);
     p.registerCommand(&make<ZoomCommand>, {QStringLiteral("Z")});
     registerDrawCommands2(p);
+    registerLayerCommands(p);
     registerModifyCommands(p);
     registerEditCommands(p);
     registerAnnotateCommands(p);

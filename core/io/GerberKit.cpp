@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include "doc/GerberRole.h"
 #include "io/ExcellonIo.h"
 #include "io/GerberIo.h"
 
@@ -559,7 +560,15 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
     // join it instead of opening their own (nested transactions assert).
     TransactionScope tx(doc, QStringLiteral("GERBERKIT"));
     for (ImportJob& job : jobs) {
-        doc.ensureLayer(job.role.name, job.role.rgb);
+        const LayerId layerId = doc.ensureLayer(job.role.name, job.role.rgb);
+        // Make the paint order EXPLICIT on the layer (G2): the generic
+        // rank-sorted render now reproduces what the import order used to
+        // guarantee, and survives later edits. The CAM role rides along as
+        // reassignable metadata (LAYER ... ROLE / LayerPanel context menu).
+        doc.setLayerRank(layerId, job.role.rank);
+        const QString roleToken = gerberRoleForLayerName(job.role.name);
+        if (!roleToken.isEmpty())
+            doc.setLayerGerberRole(layerId, roleToken);
         int added = 0;
         if (job.isDrill) {
             const ExcellonImportResult r =

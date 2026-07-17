@@ -14,7 +14,10 @@
 #        export STL -> non-empty + header/size check.
 #   Gerber kit (real S5M0PCBA, SKIPs when absent): IPC open of the fab
 #        directory -> layer list, stable non-empty render, one UNDO
-#        empties the document, REDO restores it (screenshot diffs).
+#        empties the document, REDO restores it (screenshot diffs);
+#        G2 layer stack: BOARDVIEW TOP (bottom side dimmed) / BOTTOM
+#        (top side dimmed + X-mirrored view) / ALL (identical to the
+#        initial clean render), LAYER <name> ALPHA over IPC.
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
@@ -581,6 +584,47 @@ if [[ -d "$KIT_DIR" ]]; then
     shot "kit: screenshot K'' (redo)" "$TMP/kit_c.png"
     assert_le "kit: K'' == K (render restored)" \
         "$(img_hash_dist "$TMP/kit_a.png" "$TMP/kit_c.png")" "$SAME_HASH_MAX"
+
+    # --- G2 layer stack: BOARDVIEW presets + LAYER alpha ---------------------
+    # All comparisons on CLEAN captures (geometry only). TOP dims the
+    # bottom-side layers; BOTTOM dims the top side AND mirrors the view
+    # left-right (solder side); ALL restores a render identical to the
+    # initial one. LAYER ... ALPHA is the manual per-layer knob.
+    layer_alpha() { # layer-name -> alpha from query layers
+        jget "$(rpc query layers)" \
+            "[l['alpha'] for l in d['result']['layers'] if l['name']=='$1'][0]"
+    }
+    rpc screenshot "$TMP/bv_init.png" clean >/dev/null
+
+    gexec "stack: BOARDVIEW TOP" "BOARDVIEW TOP"
+    rpc screenshot "$TMP/bv_top.png" clean >/dev/null
+    assert_ge "stack: TOP dims the bottom side" \
+        "$(img_pixel_bp "$TMP/bv_init.png" "$TMP/bv_top.png")" "$DIFF_PIXELS_MIN"
+    assert_eq "stack: TOP -> Bottom-Copper alpha 25" 25 "$(layer_alpha Bottom-Copper)"
+    assert_eq "stack: TOP -> Top-Copper opaque" 100 "$(layer_alpha Top-Copper)"
+    assert_eq "stack: TOP -> Drill stays opaque" 100 "$(layer_alpha Drill)"
+
+    gexec "stack: BOARDVIEW BOTTOM" "BOARDVIEW BOTTOM"
+    rpc screenshot "$TMP/bv_bottom.png" clean >/dev/null
+    assert_ge "stack: BOTTOM differs from TOP (mirror)" \
+        "$(img_pixel_bp "$TMP/bv_top.png" "$TMP/bv_bottom.png")" "$DIFF_PIXELS_MIN"
+    assert_eq "stack: BOTTOM -> Top-Copper alpha 25" 25 "$(layer_alpha Top-Copper)"
+    assert_eq "stack: BOTTOM -> Bottom-Copper opaque" 100 "$(layer_alpha Bottom-Copper)"
+
+    gexec "stack: BOARDVIEW ALL" "BOARDVIEW ALL"
+    rpc screenshot "$TMP/bv_all.png" clean >/dev/null
+    assert_le "stack: ALL == initial render" \
+        "$(img_hash_dist "$TMP/bv_init.png" "$TMP/bv_all.png")" "$SAME_HASH_MAX"
+
+    gexec "stack: LAYER Top-Copper ALPHA 30" "LAYER Top-Copper ALPHA 30"
+    assert_eq "stack: LAYER alpha visible in query" 30 "$(layer_alpha Top-Copper)"
+    rpc screenshot "$TMP/bv_a30.png" clean >/dev/null
+    assert_ge "stack: alpha 30 changes the render" \
+        "$(img_pixel_bp "$TMP/bv_all.png" "$TMP/bv_a30.png")" "$DIFF_PIXELS_MIN"
+    gexec "stack: LAYER Top-Copper ALPHA 100" "LAYER Top-Copper ALPHA 100"
+    rpc screenshot "$TMP/bv_a100.png" clean >/dev/null
+    assert_le "stack: alpha 100 back to initial" \
+        "$(img_hash_dist "$TMP/bv_init.png" "$TMP/bv_a100.png")" "$SAME_HASH_MAX"
 
     # A LONE fab file (not a directory) opens through the same kit path
     # thanks to the content sniff -- regression for the single-.GTL IPC open.

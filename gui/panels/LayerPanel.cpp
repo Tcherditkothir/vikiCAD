@@ -4,15 +4,28 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "doc/GerberRole.h"
+
 namespace viki {
 
 namespace {
-enum Col { ColCurrent = 0, ColName, ColColor, ColVisible, ColLocked, ColCount };
+enum Col {
+    ColCurrent = 0,
+    ColName,
+    ColColor,
+    ColVisible,
+    ColLocked,
+    ColAlpha,
+    ColRank,
+    ColRole,
+    ColCount
+};
 }
 
 LayerPanel::LayerPanel(QWidget* parent)
@@ -22,25 +35,39 @@ LayerPanel::LayerPanel(QWidget* parent)
     m_table->setColumnCount(ColCount);
     m_table->setHorizontalHeaderLabels(
         {QStringLiteral(""), QStringLiteral("Name"), QStringLiteral("Color"),
-         QStringLiteral("On"), QStringLiteral("Lock")});
+         QStringLiteral("On"), QStringLiteral("Lock"), QStringLiteral("Alpha"),
+         QStringLiteral("Rank"), QStringLiteral("Role")});
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    // Click a header to sort (by name, color, On/Lock state). Row->layer
-    // lookups go through the item's stored id, so sorting is safe.
+    // Click a header to sort (by name, color, On/Lock state, alpha, rank).
+    // Row->layer lookups go through the item's stored id, so sorting is safe.
     m_table->setSortingEnabled(true);
     m_table->horizontalHeader()->setSectionsClickable(true);
     m_table->sortByColumn(ColName, Qt::AscendingOrder);
+    // Right-click: Gerber-role assignment (and whatever lands there next).
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QTableWidget::customContextMenuRequested, this,
+            &LayerPanel::showContextMenu);
 
     auto* addBtn = new QPushButton(QStringLiteral("+"), this);
     auto* delBtn = new QPushButton(QStringLiteral("−"), this);
+    auto* upBtn = new QPushButton(QStringLiteral("▲"), this);
+    auto* downBtn = new QPushButton(QStringLiteral("▼"), this);
     addBtn->setFixedWidth(28);
     delBtn->setFixedWidth(28);
+    upBtn->setFixedWidth(28);
+    downBtn->setFixedWidth(28);
+    upBtn->setToolTip(QStringLiteral("Move layer up the stack (painted later, on top)"));
+    downBtn->setToolTip(QStringLiteral("Move layer down the stack (painted earlier)"));
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(addBtn);
     buttons->addWidget(delBtn);
+    buttons->addSpacing(8);
+    buttons->addWidget(upBtn);
+    buttons->addWidget(downBtn);
     buttons->addStretch(1);
 
     auto* layout = new QVBoxLayout(this);
@@ -50,6 +77,8 @@ LayerPanel::LayerPanel(QWidget* parent)
 
     connect(addBtn, &QPushButton::clicked, this, &LayerPanel::addLayerClicked);
     connect(delBtn, &QPushButton::clicked, this, &LayerPanel::removeLayerClicked);
+    connect(upBtn, &QPushButton::clicked, this, [this] { moveLayerClicked(+1); });
+    connect(downBtn, &QPushButton::clicked, this, [this] { moveLayerClicked(-1); });
     connect(m_table, &QTableWidget::cellChanged, this, &LayerPanel::cellChanged);
     connect(m_table, &QTableWidget::cellClicked, this, &LayerPanel::cellClicked);
 }
@@ -98,6 +127,22 @@ void LayerPanel::refresh()
         locked->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
         locked->setCheckState(l.locked ? Qt::Checked : Qt::Unchecked);
         m_table->setItem(row, ColLocked, locked);
+
+        // EditRole as int so header sorting is numeric, not lexicographic.
+        auto* alpha = new QTableWidgetItem;
+        alpha->setData(Qt::EditRole, l.alpha);
+        alpha->setToolTip(QStringLiteral("Compositing opacity %: 100 = opaque"));
+        m_table->setItem(row, ColAlpha, alpha);
+
+        auto* rank = new QTableWidgetItem;
+        rank->setData(Qt::EditRole, l.rank);
+        rank->setToolTip(QStringLiteral("Paint rank: lower paints first"));
+        m_table->setItem(row, ColRank, rank);
+
+        auto* role = new QTableWidgetItem(l.gerberRole);
+        role->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        role->setToolTip(QStringLiteral("Gerber role — right-click to set"));
+        m_table->setItem(row, ColRole, role);
     }
     m_table->setSortingEnabled(wasSorted);
     m_refreshing = false;
@@ -124,6 +169,69 @@ void LayerPanel::addLayerClicked()
         return;
     }
     m_doc->ensureLayer(name.trimmed());
+    refresh();
+    emit layersChanged();
+}
+
+LayerId LayerPanel::layerIdAtRow(int row) const
+{
+    if (row < 0 || row >= m_table->rowCount())
+        return -1;
+    return m_table->item(row, ColCurrent)->data(Qt::UserRole).toLongLong();
+}
+
+void LayerPanel::moveLayerClicked(int delta)
+{
+    if (!m_doc)
+        return;
+    const int row = m_table->currentRow();
+    if (row < 0) {
+        QMessageBox::information(
+            this, QStringLiteral("No layer selected"),
+            QStringLiteral("Click a layer in the list first, then ▲/▼."));
+        return;
+    }
+    const LayerId id = layerIdAtRow(row);
+    if (m_doc->moveLayerPaintOrder(id, delta)) {
+        refresh();
+        // Keep the moved layer selected (rows may have re-sorted).
+        for (int r = 0; r < m_table->rowCount(); ++r)
+            if (layerIdAtRow(r) == id)
+                m_table->setCurrentCell(r, ColName);
+        emit layersChanged();
+    }
+}
+
+void LayerPanel::showContextMenu(const QPoint& pos)
+{
+    if (!m_doc)
+        return;
+    const int row = m_table->rowAt(pos.y());
+    if (row < 0)
+        return;
+    const LayerId id = layerIdAtRow(row);
+    const Layer* l = m_doc->layer(id);
+    if (!l)
+        return;
+
+    QMenu menu(this);
+    QMenu* roleMenu = menu.addMenu(QStringLiteral("Set Gerber role"));
+    for (const GerberRoleSpec& spec : gerberRoleSpecs()) {
+        QAction* a = roleMenu->addAction(spec.token);
+        a->setCheckable(true);
+        a->setChecked(l->gerberRole == spec.token);
+    }
+    roleMenu->addSeparator();
+    QAction* noneAct = roleMenu->addAction(QStringLiteral("None"));
+    noneAct->setCheckable(true);
+    noneAct->setChecked(l->gerberRole.isEmpty());
+
+    QAction* chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+    if (!chosen || chosen->menu())
+        return;
+    // Same semantics as the LAYER ... ROLE command: a real role recolors the
+    // layer to the role palette and moves it to the role's paint rank.
+    applyGerberRole(*m_doc, id, chosen == noneAct ? QString() : chosen->text());
     refresh();
     emit layersChanged();
 }
@@ -191,6 +299,20 @@ void LayerPanel::cellChanged(int row, int column)
         const bool visible = m_table->item(row, ColVisible)->checkState() == Qt::Checked;
         const bool locked = m_table->item(row, ColLocked)->checkState() == Qt::Checked;
         m_doc->setLayerProps(id, l->rgb, visible, locked);
+        emit layersChanged();
+    } else if (column == ColAlpha) {
+        bool ok = false;
+        const int alpha = m_table->item(row, ColAlpha)->text().toInt(&ok);
+        if (ok)
+            m_doc->setLayerAlpha(id, alpha); // Document clamps to 0..100
+        refresh(); // redisplay the clamped/reverted value
+        emit layersChanged();
+    } else if (column == ColRank) {
+        bool ok = false;
+        const int rank = m_table->item(row, ColRank)->text().toInt(&ok);
+        if (ok)
+            m_doc->setLayerRank(id, rank);
+        refresh();
         emit layersChanged();
     } else if (column == ColName && id != 0) {
         const QString newName = m_table->item(row, ColName)->text().trimmed();

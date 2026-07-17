@@ -191,6 +191,27 @@ TEST_CASE("GerberKit: recognition, sniffing, colors, order, drill split, one und
     CHECK(layerNamed(doc, "Drill")->rgb == 0x000000u);
     CHECK(layerNamed(doc, "Drill-NPTH")->rgb == 0x3C3C3C);
 
+    // G2: the paint order is EXPLICIT on the layers (rank, lower first) and
+    // the CAM role rides along as reassignable metadata.
+    CHECK(layerNamed(doc, "Bottom-Copper")->rank <
+          layerNamed(doc, "Top-Copper")->rank);
+    CHECK(layerNamed(doc, "Top-Copper")->rank <
+          layerNamed(doc, "Outline")->rank);
+    CHECK(layerNamed(doc, "Outline")->rank < layerNamed(doc, "Drill")->rank);
+    CHECK(layerNamed(doc, "Drill")->rank < layerNamed(doc, "Drill-NPTH")->rank);
+    CHECK(layerNamed(doc, "Top-Copper")->gerberRole ==
+          QStringLiteral("Copper-Top"));
+    CHECK(layerNamed(doc, "Bottom-Copper")->gerberRole ==
+          QStringLiteral("Copper-Bottom"));
+    CHECK(layerNamed(doc, "Top-Silk")->gerberRole == QStringLiteral("Silk"));
+    CHECK(layerNamed(doc, "Outline")->gerberRole == QStringLiteral("Outline"));
+    CHECK(layerNamed(doc, "Drill")->gerberRole == QStringLiteral("Drill"));
+    CHECK(layerNamed(doc, "Drill-NPTH")->gerberRole == QStringLiteral("Drill"));
+    // Every imported layer keeps the default opacity: alpha != 100 would
+    // change the reference renders (gerber-ref-diff guards this too).
+    for (const Layer& l : doc.layers())
+        CHECK(l.alpha == 100);
+
     // Entities landed on their layers; paint order = draw order: the very
     // first entity belongs to the bottom copper, the very last to a drill.
     CHECK(entitiesOnLayer(doc, layerNamed(doc, "Top-Copper")) == 2); // dark + LPC

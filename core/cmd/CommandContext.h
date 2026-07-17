@@ -13,6 +13,10 @@ public:
     virtual ~ViewHook() = default;
     virtual void zoomExtents() = 0;
     virtual void zoomWindow(const BBox2d& box) { (void)box; }
+    // X-mirrored view (CAM "solder side"; BOARDVIEW BOTTOM). View state
+    // only — never persisted, no-op headless.
+    virtual void setMirroredX(bool on) { (void)on; }
+    virtual bool mirroredX() const { return false; }
 };
 
 // Everything a command needs to run, front-end agnostic.

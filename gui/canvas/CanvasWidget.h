@@ -27,6 +27,8 @@ public:
     // ViewHook
     void zoomExtents() override;
     void zoomWindow(const BBox2d& box) override;
+    void setMirroredX(bool on) override;
+    bool mirroredX() const override { return m_camera.mirroredX(); }
 
     // Sketch-on-face reference outline (world 2D, in the sketch plane frame).
     void setSketchReference(std::vector<std::vector<Vec2d>> loops);
@@ -77,11 +79,13 @@ private:
     // The committed entities, painted in strict document draw order (the
     // shared body of rebuildStaticLayer and contentImage).
     void paintDocument(QPainter& painter);
-    // Gerber layers holding clear-polarity (LPC) entities: composed in a
-    // transparent offscreen image (dark paints, clear erases via
-    // CompositionMode_Clear) then blitted, so LPC only punches holes in its
-    // OWN layer — see rebuildStaticLayer for the full rationale.
-    void composeLpcLayer(QPainter& target, int64_t layerId, RenderContext& ctx);
+    // Layers that need offscreen composition — clear-polarity (LPC) Gerber
+    // layers (dark paints, clear erases via CompositionMode_Clear) and
+    // translucent layers (alpha < 100, applied as opacity at blit time) —
+    // are composed in a transparent ARGB image then blitted in one go, so
+    // LPC only punches holes in its OWN layer and alpha fades the layer as
+    // a WHOLE (overlaps inside the layer do not darken).
+    void composeLayer(QPainter& target, int64_t layerId, RenderContext& ctx);
     void drawGrid(QPainter& painter) const;
     void drawPrimitives(QPainter& painter, const PrimitiveList& list,
                         const QColor& overrideColor = QColor()) const;

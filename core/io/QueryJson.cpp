@@ -42,6 +42,9 @@ QJsonArray layersJson(const Document& doc)
             {QStringLiteral("visible"), l.visible},
             {QStringLiteral("locked"), l.locked},
             {QStringLiteral("printable"), l.printable},
+            {QStringLiteral("alpha"), l.alpha},
+            {QStringLiteral("rank"), l.rank},
+            {QStringLiteral("gerberRole"), l.gerberRole},
             {QStringLiteral("current"), l.id == doc.currentLayer()}});
     return out;
 }

@@ -226,6 +226,20 @@ MainWindow::MainWindow()
     viewMenu0->addSeparator();
     viewMenu0->addAction(QStringLiteral("&Zoom..."), this,
                          [this] { onCommandEntered(QStringLiteral("ZOOM")); });
+    // CAM stack presets — same BOARDVIEW command as typing it (processor
+    // parity): TOP dims the bottom-side layers, BOTTOM dims the top side
+    // AND mirrors the view left-right (solder side), ALL restores.
+    viewMenu0->addSeparator();
+    QMenu* boardMenu = viewMenu0->addMenu(QStringLiteral("&Board view (CAM)"));
+    boardMenu->addAction(QStringLiteral("&Top"), this, [this] {
+        onCommandEntered(QStringLiteral("BOARDVIEW TOP"));
+    });
+    boardMenu->addAction(QStringLiteral("&Bottom (mirrored)"), this, [this] {
+        onCommandEntered(QStringLiteral("BOARDVIEW BOTTOM"));
+    });
+    boardMenu->addAction(QStringLiteral("&All layers"), this, [this] {
+        onCommandEntered(QStringLiteral("BOARDVIEW ALL"));
+    });
     menuBar()->addMenu(viewMenu0);
 
     // Grouped command menus + the compact tool tab strip above the view
@@ -1194,6 +1208,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     });
     updateSketchStatus();
     m_canvas->clearSketchReference();
+    m_canvas->setMirroredX(false); // BOARDVIEW BOTTOM mirror is per-document view state
     m_doc->clearExtraSnapPoints();
     m_canvas->zoomExtents();
     updateWindowTitle();

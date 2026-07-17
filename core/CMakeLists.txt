@@ -12,6 +12,7 @@ add_library(vikicore STATIC
     doc/Entities.cpp
     doc/EntityFactory.cpp
     doc/Document.cpp
+    doc/GerberRole.cpp
     doc/EntitiesEx.cpp
     doc/Annotations.cpp
     doc/Block.cpp
@@ -26,6 +27,7 @@ add_library(vikicore STATIC
     cmd/CommandProcessor.cpp
     cmd/Commands2D.cpp
     cmd/CommandsDraw2.cpp
+    cmd/CommandsLayer.cpp
     cmd/CommandsModify.cpp
     cmd/CommandsEdit.cpp
     cmd/CommandsAnnotate.cpp

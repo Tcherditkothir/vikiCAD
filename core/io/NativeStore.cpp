@@ -1,5 +1,7 @@
 #include "NativeStore.h"
 
+#include <algorithm>
+
 #include <sqlite3.h>
 
 #include <QJsonDocument>
@@ -32,13 +34,16 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 CREATE TABLE IF NOT EXISTS layers (
-    id         INTEGER PRIMARY KEY,
-    name       TEXT UNIQUE NOT NULL,
-    color      INTEGER NOT NULL DEFAULT 0xFFFFFF,
-    visible    INTEGER NOT NULL DEFAULT 1,
-    locked     INTEGER NOT NULL DEFAULT 0,
-    printable  INTEGER NOT NULL DEFAULT 1,
-    sort       INTEGER NOT NULL DEFAULT 0
+    id          INTEGER PRIMARY KEY,
+    name        TEXT UNIQUE NOT NULL,
+    color       INTEGER NOT NULL DEFAULT 0xFFFFFF,
+    visible     INTEGER NOT NULL DEFAULT 1,
+    locked      INTEGER NOT NULL DEFAULT 0,
+    printable   INTEGER NOT NULL DEFAULT 1,
+    sort        INTEGER NOT NULL DEFAULT 0,
+    alpha       INTEGER NOT NULL DEFAULT 100,
+    paint_rank  INTEGER NOT NULL DEFAULT 0,
+    gerber_role TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS layouts (
     id      INTEGER PRIMARY KEY,
@@ -142,6 +147,21 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         return false;
     if (!exec(db.get(), kSchema, error))
         return false;
+    // Saving over a file written before the layer-stack columns existed:
+    // CREATE TABLE IF NOT EXISTS keeps the old shape, so upgrade in place.
+    // Each ALTER fails harmlessly when the column is already there.
+    {
+        QString ignored;
+        exec(db.get(),
+             "ALTER TABLE layers ADD COLUMN alpha INTEGER NOT NULL DEFAULT 100;",
+             ignored);
+        exec(db.get(),
+             "ALTER TABLE layers ADD COLUMN paint_rank INTEGER NOT NULL DEFAULT 0;",
+             ignored);
+        exec(db.get(),
+             "ALTER TABLE layers ADD COLUMN gerber_role TEXT NOT NULL DEFAULT '';",
+             ignored);
+    }
     if (!exec(db.get(), "BEGIN;", error))
         return false;
 
@@ -208,8 +228,9 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
     sqlite3_finalize(stmt);
 
     sqlite3_prepare_v2(db.get(),
-                       "INSERT INTO layers(id,name,color,visible,locked,printable,sort) "
-                       "VALUES(?,?,?,?,?,?,?);",
+                       "INSERT INTO layers(id,name,color,visible,locked,printable,sort,"
+                       "alpha,paint_rank,gerber_role) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?);",
                        -1, &stmt, nullptr);
     int sort = 0;
     for (const Layer& l : doc.layers()) {
@@ -221,6 +242,10 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         sqlite3_bind_int(stmt, 5, l.locked ? 1 : 0);
         sqlite3_bind_int(stmt, 6, l.printable ? 1 : 0);
         sqlite3_bind_int(stmt, 7, sort++);
+        sqlite3_bind_int(stmt, 8, l.alpha);
+        sqlite3_bind_int(stmt, 9, l.rank);
+        sqlite3_bind_text(stmt, 10, l.gerberRole.toUtf8().constData(), -1,
+                          SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             error = QString::fromUtf8(sqlite3_errmsg(db.get()));
             sqlite3_finalize(stmt);
@@ -393,10 +418,22 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
         sqlite3_finalize(stmt);
     }
 
+    // Layer-stack columns (alpha/paint_rank/gerber_role) are absent in files
+    // written before G2: try the full SELECT first, fall back to the legacy
+    // one (defaults then apply: opaque, rank 0, no role).
+    bool fullLayerColumns = true;
     if (sqlite3_prepare_v2(db.get(),
+                           "SELECT id,name,color,visible,locked,printable,"
+                           "alpha,paint_rank,gerber_role FROM layers ORDER BY sort;",
+                           -1, &stmt, nullptr) != SQLITE_OK) {
+        fullLayerColumns = false;
+        stmt = nullptr;
+        sqlite3_prepare_v2(db.get(),
                            "SELECT id,name,color,visible,locked,printable FROM layers "
                            "ORDER BY sort;",
-                           -1, &stmt, nullptr) == SQLITE_OK) {
+                           -1, &stmt, nullptr);
+    }
+    if (stmt) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             Layer l;
             l.id = sqlite3_column_int64(stmt, 0);
@@ -406,9 +443,16 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
             l.visible = sqlite3_column_int(stmt, 3) != 0;
             l.locked = sqlite3_column_int(stmt, 4) != 0;
             l.printable = sqlite3_column_int(stmt, 5) != 0;
+            if (fullLayerColumns) {
+                l.alpha = std::clamp(sqlite3_column_int(stmt, 6), 0, 100);
+                l.rank = sqlite3_column_int(stmt, 7);
+                l.gerberRole = QString::fromUtf8(
+                    reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8)));
+            }
             doc->restoreLayer(l);
         }
         sqlite3_finalize(stmt);
+        stmt = nullptr;
     }
 
     if (sqlite3_prepare_v2(db.get(), "SELECT data FROM dim_styles;", -1, &stmt, nullptr) ==

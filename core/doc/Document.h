@@ -88,6 +88,18 @@ public:
                         bool visible = true, bool locked = false);
     void setLayerProps(LayerId id, uint32_t rgb, bool visible, bool locked);
     void setLayerPrintable(LayerId id, bool printable);
+    // Compositing opacity, clamped to 0..100 (100 = opaque, the default).
+    void setLayerAlpha(LayerId id, int alphaPct);
+    // Paint rank: LOWER paints first. Ties keep document draw order, so a
+    // document where every layer has rank 0 renders exactly as before.
+    void setLayerRank(LayerId id, int rank);
+    // CAM role metadata token (see doc/GerberRole.h); empty clears it.
+    void setLayerGerberRole(LayerId id, const QString& role);
+    // Layers stable-sorted by rank (ties keep table order) — the render stack.
+    std::vector<const Layer*> layersByPaintOrder() const;
+    // Move a layer one slot up (+1 = painted later / on top) or down (-1)
+    // in the paint order; materializes ranks 0..n-1. False at the ends.
+    bool moveLayerPaintOrder(LayerId id, int delta);
     // Deletes an empty, non-current layer. False if it has entities/is current/is 0.
     bool removeLayer(LayerId id);
     LayerId currentLayer() const { return m_currentLayer; }

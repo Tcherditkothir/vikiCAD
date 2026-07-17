@@ -15,6 +15,18 @@ struct Layer {
     bool visible = true;
     bool locked = false;
     bool printable = true;
+    // Opacity applied when the layer is composited (0 = invisible,
+    // 100 = opaque). Anything below 100 routes the layer through the
+    // offscreen ARGB composition path (same as LPC Gerber layers).
+    int alpha = 100;
+    // Paint order: layers with a LOWER rank paint first (bottom of the
+    // stack). Ties keep the document draw order interleaved, so a document
+    // where every layer has the default rank renders exactly as before.
+    int rank = 0;
+    // CAM metadata: which fabrication role this layer plays (one token of
+    // gerberRoleSpecs() — "Copper-Top", "Outline"... empty = none). Set by
+    // the Gerber kit importer, editable via the LAYER command / LayerPanel.
+    QString gerberRole;
 };
 
 } // namespace viki
