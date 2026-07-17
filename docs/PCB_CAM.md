@@ -64,9 +64,13 @@
     (l'export doit régénérer la vraie empreinte) ;
   - ~~`gerber-ref-diff.sh` écrit mais jamais exécuté en réel~~ → **FAIT
     (2026-07-17)** : gerbv installé, 32/32 couches VERTES, seuils calibrés
-    sur les chiffres réels (dhash ≤ 170, ink-delta ≤ 3 pts). Divergence
-    résiduelle connue : les perçages sont des ANNEAUX (CircleEntity) chez
-    nous vs disques pleins chez gerbv — candidat G2 (affichage rempli) ;
+    sur les chiffres réels (dhash ≤ 170 — max observé 132 sur le cuivre
+    PCBB.GBL, pur halo d'anti-aliasing vérifié à l'œil —, ink-delta ≤
+    3 pts). Le script tourne aussi en stage final de gui-smoke (~12 s,
+    SKIP silencieux si gerbv/kits absents) ;
+  - ~~perçages rendus en ANNEAUX vs disques pleins chez gerbv~~ → **FAIT
+    (2026-07-17)** : les hits Excellon (tag `plated` présent) se rendent
+    en disques PLEINS (dhash .TXT : 58/104 → 11/40) ;
   - l'élection de contour est une heuristique : un kit dont le contour vit
     ailleurs que GKO/GM1/GM13 (ou X2 Profile) n'aura pas d'Outline ; G2
     devrait offrir un « réassigner le rôle d'un calque » à la souris ;
@@ -87,11 +91,12 @@
 - Kits réels de Lex dans `/home/lex/computer/pcb-ref/` (HORS repo — ses
   cartes restent privées) ; tests golden optionnels, SKIP si absent.
 - Renderer de référence : `gerbv` (paquet Ubuntu, export PNG en CLI) →
-  diff d'images comme dans gui-smoke. À installer (sudo requis → Lex).
+  `scripts/gerber-ref-diff.sh`, exécuté aussi en stage final optionnel
+  de gui-smoke (SKIP silencieux quand gerbv ou les kits manquent).
 - Round-trip : import→export→réimport, comparaison sémantique (comme DXF).
 
 ## Prérequis en attente
 
 - [x] Kits Gerber réels fournis par Lex → `/home/lex/computer/pcb-ref/`
       (S5M0PCBA + S5M0PCBB, Altium Designer 18.0.9)
-- [ ] `sudo apt install gerbv` (2.10.0 dispo au pool Ubuntu — IPv6 OK)
+- [x] `sudo apt install gerbv` → installé (2026-07-17), ref-diff calibré

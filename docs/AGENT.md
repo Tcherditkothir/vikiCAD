@@ -52,10 +52,10 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
-| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` |
+| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj` |
-| `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D |
+| `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
 | `view3d` | `$CLI connect view3d on` | toggle the 3D view (`on`/`off`); returns `is3d` |
 | `viewdir` | `$CLI connect viewdir FRONT` | aim the 3D camera along `TOP BOTTOM FRONT BACK LEFT RIGHT ISO` and refit the scene (3D view only — §5a) |
 | `pick3d` | `$CLI connect pick3d 400 300` | click at physical view pixels; no coords = view centre; returns e.g. `"picked face 2 of solid #3"` |

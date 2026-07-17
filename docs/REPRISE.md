@@ -1,4 +1,4 @@
-# REPRISE — état au 2026-07-16 ; CHANTIER PCB CAM : G1 FAIT, G2 ENSUITE
+# REPRISE — état au 2026-07-17 ; PCB CAM : G1 FAIT + ref-diff CALIBRÉ, G2 ENSUITE
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
 complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
@@ -14,13 +14,16 @@ schémas = chantier SUIVANT.
   ouverts de bout en bout (répertoire OU fichier seul, CLI+GUI+IPC),
   polarité LPC rendue, élection de contour durcie post-revue adversariale
   (PCBB : keepout d'antenne SOUS le cuivre, contour = GM1 ; PCBA :
-  contour = GM13). État : **3807 assertions / 274 cas ctest + gui-smoke
-  149 checks, tous verts.** Kit en headless : § dédié de docs/AGENT.md.
+  contour = GM13). État : **3833 assertions / 275 cas ctest + gui-smoke
+  157 checks, tous verts.** Kit en headless : § dédié de docs/AGENT.md.
+- **Parité visuelle gerbv (2026-07-17)** : gerbv installé, premier run réel
+  de `scripts/gerber-ref-diff.sh` → 3 causes démêlées (fausse alerte LPC,
+  décorations du canvas → `screenshot PATH clean`, Gerber valide-mais-vide
+  s'ouvre avec warning) + perçages rendus en disques pleins. **32/32
+  couches vertes, seuils calibrés**, et le diff tourne en stage final de
+  gui-smoke (SKIP sans gerbv/kits). Récit : DEVLOG 2026-07-17.
 - **Prochaine étape : G2 — ergonomie CAM** (pile de couches, visibilité/
   transparence, mesures sur gerbers, inspecteur d'apertures ; PCB_CAM.md).
-- **En attente de Lex** : `sudo apt install gerbv` puis premier run réel de
-  `scripts/gerber-ref-diff.sh` (diff par couche contre gerbv — SKIP propre
-  tant que gerbv manque ; seuils premier-run à calibrer à ce moment-là).
 - **À valider À LA SOURIS par Lex (G1)** : File > Open d'un .GTL/.TXT seul ;
   File > Open Gerber kit sur pcb-ref/S5M0PCBA et B ; sur PCBB la zone
   antenne = violet discret (keepout sous le cuivre, plus de pavé magenta

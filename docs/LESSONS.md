@@ -164,3 +164,16 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
 - **Divergence résiduelle connue** : perçages = ANNEAUX (CircleEntity
   cosmétique) chez nous vs DISQUES pleins chez gerbv → dhash .TXT plus haut
   (58/104 vs médiane ~25) mais sous seuil. Affichage rempli = candidat G2.
+  → RÉGLÉ le jour même : `CircleEntity::buildPrimitives` remplit le disque
+  quand l'entité porte le tag `plated` de l'importeur Excellon (dhash .TXT :
+  11/40). Le renderer de référence sert aussi à ÇA : transformer une dette
+  d'affichage floue en chiffre qui baisse.
+- **Une composition en 2 passes ≠ ordre de peinture Gerber** : « tous les
+  LPD puis tous les LPC » est SÉduisant (deux boucles simples) mais faux —
+  un objet LPD re-dessiné APRÈS un clear doit rester visible dedans, et un
+  clear suivant peut le re-manger. La seule sémantique correcte est
+  l'alternance SourceOver/Clear objet par objet dans l'ordre du document ;
+  verrouillée par le golden lpc_redraw.gbr + 5 sondes de pixels gui-smoke.
+- **gerber-ref-diff est maintenant un stage de gui-smoke** (~12 s, SKIP
+  silencieux sans gerbv/kits) : la parité visuelle avec gerbv ne peut plus
+  régresser sans casser le harnais.

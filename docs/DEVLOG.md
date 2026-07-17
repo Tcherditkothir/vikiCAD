@@ -588,3 +588,40 @@ de validation : scratchpad `g1-fix/kitA-after.png`, `g1-fix/kitB-after.png`.
 Gerber absents du dialecte, exposure 0 macro refusée, tracé rectangle =
 approximation ronde (aperture R en D01), import kit tout-ou-rien seulement
 assoupli côté répertoire. En attente Lex : `sudo apt install gerbv`.
+
+## 2026-07-17 — Calibration gerber-ref-diff : le bug d'ordre LPC attrapé par le renderer de référence ✅
+
+Premier run RÉEL de `scripts/gerber-ref-diff.sh` (gerbv enfin installé) :
+28 FAIL / 32 couches. Une matinée d'enquête, TROIS causes — et une victoire
+du process, parce que chacune a été prouvée avant d'être « corrigée » :
+
+- **(A) Le « bug » d'ordre de peinture LPC… n'existait pas.** Le diff
+  montrait ~27 % d'écart d'encre sur les couches cuivre, symptôme parfait
+  d'une composition en 2 passes (tous les LPD puis tous les LPC). Golden
+  synthétique `lpc_redraw.gbr` (plan → clear → piste re-dessinée → 2e clear
+  → pastille flashée), sondes de pixels, et même INJECTION volontaire du
+  bug hypothétique : la composition suit déjà strictement l'ordre du
+  document, et les sondes détectent bien le bug quand on le crée. Le check
+  reste commité en verrou de régression (gui-smoke, phase `lpc:`).
+- **(B) Le vrai coupable : les décorations du canvas.** Glyphe UCS +
+  réticule gonflaient la bbox d'encre des captures → crop faussé → toutes
+  les couches divergeaient. D'où `screenshot PATH clean` (IPC
+  `"overlays": false`) : rendu du document SEUL, partagé avec le chemin de
+  peinture interactif. Le flag vaut aussi en vue 3D (capture 2D par
+  définition) et l'IPC `open` remonte désormais les warnings d'import.
+- **(C) Gerber valide mais VIDE** (PCBA GKO/GM1 : en-tête + M02) : refusé à
+  l'ouverture avant, maintenant document vide + warning « valid but
+  empty » (comportement gerbv) ; vide-vs-vide = PASS dans le diff.
+
+Bonus tiré des chiffres : les perçages Excellon se rendaient en ANNEAUX
+(cercles cosmétiques) vs disques PLEINS chez gerbv — dhash .TXT 58/104.
+`CircleEntity` se remplit quand l'entité porte le tag `plated` → 11/40.
+
+**Résultat : 32/32 couches VERTES**, seuils calibrés sur les maxima réels
++30 % (dhash ≤ 170 — max observé 132, halo AA du cuivre PCBB.GBL vérifié à
+l'œil — ; ink-delta ≤ 3 pts). Le script (~12 s) tourne maintenant en stage
+final OPTIONNEL de gui-smoke : SKIP silencieux sans gerbv/kits, FAIL sinon.
+La parité visuelle avec gerbv est sous harnais permanent.
+
+**État des tests : 3833 assertions / 275 cas ctest verts ; gui-smoke
+157 checks verts (dont le stage refdiff).**
