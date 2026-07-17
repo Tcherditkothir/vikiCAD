@@ -397,6 +397,52 @@ TEST_CASE("GerberKit: single-file import and error paths", "[gerberkit]")
     }
 }
 
+TEST_CASE("GerberKit: a VALID but empty fab file opens (empty doc + warning)",
+          "[gerberkit]")
+{
+    // Altium ships header-only layers (PCBA's GKO and GM1 are just a header
+    // + M02). gerbv opens them as an empty image; so must we — a lone empty
+    // file is an EMPTY DOCUMENT with a warning, never a failed open.
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+    writeFile(dir, QStringLiteral("empty.GKO"), emptyGerber());
+
+    SECTION("lone empty file: ok, zero entities, warning tells why")
+    {
+        Document doc;
+        const GerberKitResult r =
+            importGerberKit(doc, dir + QStringLiteral("/empty.GKO"));
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(doc.entityCount() == 0);
+        CHECK(r.layers.isEmpty());
+        REQUIRE_FALSE(r.warnings.isEmpty());
+        CHECK(r.warnings.first().contains(QStringLiteral("empty")));
+    }
+    SECTION("directory of ONLY empty fab files: same contract")
+    {
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(doc.entityCount() == 0);
+        REQUIRE_FALSE(r.warnings.isEmpty());
+        CHECK(r.warnings.first().contains(QStringLiteral("empty")));
+    }
+    SECTION("directory mixing empty and real layers: unchanged, empty skipped")
+    {
+        writeFile(dir, QStringLiteral("board.GTL"), simpleGerber());
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(r.layers == QStringList{QStringLiteral("Top-Copper")});
+        CHECK(doc.entityCount() == 1);
+        CHECK(!r.skipped.filter(QStringLiteral("empty.GKO")).isEmpty());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Real Altium kits (skip when /home/lex/computer/pcb-ref is absent)
 // ---------------------------------------------------------------------------

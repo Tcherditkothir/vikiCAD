@@ -368,6 +368,11 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
     std::vector<Candidate> gerbers;
     std::vector<ImportJob> jobs;
     bool haveExplicitOutline = false; // X2 Profile beats the GKO/GM1 election
+    // Valid fab files with ZERO drawable objects (Altium ships e.g. a GKO
+    // that is just a header + M02). They must not make an open FAIL: a
+    // kit skips them, and a lone empty file opens as an empty document
+    // with a warning (gerbv behavior).
+    int emptyFabFiles = 0;
 
     for (const QString& p : paths) {
         const QFileInfo fi(p);
@@ -407,6 +412,7 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
             for (const QString& w : r.file.warnings)
                 res.warnings << QStringLiteral("%1: %2").arg(base, w);
             if (r.file.hits.empty() && r.file.drillSlots.empty()) {
+                ++emptyFabFiles;
                 res.skipped << QStringLiteral("%1: no drill hits").arg(base);
                 continue;
             }
@@ -437,6 +443,7 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
         for (const QString& w : r.file.warnings)
             res.warnings << QStringLiteral("%1: %2").arg(base, w);
         if (r.file.objects.empty()) {
+            ++emptyFabFiles;
             res.skipped << QStringLiteral("%1: no graphical objects "
                                           "(empty layer skipped)").arg(base);
             continue;
@@ -515,6 +522,17 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
         jobs.push_back(std::move(job));
     }
     if (jobs.empty()) {
+        // Everything recognized was VALID but empty (header + M02): open an
+        // empty document with a warning instead of failing — gerbv opens
+        // such files too, and Altium routinely ships an empty GKO/GM1.
+        if (emptyFabFiles > 0) {
+            res.warnings << QStringLiteral(
+                "%1 valid but empty fabrication file(s) in %2 — nothing to draw")
+                                .arg(emptyFabFiles)
+                                .arg(path);
+            res.ok = true;
+            return res;
+        }
         res.error =
             QStringLiteral("no Gerber or Excellon files recognized in %1").arg(path);
         return res;
