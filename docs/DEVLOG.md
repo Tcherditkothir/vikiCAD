@@ -798,3 +798,117 @@ réels trouvés dans core/edit/MinDist.cpp, le majeur corrigé aujourd'hui :
 **État des tests : 4384 assertions / 308 cas ctest verts (+1 cas union
 multi-anneaux) ; gui-smoke 200 checks verts, refdiff 32/32 inchangé. G2
 CLÔTURÉ — prochaine étape G3 (édition + export RS-274X/Excellon).**
+
+## 2026-07-17 — G3 : les écrivains RS-274X + Excellon, la boucle CAM bouclée ✅
+
+La phase entière tient en une journée parce que G2 avait préparé le
+terrain : `dcode`/`tool`/`gpol`/`plated` sur les entités, tables
+d'apertures/outils dans `Layer.camMeta`, macros %AM persistées. Détail
+technique complet dans PCB_CAM.md (blocs « Fait 2026-07-17 ») ; commits
+258f0ab → 7e860aa. L'essentiel :
+
+- **GerberWriter** : dialecte moderne %FSLAX46Y46/%MOMM, LPD/LPC en suivant
+  l'ORDRE de peinture, G36/G37 pour les régions, table d'apertures
+  RÉGÉNÉRÉE (définition d'origine si le width est intact — un tracé à
+  aperture RECT ressort en R —, `C,w` pour un width édité, %AM re-émis
+  VERBATIM converti inch→mm, transformations d'insert repliées dans les
+  params standard, fallback macro outline + warning) ;
+- **ExcellonWriter** : M48/METRIC,TZ, sections ;TYPE=PLATED/NON_PLATED,
+  coordonnées DÉCIMALES EXPLICITES (tranché par l'expérience gerbv — voir
+  LESSONS), table d'outils régénérée (groupage 1e-4, diamètre pleine
+  précision du premier cercle) ;
+- **export kit** (rôle+côté → extension Altium, tous les Drill dans UN
+  .TXT) sur les 3 canaux (CLI/IPC/GUI), export mono-calque, PLWIDTH /
+  LAYER CURRENT, PANELIZE (grille du contenu fab, un undo), pont
+  DXF↔Gerber dans les deux sens (width constant à travers LWPOLYLINE 43 ;
+  polyligne fermée + ROLE Outline → .GKO propre) ;
+- **LE test de vérité** : gerbv rend chaque couche exportée identique à
+  l'originale sur les DEUX kits (28 couches Gerber + drills), re-import
+  sémantique à 1e-3 mm, comptes par outil == .DRR.
+
+## 2026-07-17 — Clôture G3 ✅ : revue adversariale de l'export + garde-fous
+
+Deux reviewers indépendants ont attaqué l'étage d'export : ré-export des
+kits par leurs soins, décodage des flux avec leurs PROPRES parseurs
+FS/MO/G36/LP/AM (pire déviation 0.000000000 mm — l'invariant
+orig_int(2:5 inch)×254 = exp_int(4:6 mm) tient partout), apertures 33/33 à
+1e-5 mm, décodage MANUEL de lignes brutes confronté aux entités source,
+multiset Excellon (position, ø, platage) identique à 1e-6 sur 182+330
+trous. Géométrie : irréprochable. Mais la revue a trouvé UN vrai trou
+d'usage et une grappe de pièges opérateur, tous corrigés le jour même,
+test rouge d'abord (commits bafd02d, 4117ab6) :
+
+- **[majeur] `Drill-NPTH` était inatteignable** : le token n'existait pas
+  dans gerberRoleSpecs() et le mapping nom→rôle matchait `DRILL` avant
+  `DRILL-NPTH` — le calque importé portait le rôle `Drill`, `LAYER n ROLE
+  Drill-NPTH` répondait « unknown role », et un trou DESSINÉ par
+  l'utilisateur sortait TOUJOURS en PLATED (trou de fixation métallisé
+  chez le fabricant, sans aucun moyen d'exprimer l'intention NPTH). Les
+  défauts NPTH de l'ExcellonWriter et de DRILLREPORT étaient du code mort
+  — et DEUX tests existants codifiaient le bug (corrigés vers le
+  comportement juste, pas affaiblis). Fix minimal dans GerberRole.cpp :
+  spec ajoutée + NPTH testé avant le préfixe générique.
+- **[mineurs, tous corrigés]** : %TF nu → forme commentaire Altium
+  `G04 #@!` + aperture placeholder sur calque à régions seules (gerbv ne
+  crie plus CRITICAL/RS-274D sur nos exports — silence total vérifié) ;
+  CLI `export` extension inconnue → E_FORMAT (fini le DXF silencieux
+  nommé « gerbers ») ; warning extension↔dialecte (Excellon dans .gbr,
+  RS-274X dans .txt) ; échec dur mi-kit → les fichiers déjà écrits sont
+  SUPPRIMÉS et nommés dans l'erreur ; PANELIZE plafonné (2 M de clones —
+  100×100 sur kit A = 23 M refusé net).
+- **[dette actée]** : le JEU de fichiers exporté du kit B diffère de
+  l'original (GKO = Outline élu, keepout/pads/mech en mono-calque) —
+  documenté PCB_CAM avec le réflexe `skippedLayers`.
+- **Nouveau juge au harnais** : `scripts/gerber-export-diff.sh` — gerbv
+  sur l'ORIGINAL vs gerbv sur l'EXPORTÉ, apparié par calque SOURCE (le
+  `fileLayers` ajouté au JSON d'import CLI), seuils SERRÉS. 31/31 PASS
+  (dhash ≤ 1/1024, encre 0), ~5 s, stage final de gui-smoke.
+
+**État final : ctest 5142 assertions / 334 cas ; gui-smoke 224 checks
+(~1 min 50) ; ref-diff 32/32 ; export-diff 31/31. G3 CLÔTURÉ.**
+
+## 2026-07-17 — BILAN DU CHANTIER PCB CAM 🏁 (16→17 juillet, G1+G2+G3)
+
+Décidé au brainstorm du 16, LIVRÉ le 17 au soir. VikiCAD est devenu ce
+que le plan visait : un éditeur CAM de fichiers de fabrication — lire,
+comprendre, mesurer, éditer, réexporter du RS-274X et de l'Excellon, sans
+EDA, le trou réel de l'écosystème Linux (gerbv/GerbView ne font que
+regarder).
+
+**Chiffres avant/après** (avant = pause du 2026-07-11) :
+| | avant | après |
+|---|---|---|
+| ctest | 2182 assert. / 243 cas | **5142 / 334** |
+| gui-smoke | 124 checks | **224** |
+| juges externes | — | ref-diff 32/32, export-diff 31/31 |
+| formats | DXF/DWG/STEP/STL/OBJ/PDF | + **RS-274X, Excellon** (les 2 sens) |
+
+**Les paris qui ont payé :**
+- **La polarité LPC comme ORDRE DE PEINTURE** (le concept neuf de G1) :
+  champ `sort` existant + composite ARGB par calque — le piège classique
+  du deux-passes (darks puis clears) évité, verrouillé par les probes
+  pixel de gui-smoke et un golden dédié (lpc_redraw).
+- **gerbv comme juge de paix, nous HORS de la boucle** : d'abord notre
+  rendu vs gerbv (G1, ref-diff — a attrapé un vrai bug d'ordre LPC), puis
+  gerbv vs gerbv sur original/exporté (G3, export-diff) : l'écriture est
+  validée par un renderer qu'on n'a pas écrit.
+- **.DRR/.REP d'Altium comme vérités indépendantes** : APERTURES == .REP
+  et DRILLREPORT == .DRR couche par couche sur les deux kits — des goldens
+  que PERSONNE chez nous n'a fabriqués.
+- **camMeta pensé pour l'export dès l'inspection G2** : ré-émettre la
+  définition D'ORIGINE (apertures rect, %AM verbatim) a contourné
+  élégamment la dette de rendu G1 « bouts ronds » — l'exporté est parfois
+  plus fidèle que notre écran, et c'est le bon sens de fidélité.
+- **Les revues adversariales par phase** : chacune a trouvé au moins un
+  vrai bug (élection de contour G1, union even-odd MINDIST G2, rôle NPTH
+  G3) — aucun n'aurait été vu par nos tests « sympathiques ».
+
+**Ce qui reste (dette consolidée, tout documenté dans PCB_CAM.md)** :
+flashes ronds tessellés (~2 µm MINDIST), %SR et G85/slots absents,
+calques sans mapping kit exportés un à un (jeu de fichiers ≠ original sur
+kit B), PANELIZE sans rails/mousebites, exposure 0 des macros refusée.
+Rien de bloquant pour l'usage réel ; à réévaluer quand Lex s'en sert.
+
+**Prochains chantiers en réserve** (REPRISE.md) : gizmo de drag direct,
+EXTRUDE/REVOLVE dans FeatureTree, contraintes de sketch, release GPLv3,
+et le chantier schémas pré-réfléchi au brainstorm.

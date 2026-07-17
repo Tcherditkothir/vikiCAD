@@ -466,9 +466,12 @@ in `query layers` (`alpha`, `rank`, `gerberRole`) and in the GUI LayerPanel
   importer stamps its paint ranks here (copper 10/20 ... outline 90,
   drills 95/96).
 - **gerberRole** — reassignable CAM role (`Copper-Top`, `Copper-Bottom`,
-  `Mask`, `Silk`, `Paste`, `Outline`, `Drill`, `Mech`; empty = none).
-  Assigning a role RECOLORS the layer to the role palette and moves it to
-  the role rank — the escape hatch when the outline election guessed wrong.
+  `Mask`, `Silk`, `Paste`, `Outline`, `Drill`, `Drill-NPTH`, `Mech`;
+  empty = none). Assigning a role RECOLORS the layer to the role palette
+  and moves it to the role rank — the escape hatch when the outline
+  election guessed wrong. `Drill-NPTH` (G3 closure) is how you say "the
+  bare circles on this layer are UNPLATED holes": the Excellon writer and
+  DRILLREPORT default untagged circles to non-plated there.
 
 Both channels, verified verbatim (offline `--exec` and live `connect exec`):
 
@@ -734,3 +737,33 @@ with the right diameter and plating), and gerbv renders the exported files
 — not our renderer — identically to their re-export (dhash < 30/1024, ink
 delta <= 1 pt) and identically to the ORIGINAL kit when nothing was edited
 (observed dhash <= 1, ink delta <= 0.003 pt on all 9 kit-A files).
+`scripts/gerber-export-diff.sh` replays that last claim on EVERY layer of
+BOTH kits (31 rows, ~5 s, SKIP without gerbv/kits) and runs as the final
+gui-smoke stage; it pairs files by SOURCE LAYER using the `fileLayers`
+array the CLI `import` result now carries.
+
+**G3-closure guardrails** (adversarial review of the export stage — every
+behavior below is test-locked):
+
+```sh
+# NPTH is a real role now: a drawn mounting hole exports NON_PLATED.
+$CLI open kitA.vkd --exec "LAYER Drill-NPTH CURRENT" \
+     --exec "CIRCLE 50,-20 1.6" --save-as npth.vkd
+$CLI export npth.vkd holes.TXT   # d=3.2 lands under ;TYPE=NON_PLATED
+# Unknown export extension = hard error (it used to write DXF silently):
+$CLI export kitA.vkd gerbers
+#   {"error":{"code":"E_FORMAT","message":"unsupported export format..."}}
+#   (a kit DIRECTORY must exist or end with '/')
+# Role picks the dialect, the EXTENSION gets sanity-checked: exporting a
+# Drill layer into thing.GBR (or copper into thing.txt) warns
+#   "wrote an EXCELLON drill file, but '.gbr' implies RS-274X..."
+# A hard mid-kit error removes the files already written and names them
+# ("removed 9 partially written kit file(s): ...") — no partial kit.
+# PANELIZE refuses grids over 2M cloned entities (typo guard):
+#   "refusing to panelize: 100 x 100 cells x 2301 fab entity(ies) = ..."
+```
+
+Exported Gerber headers are silent for old consumers: X2 metadata rides in
+Altium's comment form (`G04 #@! TF.GenerationSoftware,...*`), and a
+regions-only layer (keepout zone) still defines ONE unused aperture so
+pre-X2 sniffers (gerbv) recognize RS-274X instead of warning "RS-274D".

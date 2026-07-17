@@ -1,64 +1,64 @@
-# REPRISE — état au 2026-07-17 ; PCB CAM : G1+G2 FAITS, G3 ENSUITE
+# REPRISE — état au 2026-07-17 soir ; CHANTIER PCB CAM COMPLET 🏁
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
 complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
 
-## 🎯 CHANTIER PCB CAM (brainstorm avec Lex le 2026-07-16) — G1+G2 CLÔTURÉS
+## 🏁 CHANTIER PCB CAM : G1+G2+G3 TOUS CLÔTURÉS (16→17 juillet)
 
-- **G2 (ergonomie CAM) : FAIT le 2026-07-17, revue adversariale passée** —
-  pile de couches (alpha/rang/rôle persistés, `LAYER`, `BOARDVIEW
-  TOP|BOTTOM|ALL` avec vraie vue miroir côté soudure), mesures CAM
-  (`MINDIST` bord-à-bord sémantique matière + overlay témoin, snaps
-  centre-de-pastille, DIMALIGNED sur kit réel), inspection (`APERTURES` ==
-  .REP, `DRILLREPORT` == .DRR sur les DEUX kits, panneau Propriétés
-  gerber, `SELECT` headless). Revue adversariale : tout recalculé à la
-  main depuis les fichiers bruts → 1 bug majeur MINDIST corrigé (union
-  vs even-odd sur pastilles macro multi-anneaux, test d'abord) + dette
-  ~2 µm actée (PCB_CAM.md). État : **4384 assertions / 308 cas ctest,
-  gui-smoke 200 checks, refdiff 32/32 — tous verts.**
-- **Prochaine étape : G3 — édition + export** RS-274X/Excellon (round-trip
-  golden), panélisation, pont DXF↔Gerber (voir PCB_CAM.md).
-- **À valider À LA SOURIS par Lex (G2)** :
-  - LayerPanel : colonne Alpha éditable, boutons ▲▼ (ordre de peinture),
-    clic droit → « Set Gerber role » sur un calque (recolorie + re-range) ;
-  - menu View > Board view : TOP (bottom atténué), BOTTOM (miroir X — la
-    sérigraphie bottom se lit à l'endroit, le picking marche), ALL ;
-  - MINDIST à la souris sur un kit : sélectionner 2 objets puis taper
-    `MINDIST` (ou `MD`) — ligne témoin pointillée rose à halo sombre,
-    VISIBLE à l'échelle carte entière, effacée à la commande suivante ;
-  - cliquer une pastille : le panneau Propriétés raconte D-code, aperture
-    (ex. « RoundedRect 0.600x0.900 r=0.054 rot 270deg »), polarité ; un
-    perçage : outil + platage ;
-  - `APERTURES` et `DRILLREPORT` dans la barre de commande : tables
-    lisibles ;
-  - snap Center : il accroche AUSSI le point d'insertion de tout bloc
-    (pas seulement les pastilles) — dire si ça gêne sur tes dessins 2D.
+**VikiCAD lit, inspecte, mesure, ÉDITE et RÉEXPORTE du Gerber RS-274X et
+de l'Excellon** — l'éditeur CAM du brainstorm du 16. Chaque phase a passé
+sa revue adversariale (élection de contour G1, union MINDIST G2, rôle
+NPTH G3 — un vrai bug trouvé et corrigé à chaque fois, test d'abord).
+Bilan complet : DEVLOG « BILAN DU CHANTIER » ; plan/dette : PCB_CAM.md.
 
-**PCB CAM — lire/éditer/réexporter Gerber RS-274X + Excellon** sans passer
-par un gros EDA. Plan, périmètre, phases et dette : **`docs/PCB_CAM.md`**.
-Décisions fermes : PAS d'EDA complet (nets/routage/DRC = territoire KiCad) ;
-schémas = chantier SUIVANT.
+- **État : ctest 5142 assertions / 334 cas ; gui-smoke 224 checks
+  (~1 min 50) ; gerber-ref-diff 32/32 (notre rendu vs gerbv) ;
+  gerber-export-diff 31/31 (gerbv ORIGINAL vs gerbv EXPORTÉ, dhash ≤
+  1/1024, delta d'encre 0) — TOUS VERTS, arbre propre.**
+- G1 import + rendu fidèle (LPC = ordre de peinture) ; G2 pile de
+  couches/BOARDVIEW/MINDIST/APERTURES==.REP/DRILLREPORT==.DRR ; G3
+  écrivains RS-274X+Excellon (tables régénérées, %AM verbatim), export
+  kit 3 canaux, PLWIDTH, PANELIZE (plafonné), pont DXF↔Gerber, garde-fous
+  post-revue (NPTH atteignable, headers silencieux chez gerbv, E_FORMAT,
+  purge des kits partiels, warnings extension↔dialecte).
+- **Dette assumée (PCB_CAM.md)** : flashes ronds tessellés (~2 µm sur
+  MINDIST), %SR/G85 absents, calques sans mapping kit exportés un à un
+  (sur kit B le JEU de fichiers exporté ≠ l'original — lire
+  `skippedLayers` avant un envoi fabricant), PANELIZE sans rails.
 
-- **G1 (import + rendu fidèle) : FAIT le 2026-07-16** — kits Altium réels
-  ouverts de bout en bout (répertoire OU fichier seul, CLI+GUI+IPC),
-  polarité LPC rendue, élection de contour durcie post-revue adversariale
-  (PCBB : keepout d'antenne SOUS le cuivre, contour = GM1 ; PCBA :
-  contour = GM13). État : **3833 assertions / 275 cas ctest + gui-smoke
-  157 checks, tous verts.** Kit en headless : § dédié de docs/AGENT.md.
-- **Parité visuelle gerbv (2026-07-17)** : gerbv installé, premier run réel
-  de `scripts/gerber-ref-diff.sh` → 3 causes démêlées (fausse alerte LPC,
-  décorations du canvas → `screenshot PATH clean`, Gerber valide-mais-vide
-  s'ouvre avec warning) + perçages rendus en disques pleins. **32/32
-  couches vertes, seuils calibrés**, et le diff tourne en stage final de
-  gui-smoke (SKIP sans gerbv/kits). Récit : DEVLOG 2026-07-17.
-- **À valider À LA SOURIS par Lex (G1)** : File > Open d'un .GTL/.TXT seul ;
-  File > Open Gerber kit sur pcb-ref/S5M0PCBA et B ; sur PCBB la zone
-  antenne = violet discret (keepout sous le cuivre, plus de pavé magenta
-  opaque) et le bord haut à encoches/languettes = traits magenta (Outline) ;
-  sur PCBA des contours magenta (GM13) ; UN seul Ctrl+Z vide le kit entier,
-  Ctrl+Y le restaure à l'identique.
+### 👉 TOUR SOURIS CONSOLIDÉ pour Lex (G1+G2+G3, ~20 min)
 
-Le TOUR de validation GUI (§ 👀 plus bas) reste ouvert en parallèle.
+1. **Ouvrir** : File > Open Gerber kit sur `pcb-ref/S5M0PCBA` puis B ; sur
+   PCBB : zone antenne = violet discret SOUS le cuivre, bord à encoches =
+   traits magenta (Outline élu depuis GM1) ; UN Ctrl+Z vide le kit entier,
+   Ctrl+Y le restaure. Ouvrir aussi UN .GTL ou .TXT seul.
+2. **Pile** : LayerPanel — Alpha éditable, ▲▼, clic droit → « Set Gerber
+   role » (recolorie + re-range ; noter le nouveau rôle **Drill-NPTH**) ;
+   View > Board view TOP / BOTTOM (miroir X, sérigraphie lisible) / ALL.
+3. **Comprendre** : cliquer une pastille → panneau Propriétés (D-code,
+   « RoundedRect 0.600x0.900 r=0.054 rot 270deg », polarité) ; un perçage
+   → outil + platage ; `APERTURES`, `DRILLREPORT` dans la barre.
+4. **Mesurer** : 2 objets sélectionnés + `MD` → ligne témoin rose à halo,
+   lisible carte entière ; DIMALIGNED centre-pastille → centre-pastille
+   (snap Center accroche l'insertion de TOUT bloc — dire si ça gêne en 2D).
+5. **Éditer + shipper (G3)** : PLWIDTH sur une trace, MOVE d'une pastille,
+   LAYER Drill CURRENT + CIRCLE (le trou apparaît au DRILLREPORT) ; File >
+   Export > « Gerber kit (directory)... » → rouvrir le répertoire exporté :
+   les éditions sont là ; un calque en rôle Drill-NPTH → trou dessiné =
+   NON_PLATED dans le .TXT ; `PANELIZE 2 2 95 55` → 2×2, un seul Ctrl+Z ;
+   `PANELIZE 100 100` → refus poli. Regarder les exports dans gerbv.
+
+Le TOUR de validation GUI 3D (§ 👀 plus bas) reste ouvert en parallèle.
+
+## 🔜 PROCHAIN CHANTIER — à choisir AVEC Lex (réserve, ordre de valeur)
+
+1. **Gizmo de drag direct** (déplacer solides/trous à la souris).
+2. **EXTRUDE/REVOLVE dans FeatureTree** + édition via l'arbre.
+3. **Contraintes de sketch + cotes pilotantes** (GROS — piloter avec Lex).
+4. **Release publique GPLv3** (build Release, tag ; GitHub inaccessible
+   en filaire IPv6-only — prévoir alternative ou transfert par Lex).
+5. **Schémas** (scope pré-réfléchi au brainstorm : symboles = blocs +
+   WIRE + netlist simple — voir PCB_CAM.md « PLUS TARD »).
 
 ## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
 
@@ -92,22 +92,15 @@ Le TOUR de validation GUI (§ 👀 plus bas) reste ouvert en parallèle.
   retour 3D, sketch bleu visible → EXTRUDE en cliquant la courbe (plan du
   sketch pris automatiquement).
 
-## 🔜 PROCHAINS CHANTIERS (ordre de valeur probable — CONFIRMER avec Lex)
+## 🔜 PROCHAINS CHANTIERS — voir la liste en TÊTE de ce document
 
-1. **Gizmo de drag direct** (déplacer solides/trous à la souris — le trièdre
-   curseur existe comme base visuelle).
-2. **EXTRUDE/REVOLVE enregistrés dans FeatureTree** (seuls HOLE/SHELL ont un
-   historique aujourd'hui) + édition via l'arbre.
-3. **Contraintes de sketch + cotes pilotantes** — GROS, piloter avec Lex
-   (il refuse les dépendances lourdes sketch→solide, PAS les contraintes
-   internes au sketch).
-4. **Release publique GPLv3** : build Release + .desktop pointé dessus, tag,
-   hébergement (GitHub INACCESSIBLE depuis la machine — IPv6 only ; prévoir
-   une alternative ou un transfert par Lex).
-5. Moyens : MAKEVIEW placement à valider ; ~~MATE/DRAFT sans GUI~~ (FAIT
-   2026-07-12 : FILLETEDGES/CHAMFEREDGES/MATE/DRAFT headless par index
-   INSPECT, harnais GUI étendu) ; double-clic
-   sketch 3D → l'ouvrir ; presse-papier/duplication de solides.
+(Liste historique remplacée par le § « PROCHAIN CHANTIER » ci-dessus.
+Détails conservés : gizmo = le trièdre curseur existe comme base visuelle ;
+FeatureTree = seuls HOLE/SHELL ont un historique aujourd'hui ; contraintes
+de sketch = Lex refuse les dépendances lourdes sketch→solide, PAS les
+contraintes internes au sketch. Moyens toujours ouverts : MAKEVIEW
+placement à valider ; double-clic sketch 3D → l'ouvrir ; presse-papier/
+duplication de solides.)
 
 ## ⚠️ Harnais GUI-live : `scripts/gui-smoke.sh` — À LANCER AVANT DE LIVRER
 

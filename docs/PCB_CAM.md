@@ -195,11 +195,16 @@
     seulement les blocs GBR-* (assumé — voir LESSONS 2026-07-17) ;
   - MINDIST reste O(nA×nB) par paire de primitives — suffisant pour deux
     entités, à revisiter si un jour on mesure calque contre calque.
-- **G3 — Édition + export** : édition avec tout l'outillage 2D existant,
-  export RS-274X + Excellon (round-trip golden : import→export→réimport =
-  géométrie identique), panélisation (réseaux existants → SR ou dépliage),
-  pont DXF↔Gerber (contour de carte, trous de fixation — l'interface
-  méca-élec, LA force différenciante de VikiCAD).
+- [x] **G3 — Édition + export** — **FAIT (clôturé le 2026-07-17, revue
+  adversariale export passée, voir DEVLOG)** : édition avec tout
+  l'outillage 2D existant + PLWIDTH/LAYER CURRENT, export RS-274X +
+  Excellon (tables régénérées), export kit + calque seul sur les 3 canaux,
+  PANELIZE, pont DXF↔Gerber dans les deux sens. LE test de vérité tenu :
+  gerbv rend chaque couche EXPORTÉE identique à l'ORIGINALE sur les deux
+  kits réels (31/31, dhash ≤ 1/1024, delta d'encre 0 — seuils serrés
+  <30 / ≤1 pt), re-import sémantique à 1e-3 mm, comptes par outil == .DRR.
+  Harnais : `scripts/gerber-export-diff.sh` (~5 s) en stage final de
+  gui-smoke, à côté de gerber-ref-diff.
 
   **Fait (2026-07-17) — écrivain RS-274X (`core/io/GerberWriter.{h,cpp}`)** :
   - API `exportGerberLayer(doc, layerName, path)` / `writeGerberLayer(...,
@@ -304,6 +309,28 @@
     depuis la méca). Les deux sens documentés avec exemples EXÉCUTÉS dans
     AGENT.md §7d.
 
+  **Clôture (2026-07-17) — revue adversariale de l'export passée** : deux
+  reviewers indépendants ont ré-exporté les kits eux-mêmes, décodé les flux
+  RS-274X/Excellon avec leurs propres parseurs (déviation pire cas
+  0.000000000 mm sur les extrémités/flashes/régions, apertures 33/33 à
+  1e-5 mm, %AM converti inch→mm exact) et confronté 6 lignes brutes aux
+  entités source. Verdict : géométrie irréprochable. Les défauts
+  d'UTILISABILITÉ trouvés ont été corrigés le jour même (test d'abord) :
+  - **[majeur] rôle `Drill-NPTH` inatteignable** → spec + mapping nom→rôle
+    corrigés (NPTH testé AVANT le préfixe DRILL) : `LAYER n ROLE
+    Drill-NPTH` marche, l'importeur pose le bon rôle, un trou DESSINÉ sur
+    ce calque exporte en NON_PLATED (avant : PLATED sans recours — trou de
+    fixation métallisé chez le fabricant) ;
+  - **[mineurs]** %TF nu → forme commentaire Altium `G04 #@!` (gerbv ne
+    logue plus CRITICAL sur chaque export) + aperture placeholder unique
+    sur calque à régions seules (fin du faux « RS-274D » des sniffers
+    pré-X2) ; CLI `export` : extension inconnue = E_FORMAT au lieu d'un
+    DXF silencieux (parité GUI/IPC) ; warning quand l'extension implique
+    l'AUTRE dialecte (Excellon dans .gbr, RS-274X dans .txt) ; échec dur
+    en cours d'export kit → fichiers déjà écrits SUPPRIMÉS et nommés dans
+    l'erreur (plus de kit partiel plausible) ; PANELIZE plafonné à 2 M
+    d'entités clonées (garde anti-typo, 100×100 sur kit A = 23 M refusé).
+
   **Dette G3-export assumée** :
   - la dette G2 « flashes ronds cuits en polygones inscrits (~2 µm) » reste :
     l'export re-génère les empreintes standard depuis camMeta (analytique,
@@ -319,7 +346,15 @@
   - export kit : les calques sans mapping (Top-/Bottom-Pads sans rôle,
     Mech-N, Keepout, un Mask sans côté dans le nom) sont LISTÉS mais non
     écrits — export mono-calque pour eux ; deux calques sur la même
-    extension = premier au rang de peinture gagne, l'autre est listé ;
+    extension = premier au rang de peinture gagne, l'autre est listé.
+    **Corollaire opérateur (kit B)** : l'ENSEMBLE de fichiers exporté
+    n'est pas celui d'origine — notre .GKO reçoit l'Outline élu (GM1)
+    alors que le .GKO Altium contenait le keepout d'antenne, et
+    Keepout/Pads/Mech-N ne sortent que via `--layer`. Chaque calque pris
+    un à un round-trippe à l'identique (gerber-export-diff apparie par
+    calque SOURCE et le prouve), mais qui shippe le répertoire tel quel
+    n'envoie pas le même JEU de fichiers : relire `skippedLayers` avant
+    un envoi fabricant réel ;
   - PANELIZE v1 : pas de rails/mousebites/%SR, pas de garde anti-
     chevauchement (pitch < carte = cellules superposées, à l'utilisateur
     de choisir son pas) ; le contenu sans rôle CAM (notes, cotes) reste
@@ -328,6 +363,33 @@
     (honnête : pas d'inflation silencieuse) — passer PLWIDTH avant
     l'export pour un contour « encré ».
 
+## Chantier LIVRÉ (2026-07-17) — reste à valider par Lex
+
+Les 3 phases sont clôturées, chacune passée par une revue adversariale.
+L'outil fait ce que le brainstorm demandait : ouvrir, comprendre, mesurer,
+éditer et RÉEXPORTER des fichiers de fabrication, gerbv faisant foi.
+État final : ctest 5142 assertions / 334 cas ; gui-smoke 224 checks ;
+gerber-ref-diff 32/32 ; gerber-export-diff 31/31 (dhash ≤ 1/1024,
+delta d'encre 0). Dette consolidée = les blocs « Dette » G1/G2/G3
+ci-dessus, tous mineurs et documentés ; les plus visibles pour un
+utilisateur : flashes ronds tessellés (~2 µm sur MINDIST), %SR/G85
+absents, calques sans mapping exportés un à un, PANELIZE sans rails.
+
+**Tour souris de clôture (G3, s'ajoute aux tours G1/G2 de REPRISE.md) :**
+- File > Export > « Gerber kit (directory)... » sur un kit ouvert →
+  répertoire complet ; « Gerber/Excellon layer... » pour un calque seul ;
+  les warnings s'affichent dans la barre d'historique ;
+- éditer une trace (PLWIDTH), déplacer une pastille, dessiner un trou sur
+  Drill (LAYER Drill CURRENT puis CIRCLE), ré-exporter, rouvrir le
+  répertoire exporté : les éditions sont là ;
+- poser un calque en `Drill-NPTH` (clic droit LayerPanel → Set Gerber
+  role) et vérifier qu'un trou dessiné dessus sort en NON_PLATED dans le
+  .TXT (DRILLREPORT l'affiche NPTH aussi) ;
+- PANELIZE 2 2 95 55 sur le kit A → grille 2×2, UN Ctrl+Z revient à la
+  carte ; PANELIZE 100 100 → refus poli, rien ne gèle ;
+- ouvrir les fichiers exportés dans gerbv À LA MAIN une fois, pour le
+  plaisir de voir la même carte.
+
 ## Stratégie de test (process obligatoire habituel)
 
 - Goldens synthétiques petits commités dans `tests/golden/gerber/` (chaque
@@ -335,8 +397,11 @@
 - Kits réels de Lex dans `/home/lex/computer/pcb-ref/` (HORS repo — ses
   cartes restent privées) ; tests golden optionnels, SKIP si absent.
 - Renderer de référence : `gerbv` (paquet Ubuntu, export PNG en CLI) →
-  `scripts/gerber-ref-diff.sh`, exécuté aussi en stage final optionnel
-  de gui-smoke (SKIP silencieux quand gerbv ou les kits manquent).
+  `scripts/gerber-ref-diff.sh` (notre rendu vs gerbv, 32 couches) ET
+  `scripts/gerber-export-diff.sh` (gerbv sur l'ORIGINAL vs gerbv sur
+  l'EXPORTÉ, 31 couches appariées par calque source, seuils serrés) —
+  tous deux en stages finaux optionnels de gui-smoke (SKIP silencieux
+  quand gerbv ou les kits manquent).
 - Round-trip : import→export→réimport, comparaison sémantique (comme DXF).
 
 ## Prérequis en attente

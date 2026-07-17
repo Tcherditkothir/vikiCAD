@@ -347,3 +347,40 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   fixe et sans crop, le COMPTE de pixels encrés d'un panel 2×2 vaut 4,007×
   celui de la carte — vérité de panélisation en 6 lignes de PIL, aucune
   géométrie à recalculer.
+
+## 2026-07-17 — Clôture G3 (revue adversariale de l'export)
+
+- **« Légal selon la spec » ne suffit pas pour un format d'échange : viser
+  le silence chez le consommateur le plus vieux.** Le %TF nu est du X2
+  parfaitement valide, mais gerbv (pré-X2) loguait CRITICAL sur CHAQUE
+  fichier exporté — et un fab avec un viewer daté verrait pareil. Altium
+  met ses attributs X2 en commentaires `G04 #@!` précisément pour ça ;
+  faire pareil coûte une ligne. Même famille : un fichier 100 % régions
+  sans %AD se fait sniffer « RS-274D » — UNE aperture placeholder inutile
+  suffit. Vérité opérationnelle : `gerbv --export=png` DOIT être
+  stderr-silencieux sur nos exports.
+- **Un token atteignable seulement par heuristique de nommage = feature
+  morte, et les tests peuvent codifier le bug.** Drill-NPTH : writer et
+  rapport géraient le rôle, mais aucune commande ne pouvait le POSER
+  (absent des specs) et le mapping nom→rôle matchait le préfixe DRILL
+  d'abord. Deux tests existants VERROUILLAIENT le mauvais comportement
+  (`role == "Drill"` sur le calque NPTH). Leçon double : pour chaque
+  valeur d'un enum de comportement, un test doit passer par le CHEMIN
+  UTILISATEUR (commande), pas par le setter interne ; et matcher les
+  préfixes du plus long au plus court.
+- **Un export multi-fichiers qui échoue au milieu doit nettoyer derrière
+  lui.** 9 fichiers .G** plausibles + pas de .TXT = un kit sans perçages
+  expédiable par un script qui ignore le JSON. Supprimer les fichiers
+  déjà écrits ET les nommer dans l'erreur ; l'alternative temp+rename est
+  plus lourde pour zéro gain ici.
+- **Toute commande multiplicative (grille, réseau) mérite un plafond
+  chiffré.** PANELIZE 100 100 (faute de frappe plausible) = 23 M
+  d'entités clonées dans UNE transaction : minutes de gel + Go de RAM +
+  undo qui double. Mesurer le coût unitaire (4.5 µs/entité), choisir un
+  cap qui reste undoable (2 M ≈ 9 s), refuser AVANT la transaction avec
+  le calcul affiché.
+- **La parité CLI/GUI se teste sur les REFUS, pas seulement les succès.**
+  `export FILE.vkd gerbers` (slash oublié) : la GUI répondait « unsupported
+  format », le CLI écrivait un DXF nommé « gerbers » avec ok:true — le
+  fallback « tout le reste est du DXF » datait d'avant les cibles
+  répertoire. Chaque canal doit refuser les mêmes entrées.

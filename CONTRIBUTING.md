@@ -55,6 +55,12 @@ any failure, and always stops the GUI unit when done.
 Run it (all-green) before handing a build to a user. Dependencies: bash,
 python3 with PIL (`python3-pil`) — both part of the normal dev setup.
 
+Two optional final stages compare against `gerbv` on the private reference
+kits (both SKIP silently when gerbv or the kits are absent):
+`scripts/gerber-ref-diff.sh` (VikiCAD's render vs gerbv, 32 layers) and
+`scripts/gerber-export-diff.sh` (gerbv on the ORIGINAL vs gerbv on the
+file VikiCAD EXPORTED — the fabrication truth, tight thresholds, ~5 s).
+
 ## Code style
 
 - C++17, Qt6 Widgets, OpenCASCADE. Match the surrounding code.
