@@ -38,12 +38,16 @@ constexpr uint32_t kTopPadsRgb = 0xFF8A65;
 constexpr uint32_t kBotPadsRgb = 0x7FA8FF;
 constexpr uint32_t kMechRgb = 0x8FA3B0;
 constexpr uint32_t kOutlineRgb = 0xFF00FF;
+constexpr uint32_t kKeepoutRgb = 0x9C27B0; // dim purple, distinct from outline
 constexpr uint32_t kDrillRgb = 0x000000;
 constexpr uint32_t kDrillNpthRgb = 0x3C3C3C;
 constexpr uint32_t kOtherRgb = 0xAAAAAA;
 
-// Paint ranks (see Role).
+// Paint ranks (see Role). Keepout paints FIRST: a real GKO can be a FILLED
+// zone (S5M0PCBB: solid rectangle over the antenna area) and must never
+// mask the copper above it.
 enum : int {
+    kRankKeepout = 5,
     kRankBotCopper = 10,
     kRankInnerCopper = 12,
     kRankTopCopper = 20,
@@ -57,7 +61,6 @@ enum : int {
     kRankTopSilk = 41,
     kRankMech = 60,
     kRankOther = 70,
-    kRankKeepout = 89,
     kRankOutline = 90,
     kRankDrill = 95,
     kRankDrillNpth = 96,
@@ -122,8 +125,9 @@ QString sanitizeToken(const QString& raw)
 }
 
 // Role from the file extension. `outlinePriority` >= 0 marks an outline
-// CANDIDATE (0 = GKO, 1 = GM1): the first non-empty one wins the "Outline"
-// name, the fallback role below applies to the losers.
+// CANDIDATE (0 = GKO, 1 = GM1, 2 = GM13): the PLAUSIBLE candidate with the
+// lowest priority wins the "Outline" name (see the election below), the
+// fallback role applies to the losers.
 std::optional<Role> roleFromExtension(const QString& ext, int& outlinePriority)
 {
     outlinePriority = -1;
@@ -149,7 +153,7 @@ std::optional<Role> roleFromExtension(const QString& ext, int& outlinePriority)
         return Role{QStringLiteral("Bottom-Pads"), kBotPadsRgb, kRankBotPads};
     if (ext == QLatin1String("GKO")) {
         outlinePriority = 0;
-        return Role{QStringLiteral("Keepout"), kOutlineRgb, kRankKeepout};
+        return Role{QStringLiteral("Keepout"), kKeepoutRgb, kRankKeepout};
     }
     if (ext.startsWith(QLatin1String("GM")) && ext.size() > 2) {
         bool numOk = false;
@@ -157,6 +161,8 @@ std::optional<Role> roleFromExtension(const QString& ext, int& outlinePriority)
         if (numOk) {
             if (n == 1)
                 outlinePriority = 1; // Altium's usual home for the contour
+            else if (n == 13)
+                outlinePriority = 2; // observed fallback (S5M0PCBA)
             return Role{QStringLiteral("Mech-%1").arg(n), kMechRgb, kRankMech};
         }
     }
@@ -207,7 +213,7 @@ std::optional<Role> roleFromFileFunction(const QString& value, int& outlinePrior
         return Role{QStringLiteral("Outline"), kOutlineRgb, kRankOutline};
     if (f0 == QLatin1String("keepout") || f0 == QLatin1String("keep-out")) {
         outlinePriority = 0;
-        return Role{QStringLiteral("Keepout"), kOutlineRgb, kRankKeepout};
+        return Role{QStringLiteral("Keepout"), kKeepoutRgb, kRankKeepout};
     }
     if (f0 == QLatin1String("mechanical")) {
         bool numOk = false;
@@ -253,7 +259,79 @@ ExcellonFile filterDrill(const ExcellonFile& file, bool plated)
     return out;
 }
 
+// Endpoint-based bounding box of a parsed Gerber file (aperture footprints
+// and arc sagitta ignored — plenty for the coverage heuristic below).
+struct KitBbox {
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool valid = false;
+    void add(const Vec2d& p)
+    {
+        if (!valid) {
+            x0 = x1 = p.x;
+            y0 = y1 = p.y;
+            valid = true;
+            return;
+        }
+        x0 = std::min(x0, p.x);
+        y0 = std::min(y0, p.y);
+        x1 = std::max(x1, p.x);
+        y1 = std::max(y1, p.y);
+    }
+    void add(const KitBbox& o)
+    {
+        if (!o.valid)
+            return;
+        add(Vec2d{o.x0, o.y0});
+        add(Vec2d{o.x1, o.y1});
+    }
+    double width() const { return valid ? x1 - x0 : 0.0; }
+    double height() const { return valid ? y1 - y0 : 0.0; }
+};
+
+KitBbox fileBbox(const GerberFile& f)
+{
+    KitBbox b;
+    for (const GerberObject& o : f.objects) {
+        switch (o.kind) {
+        case GerberObjKind::Draw:
+        case GerberObjKind::Arc:
+            b.add(o.from);
+            b.add(o.to);
+            break;
+        case GerberObjKind::Flash:
+            b.add(o.to);
+            break;
+        case GerberObjKind::Region:
+            for (const GerberContour& c : o.contours) {
+                b.add(c.start);
+                for (const GerberContourSeg& s : c.segs)
+                    b.add(s.to);
+            }
+            break;
+        }
+    }
+    return b;
+}
+
+// True when the file contains at least one stroked object (Draw/Arc). A
+// candidate made ONLY of filled regions is a keepout zone, never a contour.
+bool hasStrokes(const GerberFile& f)
+{
+    for (const GerberObject& o : f.objects)
+        if (o.kind == GerberObjKind::Draw || o.kind == GerberObjKind::Arc)
+            return true;
+    return false;
+}
+
 } // namespace
+
+bool looksLikeGerberOrExcellon(const QString& path)
+{
+    const QFileInfo info(path);
+    if (!info.isFile())
+        return false;
+    return sniffFile(info.absoluteFilePath()) != Sniff::Unknown;
+}
 
 GerberKitResult importGerberKit(Document& doc, const QString& path)
 {
@@ -306,11 +384,25 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
             continue;
         }
 
+        // A directory can contain stray/damaged files: skip an unparseable
+        // one with a warning instead of making the whole board unopenable.
+        // An EXPLICIT single file keeps the parse failure as a hard error.
+        const auto parseFailed = [&](const QString& err) {
+            if (!info.isDir()) {
+                res.error = QStringLiteral("%1: %2").arg(base, err);
+                return true; // caller returns res
+            }
+            res.skipped << QStringLiteral("%1: parse error, layer skipped").arg(base);
+            res.warnings << QStringLiteral("%1: %2").arg(base, err);
+            return false;
+        };
+
         if (sniff == Sniff::Excellon) {
             const ExcellonParseResult r = parseExcellon(p);
             if (!r.ok) {
-                res.error = QStringLiteral("%1: %2").arg(base, r.error);
-                return res;
+                if (parseFailed(r.error))
+                    return res;
+                continue;
             }
             for (const QString& w : r.file.warnings)
                 res.warnings << QStringLiteral("%1: %2").arg(base, w);
@@ -338,8 +430,9 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
         // Gerber candidate.
         const GerberParseResult r = parseGerber(p);
         if (!r.ok) {
-            res.error = QStringLiteral("%1: %2").arg(base, r.error);
-            return res;
+            if (parseFailed(r.error))
+                return res;
+            continue;
         }
         for (const QString& w : r.file.warnings)
             res.warnings << QStringLiteral("%1: %2").arg(base, w);
@@ -378,15 +471,36 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
     }
 
     // ---- outline election (tolerant heuristic) -----------------------------
-    // Altium's GKO is often empty with the real contour on GM1 (empty files
-    // were dropped above). Unless an X2 Profile already claimed "Outline",
-    // the surviving candidate with the LOWEST priority (GKO before GM1)
-    // becomes the Outline layer; losers keep their fallback role.
+    // Altium's GKO is often empty (dropped above) OR a real keepout ZONE
+    // (S5M0PCBB: one filled rectangle over the antenna area), with the true
+    // contour drawn on GM1 or GM13 (S5M0PCBA). Unless an X2 Profile already
+    // claimed "Outline", the PLAUSIBLE candidate with the lowest priority
+    // (GKO, then GM1, then GM13) wins; losers keep their fallback role.
+    // Plausible = has at least one stroke (a regions-only file is a filled
+    // zone, not a contour) AND spans most of the board along AT LEAST one
+    // axis (>= 60 % of the union of all Gerber layers). One axis only: the
+    // reference PCBB draws just the shaped top edge on GM1 (68 % of the
+    // width, 24 % of the height) — still the closest thing to a contour the
+    // kit has, while its GKO keepout covers under 20 % of either axis.
     if (!haveExplicitOutline) {
+        KitBbox board;
+        for (const Candidate& c : gerbers)
+            board.add(fileBbox(c.gerber));
+        const auto plausibleContour = [&](const Candidate& c) {
+            if (!hasStrokes(c.gerber))
+                return false;
+            const KitBbox b = fileBbox(c.gerber);
+            if (!b.valid || !board.valid)
+                return false;
+            constexpr double kCover = 0.6, kTol = 1e-9;
+            return b.width() + kTol >= kCover * board.width() ||
+                   b.height() + kTol >= kCover * board.height();
+        };
         Candidate* winner = nullptr;
         for (Candidate& c : gerbers)
             if (c.outlinePriority >= 0 &&
-                (!winner || c.outlinePriority < winner->outlinePriority))
+                (!winner || c.outlinePriority < winner->outlinePriority) &&
+                plausibleContour(c))
                 winner = &c;
         if (winner)
             winner->role = Role{QStringLiteral("Outline"), kOutlineRgb, kRankOutline};

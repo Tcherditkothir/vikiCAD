@@ -1371,6 +1371,11 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
                 .arg(r.solids).arg(path).arg(r.notes));
         return true;
     }
+    // A lone Gerber/Excellon file (any extension — .GTL, .TXT drills, .pho…)
+    // opens as a one-file kit, exactly like the CLI import path. Content
+    // sniff, so it never hijacks the known extensions handled above.
+    if (looksLikeGerberOrExcellon(path))
+        return loadGerberKit(path, interactive);
     return reportError(QStringLiteral("unsupported file type: %1").arg(path));
 }
 

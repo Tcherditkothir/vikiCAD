@@ -581,6 +581,12 @@ if [[ -d "$KIT_DIR" ]]; then
     shot "kit: screenshot K'' (redo)" "$TMP/kit_c.png"
     assert_le "kit: K'' == K (render restored)" \
         "$(img_hash_dist "$TMP/kit_a.png" "$TMP/kit_c.png")" "$SAME_HASH_MAX"
+
+    # A LONE fab file (not a directory) opens through the same kit path
+    # thanks to the content sniff -- regression for the single-.GTL IPC open.
+    out="$(rpc open "$KIT_DIR/S5M0PCBA1.GTL")"
+    assert_eq "kit: open lone .GTL (IPC)" True "$(jget "$out" "d['result'].get('ok')")"
+    assert_ge "kit: lone .GTL entities" "$(count)" 500
 else
     record SKIP "kit: Gerber kit phase" "pcb-ref kits absent on this machine"
 fi

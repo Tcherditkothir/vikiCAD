@@ -563,6 +563,10 @@ TEST_CASE("Gerber: errors carry line numbers", "[gerber]")
     // Region never closed.
     expectError("%FSLAX25Y25*%\n%MOIN*%\nG01*\nG36*\nX0Y0D02*\nX100D01*\nM02*\n",
                 "G36", 4);
+    // D00 does not exist in RS-274X — reject, never draw silently as a D01.
+    expectError("%FSLAX25Y25*%\n%MOIN*%\nG01*\n%ADD10C,0.01*%\nD10*\nX0Y0D02*\n"
+                "X100000Y0D00*\nM02*\n",
+                "invalid operation code D0", 7);
     // No unit anywhere.
     expectError("%FSLAX25Y25*%\nG01*\n%ADD10C,0.01*%\nD10*\nX0Y0D02*\nX100D01*\nM02*\n",
                 "unit", 0);

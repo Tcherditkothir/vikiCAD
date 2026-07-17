@@ -712,7 +712,9 @@ bool processWord(ParseState& st, const QString& rawWord, int line)
         st.aperture = dnum;
         return true;
     }
-    if (dnum > 3 && dnum >= 0)
+    // Operation codes are D01/D02/D03 only. D00 does not exist in RS-274X:
+    // reject it (falling through would silently draw it as a D01).
+    if (dnum == 0 || dnum > 3)
         return st.fail(line, QStringLiteral("invalid operation code D%1").arg(dnum));
 
     int op = dnum;

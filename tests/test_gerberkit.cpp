@@ -62,6 +62,43 @@ QByteArray emptyGerber()
            "M02*\n";
 }
 
+// Thin closed 10 x 5 mm rectangle: a PLAUSIBLE board contour (strokes that
+// cover the kit extent). simpleGerber's first draw is the bottom edge.
+QByteArray contourGerber()
+{
+    return simpleGerber({},
+                        "X100000Y50000D01*\n"
+                        "X0Y50000D01*\n"
+                        "X0Y0D01*\n");
+}
+
+// Small FILLED G36 rectangle (2 x 1 mm), zero strokes: what a real GKO
+// keepout zone looks like (S5M0PCBB) — must never be elected Outline.
+QByteArray keepoutGerber()
+{
+    return "G04 keepout zone*\n"
+           "%FSLAX24Y24*%\n"
+           "%MOMM*%\n"
+           "G01*\n"
+           "G36*\n"
+           "X0Y0D02*\n"
+           "X20000Y0D01*\n"
+           "X20000Y10000D01*\n"
+           "X0Y10000D01*\n"
+           "X0Y0D01*\n"
+           "G37*\n"
+           "M02*\n";
+}
+
+// Path of the file that landed on `layerName`, empty if none.
+QString sourceOfLayer(const GerberKitResult& r, const char* layerName)
+{
+    for (const GerberKitFile& f : r.files)
+        if (f.layerName == QLatin1String(layerName))
+            return f.path;
+    return {};
+}
+
 const Layer* layerNamed(Document& doc, const char* name)
 {
     return doc.layerByName(QLatin1String(name));
@@ -95,9 +132,10 @@ TEST_CASE("GerberKit: recognition, sniffing, colors, order, drill split, one und
               simpleGerber({}, "%LPC*%\nX0Y50000D02*\nX100000Y50000D01*\n"));
     writeFile(dir, QStringLiteral("board.GBL"), simpleGerber());
     writeFile(dir, QStringLiteral("board.GTO"), simpleGerber());
-    // Altium-style empty keepout: the outline election must fall to GM1.
+    // Altium-style empty keepout: the outline election must fall to GM1
+    // (whose strokes cover the kit extent — a plausible contour).
     writeFile(dir, QStringLiteral("board.GKO"), emptyGerber());
-    writeFile(dir, QStringLiteral("board.GM1"), simpleGerber());
+    writeFile(dir, QStringLiteral("board.GM1"), contourGerber());
     writeFile(dir, QStringLiteral("board.GM13"), simpleGerber());
     // Drill: T1 plated (1 mm), T2 non-plated (3 mm). INCH,TZ 2:4.
     writeFile(dir, QStringLiteral("board.TXT"),
@@ -220,10 +258,100 @@ TEST_CASE("GerberKit: X2 TF.FileFunction prevails over the extension", "[gerberk
     CHECK(layerNamed(doc, "Outline") != nullptr);
     CHECK(layerNamed(doc, "Mech-7") == nullptr);
     // The non-empty GKO keeps its keepout fallback (profile already taken).
+    // Keepout zones are painted FIRST (below copper): a filled keepout must
+    // never mask the board.
     CHECK(layerNamed(doc, "Keepout") != nullptr);
-    CHECK(r.layers == QStringList{QStringLiteral("Top-Mask"),
-                                  QStringLiteral("Keepout"),
+    CHECK(r.layers == QStringList{QStringLiteral("Keepout"),
+                                  QStringLiteral("Top-Mask"),
                                   QStringLiteral("Outline")});
+}
+
+TEST_CASE("GerberKit: outline election rejects implausible candidates",
+          "[gerberkit]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+    // Copper that defines the kit extent (10 x 5 mm).
+    writeFile(dir, QStringLiteral("board.GTL"), contourGerber());
+
+    SECTION("a filled keepout GKO loses to a contour-shaped GM1 (S5M0PCBB)")
+    {
+        writeFile(dir, QStringLiteral("board.GKO"), keepoutGerber());
+        writeFile(dir, QStringLiteral("board.GM1"), contourGerber());
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        REQUIRE(r.ok);
+        CHECK(sourceOfLayer(r, "Outline").endsWith(QStringLiteral(".GM1")));
+        CHECK(layerNamed(doc, "Keepout") != nullptr);
+        CHECK(layerNamed(doc, "Mech-1") == nullptr);
+        // The keepout zone is painted below the copper, never on top of it.
+        CHECK(r.layers.indexOf(QStringLiteral("Keepout")) <
+              r.layers.indexOf(QStringLiteral("Top-Copper")));
+    }
+    SECTION("a contour-shaped GKO still wins over GM1 (priority preserved)")
+    {
+        writeFile(dir, QStringLiteral("board.GKO"), contourGerber());
+        writeFile(dir, QStringLiteral("board.GM1"), contourGerber());
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        REQUIRE(r.ok);
+        CHECK(sourceOfLayer(r, "Outline").endsWith(QStringLiteral(".GKO")));
+        CHECK(layerNamed(doc, "Mech-1") != nullptr);
+        CHECK(layerNamed(doc, "Keepout") == nullptr);
+    }
+    SECTION("GM13 is a candidate when GKO/GM1 are absent (S5M0PCBA)")
+    {
+        writeFile(dir, QStringLiteral("board.GM13"), contourGerber());
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        REQUIRE(r.ok);
+        CHECK(sourceOfLayer(r, "Outline").endsWith(QStringLiteral(".GM13")));
+        CHECK(layerNamed(doc, "Mech-13") == nullptr);
+    }
+    SECTION("no plausible candidate -> no Outline layer at all")
+    {
+        writeFile(dir, QStringLiteral("board.GKO"), keepoutGerber());
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        REQUIRE(r.ok);
+        CHECK(layerNamed(doc, "Outline") == nullptr);
+        CHECK(layerNamed(doc, "Keepout") != nullptr);
+    }
+}
+
+TEST_CASE("GerberKit: a broken file is skipped in a directory, fatal alone",
+          "[gerberkit]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+    writeFile(dir, QStringLiteral("good.GTL"), simpleGerber());
+    // Sniffs as Gerber (G04 comment) but fails to parse: D01 before any
+    // interpolation mode.
+    writeFile(dir, QStringLiteral("bad.GBL"),
+              "G04 truncated by a bad transfer*\n"
+              "%FSLAX24Y24*%\n%MOMM*%\nD01*\nM02*\n");
+
+    SECTION("directory import: the broken layer is skipped with a warning")
+    {
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, dir);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(r.layers == QStringList{QStringLiteral("Top-Copper")});
+        CHECK(r.skipped.filter(QStringLiteral("bad.GBL")).size() == 1);
+        CHECK(r.warnings.filter(QStringLiteral("bad.GBL")).size() == 1);
+        CHECK(doc.entityCount() == 1);
+    }
+    SECTION("explicit single-file import of the same file stays a hard error")
+    {
+        Document doc;
+        const GerberKitResult r =
+            importGerberKit(doc, dir + QStringLiteral("/bad.GBL"));
+        CHECK_FALSE(r.ok);
+        CHECK(doc.entityCount() == 0);
+    }
 }
 
 TEST_CASE("GerberKit: single-file import and error paths", "[gerberkit]")
@@ -244,6 +372,13 @@ TEST_CASE("GerberKit: single-file import and error paths", "[gerberkit]")
         REQUIRE(r.ok);
         CHECK(r.layers == QStringList{QStringLiteral("Top-Copper")});
         CHECK(doc.entityCount() == 1);
+    }
+    SECTION("the content sniff helper drives the GUI single-file open path")
+    {
+        CHECK(looksLikeGerberOrExcellon(dir + QStringLiteral("/only.GTL")));
+        CHECK_FALSE(looksLikeGerberOrExcellon(dir + QStringLiteral("/junk.bin")));
+        CHECK_FALSE(looksLikeGerberOrExcellon(dir + QStringLiteral("/nope")));
+        CHECK_FALSE(looksLikeGerberOrExcellon(dir)); // directories: kit path
     }
     SECTION("a non-fab file is a clean error, not a crash")
     {
@@ -278,16 +413,18 @@ TEST_CASE("GerberKit: real S5M0PCBA kit end to end", "[gerberkit][kits]")
     REQUIRE(r.ok);
 
     // The full stack, one layer per non-empty file. PCBA's GKO and GM1 are
-    // both header-only (verified by inspection): no Outline layer exists —
-    // that is the tolerant-heuristic contract, not a bug.
+    // both header-only (verified by inspection); the real board contour is
+    // drawn on GM13 (thin strokes covering the whole board), so the election
+    // must promote GM13 to Outline — the board is never left contour-less.
     for (const char* name :
          {"Top-Copper", "Bottom-Copper", "Top-Mask", "Bottom-Mask", "Top-Silk",
           "Bottom-Silk", "Top-Paste", "Bottom-Paste", "Top-Pads", "Bottom-Pads",
-          "Mech-13", "Mech-15", "Drill", "Drill-NPTH"}) {
+          "Outline", "Mech-15", "Drill", "Drill-NPTH"}) {
         INFO(name);
         CHECK(layerNamed(doc, name) != nullptr);
     }
-    CHECK(layerNamed(doc, "Outline") == nullptr);
+    CHECK(sourceOfLayer(r, "Outline").endsWith(QStringLiteral(".GM13")));
+    CHECK(layerNamed(doc, "Mech-13") == nullptr);
     CHECK(r.skipped.filter(QStringLiteral(".GKO")).size() == 1);
     CHECK(r.skipped.filter(QStringLiteral(".GM1")).size() == 1);
     CHECK(r.skipped.filter(QStringLiteral("Status Report.Txt")).size() == 1);
@@ -302,7 +439,8 @@ TEST_CASE("GerberKit: real S5M0PCBA kit end to end", "[gerberkit][kits]")
     CHECK(doc.entityCount() == 0);
 }
 
-TEST_CASE("GerberKit: real S5M0PCBB kit — GKO carries the outline", "[gerberkit][kits]")
+TEST_CASE("GerberKit: real S5M0PCBB kit — GM1 carries the outline, GKO is a keepout",
+          "[gerberkit][kits]")
 {
     if (!kitsPresent())
         SKIP("real Gerber kits not present on this machine");
@@ -313,11 +451,25 @@ TEST_CASE("GerberKit: real S5M0PCBB kit — GKO carries the outline", "[gerberki
     INFO(r.error.toStdString());
     REQUIRE(r.ok);
 
-    // PCBB's GKO has real draws -> it wins the outline election; its GM1 is
-    // non-empty too and stays Mech-1.
+    // PCBB's GKO is a single FILLED G36 rectangle over the ESP32 antenna
+    // zone (~17.7 x 6.5 mm, verified by inspection) — a keepout, NOT the
+    // board contour. GM1 carries the actual contour geometry: the shaped
+    // top edge of the board (notch + connector tabs, thin 0.1 mm strokes
+    // spanning 68 % of the board width). The election must reject the
+    // keepout (zero strokes, small on both axes) and promote GM1.
     REQUIRE(layerNamed(doc, "Outline") != nullptr);
-    CHECK(layerNamed(doc, "Mech-1") != nullptr);
+    CHECK(sourceOfLayer(r, "Outline").endsWith(QStringLiteral(".GM1")));
+    CHECK(layerNamed(doc, "Mech-1") == nullptr);
     CHECK(entitiesOnLayer(doc, layerNamed(doc, "Outline")) >= 1);
+
+    // The GKO keepout keeps its role and paints BELOW the copper: the filled
+    // magenta slab must never mask the antenna area again.
+    REQUIRE(layerNamed(doc, "Keepout") != nullptr);
+    CHECK(sourceOfLayer(r, "Keepout").endsWith(QStringLiteral(".GKO")));
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Keepout")) == 1);
+    CHECK(r.layers.indexOf(QStringLiteral("Keepout")) <
+          r.layers.indexOf(QStringLiteral("Bottom-Copper")));
+
     for (const char* name : {"Mech-4", "Mech-13", "Mech-15", "Mech-16"}) {
         INFO(name);
         CHECK(layerNamed(doc, name) != nullptr);
