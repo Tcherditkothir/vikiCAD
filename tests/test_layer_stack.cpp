@@ -139,8 +139,10 @@ TEST_CASE("gerberRoleForLayerName maps the importer names", "[layers][g2]")
             QStringLiteral("Mask"));
     REQUIRE(gerberRoleForLayerName(QStringLiteral("Bottom-Silk-2")) ==
             QStringLiteral("Silk"));
+    // G3 closure: NPTH is its own role — before the fix this mapped to
+    // "Drill" and a hole drawn on the layer exported PLATED.
     REQUIRE(gerberRoleForLayerName(QStringLiteral("Drill-NPTH")) ==
-            QStringLiteral("Drill"));
+            QStringLiteral("Drill-NPTH"));
     REQUIRE(gerberRoleForLayerName(QStringLiteral("Mech-15")) ==
             QStringLiteral("Mech"));
     REQUIRE(gerberRoleForLayerName(QStringLiteral("Outline")) ==

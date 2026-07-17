@@ -103,11 +103,27 @@ public:
         QStringList f;
         f << QStringLiteral("G04 Layer %1 exported by VikiCAD %2*")
                  .arg(m_layer.name, QLatin1String(versionString()));
-        f << QStringLiteral("%TF.GenerationSoftware,VikiCAD,VikiCAD,") +
-                 QLatin1String(versionString()) + QStringLiteral("*%");
+        // X2 metadata in Altium's COMMENT form (G04 #@! ...): X2-aware
+        // consumers (our importer included) still read it, while pre-X2
+        // viewers see a plain comment. A naked %TF...*% is legal X2 but
+        // made gerbv log "CRITICAL: Unknown RS-274X extension %TF%" on
+        // every exported file — noise a fab's older viewer would repeat.
+        f << QStringLiteral("G04 #@! TF.GenerationSoftware,VikiCAD,VikiCAD,") +
+                 QLatin1String(versionString()) + QStringLiteral("*");
         f << QStringLiteral("%FSLAX46Y46*%") << QStringLiteral("%MOMM*%");
         f += m_amBlocks;
         f += m_adLines;
+        if (m_adLines.isEmpty()) {
+            // No %AD at all (a regions-only layer — e.g. a keepout zone —
+            // flashes/strokes nothing): pre-X2 sniffers count aperture
+            // definitions and would report "Most likely found a RS-274D
+            // file". One unused aperture keeps the file self-identifying
+            // as RS-274X everywhere; it draws nothing.
+            f << QStringLiteral(
+                "G04 no aperture used (regions only) — D10 is a placeholder "
+                "so RS-274D sniffers recognize RS-274X*");
+            f << QStringLiteral("%ADD10C,0.1*%");
+        }
         f << QStringLiteral("G75*") << QStringLiteral("G01*");
         f += m_body;
         f << QStringLiteral("M02*");

@@ -430,6 +430,26 @@ private:
                                     "nothing to duplicate"));
             return Step::done();
         }
+        // Guard against a typo'd grid (G3 closure): PANELIZE 100 100 on a
+        // real kit would clone ~23 M entities inside ONE transaction —
+        // minutes of GUI freeze and gigabytes of RAM (undo doubles it).
+        // 2 M cloned entities ≈ 9 s and stays undoable; beyond that the
+        // command refuses with the math spelled out.
+        constexpr qint64 kMaxClones = 2000000;
+        const qint64 clones =
+            (qint64(m_cols) * qint64(m_rows) - 1) * qint64(src.size());
+        if (clones > kMaxClones) {
+            ctx.info(QStringLiteral(
+                         "refusing to panelize: %1 x %2 cells x %3 fab "
+                         "entity(ies) = %4 clones (cap %5) — use a smaller "
+                         "grid")
+                         .arg(m_cols)
+                         .arg(m_rows)
+                         .arg(src.size())
+                         .arg(clones)
+                         .arg(kMaxClones));
+            return Step::cancelled();
+        }
 
         int created = 0;
         {

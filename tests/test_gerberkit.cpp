@@ -214,7 +214,8 @@ TEST_CASE("GerberKit: recognition, sniffing, colors, order, drill split, one und
     CHECK(layerNamed(doc, "Top-Silk")->gerberRole == QStringLiteral("Silk"));
     CHECK(layerNamed(doc, "Outline")->gerberRole == QStringLiteral("Outline"));
     CHECK(layerNamed(doc, "Drill")->gerberRole == QStringLiteral("Drill"));
-    CHECK(layerNamed(doc, "Drill-NPTH")->gerberRole == QStringLiteral("Drill"));
+    CHECK(layerNamed(doc, "Drill-NPTH")->gerberRole ==
+          QStringLiteral("Drill-NPTH")); // its OWN role since the G3 closure
     // Every imported layer keeps the default opacity: alpha != 100 would
     // change the reference renders (gerber-ref-diff guards this too).
     for (const Layer& l : doc.layers())

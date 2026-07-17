@@ -315,6 +315,81 @@ TEST_CASE("Kit writer: synthetic kit export + skipped layers", "[gerberkit][expo
     CHECK(r2.error.contains(QLatin1String("ROLE")));
 }
 
+TEST_CASE("Kit writer G3 closure: extension/dialect warnings, hard error "
+          "leaves NO partial kit, PANELIZE refuses absurd grids",
+          "[gerberkit][export][g3]")
+{
+    Document doc;
+    const LayerId copper = doc.ensureLayer(QStringLiteral("Top-Copper"));
+    doc.setLayerGerberRole(copper, QStringLiteral("Copper-Top"));
+    const LayerId drill = doc.ensureLayer(QStringLiteral("Drill"));
+    doc.setLayerGerberRole(drill, QStringLiteral("Drill"));
+    {
+        TransactionScope tx(doc, QStringLiteral("T"));
+        auto pl = std::make_unique<PolylineEntity>(
+            std::vector<PolyVertex>{{{0.0, 0.0}, 0.0}, {{10.0, 0.0}, 0.0}}, false);
+        pl->setWidth(0.3);
+        pl->setLayerId(copper);
+        doc.addEntity(std::move(pl));
+        auto c = std::make_unique<CircleEntity>(Vec2d{2.0, 2.0}, 0.5);
+        c->setLayerId(drill);
+        doc.addEntity(std::move(c));
+        tx.commit();
+    }
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+
+    // The role picks the dialect, but a contradicting EXTENSION now warns:
+    // fab houses sort files by extension.
+    const GerberKitExportResult wrongTxt = exportFabLayer(
+        doc, QStringLiteral("Top-Copper"), tmp.filePath("weird.txt"));
+    REQUIRE(wrongTxt.ok);
+    REQUIRE(wrongTxt.warnings.size() == 1);
+    CHECK(wrongTxt.warnings.first().contains(QLatin1String("Excellon")));
+    const GerberKitExportResult wrongGbr = exportFabLayer(
+        doc, QStringLiteral("Drill"), tmp.filePath("drill_as.gbr"));
+    REQUIRE(wrongGbr.ok);
+    REQUIRE(wrongGbr.warnings.size() == 1);
+    CHECK(wrongGbr.warnings.first().contains(QLatin1String("EXCELLON")));
+    // Matching extensions stay silent.
+    CHECK(exportFabLayer(doc, QStringLiteral("Top-Copper"),
+                         tmp.filePath("ok.gtl"))
+              .warnings.isEmpty());
+    CHECK(exportFabLayer(doc, QStringLiteral("Drill"), tmp.filePath("ok.txt"))
+              .warnings.isEmpty());
+
+    // A hard mid-kit error must not leave a plausible partial kit behind:
+    // the drill hole out of coordinate range fails AFTER brd.GTL was
+    // written — the writer removes it and says so.
+    {
+        TransactionScope tx(doc, QStringLiteral("T"));
+        auto far = std::make_unique<CircleEntity>(Vec2d{10524.0, 0.0}, 0.5);
+        far->setLayerId(drill);
+        doc.addEntity(std::move(far));
+        tx.commit();
+    }
+    QTemporaryDir tmp2;
+    REQUIRE(tmp2.isValid());
+    const GerberKitExportResult fail =
+        exportGerberKit(doc, tmp2.path(), QStringLiteral("brd"));
+    REQUIRE(!fail.ok);
+    CHECK(fail.error.contains(QLatin1String("exceeds")));
+    CHECK(fail.error.contains(QLatin1String("removed")));
+    CHECK(fail.files.empty());
+    CHECK(!QFileInfo(tmp2.filePath(QStringLiteral("brd.GTL"))).exists());
+    CHECK(!QFileInfo(tmp2.filePath(QStringLiteral("brd.TXT"))).exists());
+    run(doc, QStringLiteral("UNDO")); // drop the out-of-range hole
+
+    // PANELIZE typo guard: 2000 x 2000 x 2 fab entities = ~8 M clones,
+    // over the 2 M cap — refused, document untouched.
+    const size_t before = doc.entityCount();
+    run(doc, QStringLiteral("PANELIZE 2000 2000 10 10"));
+    CHECK(doc.entityCount() == before);
+    // A sane grid still works.
+    run(doc, QStringLiteral("PANELIZE 2 1 20 20"));
+    CHECK(doc.entityCount() == before + 2);
+}
+
 // ---------------------------------------------------------------------------
 // The 2D->GKO promise: a closed polyline on an Outline-role layer
 // ---------------------------------------------------------------------------

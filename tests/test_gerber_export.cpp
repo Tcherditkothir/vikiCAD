@@ -390,7 +390,11 @@ TEST_CASE("Gerber writer: dialect header and polarity order", "[gerber][export]"
     // Modern metric dialect, one statement each.
     CHECK(text.count(QStringLiteral("%FSLAX46Y46*%")) == 1);
     CHECK(text.count(QStringLiteral("%MOMM*%")) == 1);
-    CHECK(text.contains(QStringLiteral("%TF.GenerationSoftware,VikiCAD,")));
+    // X2 metadata rides in Altium's comment form so pre-X2 viewers (gerbv)
+    // stay silent; a NAKED %TF...*% must not appear (G3 closure).
+    CHECK(text.contains(
+        QStringLiteral("G04 #@! TF.GenerationSoftware,VikiCAD,")));
+    CHECK(!text.contains(QStringLiteral("%TF")));
     CHECK(text.contains(QStringLiteral("G75*")));
     CHECK(text.trimmed().endsWith(QStringLiteral("M02*")));
 
@@ -405,6 +409,30 @@ TEST_CASE("Gerber writer: dialect header and polarity order", "[gerber][export]"
     CHECK(flash < lpc);
     CHECK(region > lpc);
     CHECK(region < lpd);
+}
+
+TEST_CASE("Gerber writer: a regions-only layer still defines one aperture "
+          "(placeholder) so pre-X2 sniffers see RS-274X", "[gerber][export][g3]")
+{
+    // G3 closure: gerbv sniffs a file with zero %AD as RS-274D ("Most
+    // likely found a RS-274D file... trying to open anyways") — the shape
+    // of an exported keepout zone (one G36 region, no strokes, no flashes).
+    const char* src = "%FSLAX46Y46*%\n%MOMM*%\nG01*\nG36*\nX0Y0D02*\n"
+                      "X1000000D01*\nX1000000Y1000000D01*\nX0Y1000000D01*\n"
+                      "X0Y0D01*\nG37*\nM02*\n";
+    const GerberParseResult r = parseGerberData(QByteArray(src));
+    REQUIRE(r.ok);
+    Document doc;
+    importInto(doc, r.file);
+    GerberExportResult res;
+    const QByteArray bytes = exportLayer(doc, &res);
+    const QString text = QString::fromUtf8(bytes);
+    CHECK(res.apertures == 0); // the REAL count stays honest
+    CHECK(text.contains(QStringLiteral("%ADD10C,0.1*%"))); // unused placeholder
+    CHECK(!text.contains(QStringLiteral("D10*\n"))); // never selected/flashed
+    // And the region still round-trips.
+    const Document back = reimport(bytes);
+    CHECK(back.entityCount() == 1);
 }
 
 // ---------------------------------------------------------------------------

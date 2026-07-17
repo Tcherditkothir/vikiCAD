@@ -19,6 +19,11 @@ const std::vector<GerberRoleSpec>& gerberRoleSpecs()
         {QStringLiteral("Mech"), 0x8FA3B0, 60},
         {QStringLiteral("Outline"), 0xFF00FF, 90},
         {QStringLiteral("Drill"), 0x000000, 95},
+        // NPTH must be a real, assignable role (G3 closure): it is the only
+        // way a user can say "this hole gets NO barrel" — the Excellon
+        // writer and DRILLREPORT default untagged circles to non-plated on
+        // a Drill-NPTH layer. Palette/rank = the kit importer's NPTH layer.
+        {QStringLiteral("Drill-NPTH"), 0x3C3C3C, 96},
     };
     return kSpecs;
 }
@@ -46,6 +51,11 @@ QString gerberRoleForLayerName(const QString& layerName)
         return QStringLiteral("Paste");
     if (n.startsWith(QLatin1String("OUTLINE")))
         return QStringLiteral("Outline");
+    // NPTH before the generic DRILL prefix: the importer's "Drill-NPTH"
+    // layer (and its "-2" suffixed twins) must carry the NPTH role, or a
+    // hole drawn on it would default to plated at export.
+    if (n.startsWith(QLatin1String("DRILL-NPTH")))
+        return QStringLiteral("Drill-NPTH");
     if (n.startsWith(QLatin1String("DRILL")))
         return QStringLiteral("Drill");
     if (n.startsWith(QLatin1String("MECH")))

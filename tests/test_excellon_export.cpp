@@ -33,6 +33,7 @@
 
 #include "doc/Document.h"
 #include "doc/Entities.h"
+#include "doc/GerberRole.h"
 #include "io/ExcellonIo.h"
 #include "io/ExcellonWriter.h"
 #include "io/NativeStore.h"
@@ -456,6 +457,46 @@ TEST_CASE("Excellon writer: empty layer list selects the Drill-role layers, "
         doc, {QStringLiteral("Drill"), QStringLiteral("Drill-NPTH")}, bytes2);
     REQUIRE(r2.ok);
     CHECK(QString::fromUtf8(bytes2) == text);
+}
+
+TEST_CASE("Excellon writer: a user-drawn NPTH hole exports NON_PLATED "
+          "through the COMMAND role path", "[excellon][export][g3]")
+{
+    // G3 closure (adversarial review): the Drill-NPTH role must be REACHABLE
+    // by a user — applyGerberRole is what LAYER <n> ROLE <r> and the
+    // LayerPanel menu call. Before the fix findGerberRole("Drill-NPTH")
+    // returned nullptr, so a mounting-hole layer could only ever export in
+    // the PLATED section (a real fab defect: plated barrels in NPTH holes).
+    Document doc;
+    const LayerId npth = doc.ensureLayer(QStringLiteral("Mounting"));
+    REQUIRE(applyGerberRole(doc, npth, QStringLiteral("Drill-NPTH")));
+    const Layer* l = doc.layer(npth);
+    REQUIRE(l->gerberRole == QStringLiteral("Drill-NPTH"));
+    CHECK(l->rgb == 0x3C3C3C); // the importer's NPTH palette
+    CHECK(l->rank == 96);      // paints last, like an imported NPTH layer
+
+    {
+        TransactionScope tx(doc, QStringLiteral("T"));
+        auto c = std::make_unique<CircleEntity>(Vec2d{50.0, -20.0}, 1.6);
+        c->setLayerId(npth); // bare circle: NO "plated" tag — the role decides
+        doc.addEntity(std::move(c));
+        tx.commit();
+    }
+    QByteArray bytes;
+    const ExcellonExportResult r = writeExcellon(doc, {}, bytes);
+    REQUIRE(r.ok);
+    const QString text = QString::fromUtf8(bytes);
+    CHECK(text.contains(QStringLiteral(";TYPE=NON_PLATED\nT1C3.2\n")));
+    CHECK(!text.contains(QStringLiteral(";TYPE=PLATED")));
+
+    // And the importer maps its own layer name to the NPTH role token, so
+    // an imported kit's Drill-NPTH layer defaults new bare circles to NPTH.
+    CHECK(gerberRoleForLayerName(QStringLiteral("Drill-NPTH")) ==
+          QStringLiteral("Drill-NPTH"));
+    CHECK(gerberRoleForLayerName(QStringLiteral("Drill-NPTH-2")) ==
+          QStringLiteral("Drill-NPTH"));
+    CHECK(gerberRoleForLayerName(QStringLiteral("Drill")) ==
+          QStringLiteral("Drill"));
 }
 
 TEST_CASE("Excellon writer: errors, skips and empty exports", "[excellon][export]")

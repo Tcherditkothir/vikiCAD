@@ -4,6 +4,7 @@
 #include <map>
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 
 #include "io/ExcellonWriter.h"
@@ -48,6 +49,22 @@ QString prefixWarnings(GerberKitExportResult& res, const QString& fileBase,
     for (const QString& w : warnings)
         res.warnings << QStringLiteral("%1: %2").arg(fileBase, w);
     return {};
+}
+
+// Extension sanity for single-layer exports (G3 closure): the ROLE picks
+// the dialect, but fab houses sort files BY EXTENSION — writing Excellon
+// into thing.gbr or RS-274X into thing.txt deserves a warning.
+bool extensionImpliesDrill(const QString& suffix)
+{
+    return suffix == QLatin1String("txt") || suffix == QLatin1String("drl") ||
+           suffix == QLatin1String("xln") || suffix == QLatin1String("nc") ||
+           suffix == QLatin1String("tap");
+}
+
+bool extensionImpliesGerber(const QString& suffix)
+{
+    // .g* covers the Protel/Altium family (gtl/gbs/gko/gbr/ger/gm1/g2...).
+    return !suffix.isEmpty() && suffix.startsWith(QLatin1Char('g'));
 }
 
 } // namespace
@@ -106,6 +123,23 @@ GerberKitExportResult exportGerberKit(const Document& doc, const QString& dirPat
         return res;
     }
 
+    // A hard error MUST NOT leave a plausible-looking partial kit on disk
+    // (G3 closure): a script zipping the directory would ship a kit with,
+    // say, no drill file. Every file written so far is removed and named.
+    const auto failClean = [&res](const QString& err) {
+        QStringList removed;
+        for (const GerberKitExportFile& f : res.files)
+            if (QFile::remove(f.path))
+                removed << QFileInfo(f.path).fileName();
+        res.files.clear();
+        res.error = err;
+        if (!removed.isEmpty())
+            res.error +=
+                QStringLiteral(" — removed %1 partially written kit file(s): %2")
+                    .arg(removed.size())
+                    .arg(removed.join(QStringLiteral(", ")));
+    };
+
     // Entities per layer: empty layers are skipped (Altium ships header-only
     // files; we do not re-create that noise on export).
     std::map<LayerId, int> perLayer;
@@ -146,7 +180,7 @@ GerberKitExportResult exportGerberKit(const Document& doc, const QString& dirPat
         const QString path = dir.filePath(baseName + ext);
         const GerberExportResult r = exportGerberLayer(doc, l->name, path);
         if (!r.ok) {
-            res.error = QStringLiteral("%1: %2").arg(l->name, r.error);
+            failClean(QStringLiteral("%1: %2").arg(l->name, r.error));
             return res;
         }
         prefixWarnings(res, baseName + ext, r.warnings);
@@ -161,8 +195,8 @@ GerberKitExportResult exportGerberKit(const Document& doc, const QString& dirPat
         const QString path = dir.filePath(baseName + QStringLiteral(".TXT"));
         const ExcellonExportResult r = exportExcellon(doc, drillLayers, path);
         if (!r.ok) {
-            res.error = QStringLiteral("%1: %2")
-                            .arg(drillLayers.join(QLatin1Char('+')), r.error);
+            failClean(QStringLiteral("%1: %2")
+                          .arg(drillLayers.join(QLatin1Char('+')), r.error));
             return res;
         }
         prefixWarnings(res, baseName + QStringLiteral(".TXT"), r.warnings);
@@ -192,6 +226,7 @@ GerberKitExportResult exportFabLayer(const Document& doc, const QString& layerNa
         res.error = QStringLiteral("no layer named '%1'").arg(layerName);
         return res;
     }
+    const QString suffix = QFileInfo(path).suffix().toLower();
     if (isDrillRole(layer->gerberRole)) {
         const ExcellonExportResult r = exportExcellon(doc, {layer->name}, path);
         if (!r.ok) {
@@ -199,6 +234,12 @@ GerberKitExportResult exportFabLayer(const Document& doc, const QString& layerNa
             return res;
         }
         res.warnings = r.warnings;
+        if (extensionImpliesGerber(suffix))
+            res.warnings << QStringLiteral(
+                                "wrote an EXCELLON drill file, but '.%1' "
+                                "implies RS-274X to consumers sorting by "
+                                "extension — prefer .txt or .drl")
+                                .arg(suffix);
         res.files.push_back({QFileInfo(path).absoluteFilePath(),
                              {layer->name},
                              true,
@@ -211,6 +252,12 @@ GerberKitExportResult exportFabLayer(const Document& doc, const QString& layerNa
             return res;
         }
         res.warnings = r.warnings;
+        if (extensionImpliesDrill(suffix))
+            res.warnings << QStringLiteral(
+                                "wrote an RS-274X (Gerber) file, but '.%1' "
+                                "implies an Excellon drill file to consumers "
+                                "sorting by extension — prefer a .g* name")
+                                .arg(suffix);
         res.files.push_back({QFileInfo(path).absoluteFilePath(),
                              {layer->name},
                              false,

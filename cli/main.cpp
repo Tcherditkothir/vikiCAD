@@ -237,6 +237,16 @@ int cmdImport(const QStringList& args)
         for (const QString& l : r.layers)
             layers.append(l);
         result[QStringLiteral("layers")] = layers;
+        // Source-file -> layer mapping: what the export-vs-original diff
+        // (scripts/gerber-export-diff.sh) pairs files with — the original
+        // GKO may be a keepout while OUR .GKO carries the elected Outline.
+        QJsonArray fileLayers;
+        for (const auto& f : r.files)
+            fileLayers.append(QJsonObject{
+                {QStringLiteral("file"), QFileInfo(f.path).fileName()},
+                {QStringLiteral("layer"), f.layerName},
+                {QStringLiteral("drill"), f.isDrill}});
+        result[QStringLiteral("fileLayers")] = fileLayers;
         QJsonArray skipped;
         for (const QString& s : r.skipped)
             skipped.append(s);
@@ -495,6 +505,19 @@ int cmdExport(const QStringList& args)
                                   {QStringLiteral("paper"),
                                    QJsonArray{layout->paperW, layout->paperH}}});
     }
+
+    // GUI/IPC parity (G3 closure): an unrecognized extension must NOT fall
+    // back to DXF silently — "export FILE.vkd gerbers" (forgotten trailing
+    // '/') used to write a DXF file NAMED "gerbers" with ok:true, a trap
+    // when the caller believes a kit directory was produced.
+    if (!outPath.endsWith(QLatin1String(".dxf"), Qt::CaseInsensitive))
+        return emitError(
+            QStringLiteral("E_FORMAT"),
+            QStringLiteral("unsupported export format: '%1' — use .dxf, "
+                           ".step/.stp, .stl, .obj, .pdf, a fab extension "
+                           "(.gtl/.gbr/.txt/...), or a kit directory "
+                           "(must exist or end with '/')")
+                .arg(QFileInfo(outPath).fileName()));
 
     const DxfExportResult r = exportDxf(*doc, outPath, version);
     if (!r.ok)
