@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(VikiCAD
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "2D drafting / 3D solid CAD for Linux"
     LANGUAGES CXX)
 
