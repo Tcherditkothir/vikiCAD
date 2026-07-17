@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <QJsonObject>
 #include <QString>
 
 namespace viki {
@@ -27,6 +28,14 @@ struct Layer {
     // gerberRoleSpecs() — "Copper-Top", "Outline"... empty = none). Set by
     // the Gerber kit importer, editable via the LAYER command / LayerPanel.
     QString gerberRole;
+    // CAM source tables, set by the fab-file importers and persisted in .vkd
+    // (empty for ordinary layers). Two shapes today:
+    //   {"apertures": {"D10": {"shape","params"[mm],"macro"?,"hole"?,
+    //                          "desc","usage"}, ...}}   (Gerber layer)
+    //   {"tools":     {"T1":  {"dia"[mm],"plated","usage"}, ...}} (Excellon)
+    // Consumed by the APERTURES/DRILLREPORT commands and the PropertiesPanel
+    // gerber inspector; G3 export will regenerate its tables from here.
+    QJsonObject camMeta;
 };
 
 } // namespace viki

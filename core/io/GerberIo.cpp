@@ -5,6 +5,7 @@
 #include <optional>
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
 
@@ -631,6 +632,24 @@ bool processWord(ParseState& st, const QString& rawWord, int line)
                 attr.startsWith(QLatin1String("TO")) || attr.startsWith(QLatin1String("TD")))
                 recordAttribute(st, attr);
         }
+        // Altium aperture metadata: `G04:AMPARAMS|DCode=15|XSize=23.62mil|
+        // ...|Shape=RoundedRectangle|`. Kept raw, keyed by D-code — purely
+        // descriptive (the inspector's friendly text), never geometry.
+        if (body.startsWith(QLatin1Char(':')))
+            body = body.mid(1).trimmed();
+        if (body.startsWith(QLatin1String("AMPARAMS|"))) {
+            const QString fields = body.mid(9);
+            for (const QString& field :
+                 fields.split(QLatin1Char('|'), Qt::SkipEmptyParts)) {
+                if (field.startsWith(QLatin1String("DCode="))) {
+                    bool ok = false;
+                    const int d = field.mid(6).toInt(&ok);
+                    if (ok)
+                        st.file.amParams[d] = fields;
+                    break;
+                }
+            }
+        }
         return true;
     }
 
@@ -1103,7 +1122,123 @@ double arcSweep(const Vec2d& from, const Vec2d& to, const Vec2d& center, bool cw
     return cw ? -normalizeAngle(a0 - a1) : normalizeAngle(a1 - a0);
 }
 
+// AMPARAMS length "23.62mil" / "0.6mm" / "1in" (bare = unitless, e.g.
+// Rotation) -> mm. ok=false on anything non-numeric.
+double amLengthMm(QString s, bool& ok)
+{
+    s = s.trimmed();
+    double scale = 1.0;
+    if (s.endsWith(QLatin1String("mil"), Qt::CaseInsensitive)) {
+        scale = 0.0254;
+        s.chop(3);
+    } else if (s.endsWith(QLatin1String("mm"), Qt::CaseInsensitive)) {
+        s.chop(2);
+    } else if (s.endsWith(QLatin1String("inch"), Qt::CaseInsensitive)) {
+        scale = 25.4;
+        s.chop(4);
+    } else if (s.endsWith(QLatin1String("in"), Qt::CaseInsensitive)) {
+        scale = 25.4;
+        s.chop(2);
+    }
+    const double v = s.toDouble(&ok);
+    return ok ? v * scale : 0.0;
+}
+
+QString fmtMm(double v)
+{
+    return QString::number(v, 'f', 3);
+}
+
+QString fmtDeg(double deg)
+{
+    return QString::number(deg, 'g', 10);
+}
+
 } // namespace
+
+QString gerberApertureDesc(const GerberAperture& ap, const GerberFile& file)
+{
+    const auto p = [&ap](size_t i) {
+        return i < ap.params.size() ? ap.params[i] : 0.0;
+    };
+    QString desc;
+    switch (ap.kind) {
+    case 'C':
+        desc = QStringLiteral("Circle d=%1").arg(fmtMm(p(0)));
+        break;
+    case 'R':
+        desc = QStringLiteral("Rect %1x%2").arg(fmtMm(p(0)), fmtMm(p(1)));
+        break;
+    case 'O':
+        desc = QStringLiteral("Obround %1x%2").arg(fmtMm(p(0)), fmtMm(p(1)));
+        break;
+    case 'P':
+        desc = QStringLiteral("Polygon d=%1 n=%2")
+                   .arg(fmtMm(p(0)))
+                   .arg(int(std::lround(p(1))));
+        if (std::abs(p(2)) > 1e-9)
+            desc += QStringLiteral(" rot %1deg").arg(fmtDeg(p(2)));
+        break;
+    case 'M': {
+        // Altium's AMPARAMS comment carries the designer-level parameters
+        // ("Shape=RoundedRectangle|XSize=23.62mil|CornerRadius=2.13mil|
+        // Rotation=270.000") — far more readable than the raw primitives.
+        const auto it = file.amParams.find(ap.dcode);
+        if (it != file.amParams.end()) {
+            QMap<QString, QString> f;
+            for (const QString& field :
+                 it.value().split(QLatin1Char('|'), Qt::SkipEmptyParts)) {
+                const int eq = field.indexOf(QLatin1Char('='));
+                if (eq > 0)
+                    f[field.left(eq)] = field.mid(eq + 1);
+            }
+            QString shape = f.value(QStringLiteral("Shape"),
+                                    QStringLiteral("Macro"));
+            if (shape == QLatin1String("RoundedRectangle"))
+                shape = QStringLiteral("RoundedRect");
+            bool okW = false, okH = false;
+            const double w = amLengthMm(f.value(QStringLiteral("XSize")), okW);
+            const double h = amLengthMm(f.value(QStringLiteral("YSize")), okH);
+            desc = shape;
+            if (okW && okH)
+                desc += QStringLiteral(" %1x%2").arg(fmtMm(w), fmtMm(h));
+            bool okR = false;
+            const double r =
+                amLengthMm(f.value(QStringLiteral("CornerRadius")), okR);
+            if (okR && r > 1e-9)
+                desc += QStringLiteral(" r=%1").arg(fmtMm(r));
+            bool okRot = false;
+            const double rot =
+                f.value(QStringLiteral("Rotation")).toDouble(&okRot);
+            if (okRot && std::abs(rot) > 1e-9)
+                desc += QStringLiteral(" rot %1deg").arg(fmtDeg(rot));
+            bool okHole = false;
+            const double hole =
+                amLengthMm(f.value(QStringLiteral("HoleSize")), okHole);
+            if (okHole && hole > 1e-9)
+                desc += QStringLiteral(" hole=%1").arg(fmtMm(hole));
+            break;
+        }
+        desc = QStringLiteral("Macro %1").arg(ap.macroName);
+        // Best-effort footprint size from the rendered primitives.
+        QStringList scratch;
+        BBox2d box;
+        for (const auto& ring : apertureRings(ap, file, scratch))
+            for (const Vec2d& pt : ring)
+                box.expand(pt);
+        if (box.isValid())
+            desc += QStringLiteral(" ~%1x%2")
+                        .arg(fmtMm(box.width()), fmtMm(box.height()));
+        break;
+    }
+    default:
+        desc = QStringLiteral("Aperture D%1").arg(ap.dcode);
+        break;
+    }
+    if (ap.holeDiameter > 0)
+        desc += QStringLiteral(" hole=%1").arg(fmtMm(ap.holeDiameter));
+    return desc;
+}
 
 GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                                     const QString& layerName)
@@ -1164,10 +1299,19 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
         std::vector<PolyVertex> verts;
     } pending;
 
-    auto addEntity = [&](std::unique_ptr<Entity> e, bool dark) {
+    // Aperture usage per D-code: one count per Gerber OPERATION (draw, arc
+    // or flash — strokes coalesced into one polyline still count each op).
+    // Regions have no aperture. Stored in the layer's camMeta table below.
+    std::map<int, int> usage;
+
+    // dcode >= 0 tags the entity with the aperture that painted it — the
+    // G3 exporter's (and the inspector's) source of truth.
+    auto addEntity = [&](std::unique_ptr<Entity> e, bool dark, int dcode) {
         e->setLayerId(layerId);
         if (!dark)
             e->setExtraValue(QStringLiteral("gpol"), QStringLiteral("C"));
+        if (dcode >= 0)
+            e->setExtraValue(QStringLiteral("dcode"), dcode);
         doc.addEntity(std::move(e));
         ++res.entities;
     };
@@ -1178,7 +1322,7 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
         if (pending.verts.size() >= 2) {
             auto pl = std::make_unique<PolylineEntity>(pending.verts, false);
             pl->setWidth(pending.width);
-            addEntity(std::move(pl), pending.dark);
+            addEntity(std::move(pl), pending.dark, pending.dcode);
         }
         pending.active = false;
         pending.verts.clear();
@@ -1217,6 +1361,7 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                 pending.width = width;
                 pending.verts.push_back({o.from, 0.0});
             }
+            ++usage[o.dcode];
             if (o.kind == GerberObjKind::Draw) {
                 pending.verts.push_back({o.to, 0.0});
                 ++res.draws;
@@ -1246,7 +1391,8 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
             auto ins = std::make_unique<InsertEntity>();
             ins->blockName = blockFor(o.dcode);
             ins->position = o.to;
-            addEntity(std::move(ins), o.dark);
+            addEntity(std::move(ins), o.dark, o.dcode);
+            ++usage[o.dcode];
             ++res.flashes;
             break;
         }
@@ -1284,7 +1430,9 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                 res.warnings << QStringLiteral("line %1: region without usable contours")
                                     .arg(o.line);
             } else {
-                addEntity(std::move(hatch), o.dark);
+                // Regions are painted by G36/G37 contours, not by an
+                // aperture: no dcode tag on purpose.
+                addEntity(std::move(hatch), o.dark, -1);
                 ++res.regions;
             }
             break;
@@ -1292,6 +1440,43 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
         }
     }
     flush();
+
+    // The file's APERTURE TABLE becomes layer metadata (persisted in .vkd):
+    // every defined D-code with its shape, mm parameters, friendly
+    // description and usage count — the inspector's and the future G3
+    // exporter's source of truth. Re-importing onto the same layer replaces
+    // the "apertures" table and keeps any other camMeta key.
+    {
+        QJsonObject table;
+        for (const auto& [dcode, ap] : file.apertures) {
+            QJsonObject entry;
+            switch (ap.kind) {
+            case 'C': entry[QStringLiteral("shape")] = QStringLiteral("Circle"); break;
+            case 'R': entry[QStringLiteral("shape")] = QStringLiteral("Rect"); break;
+            case 'O': entry[QStringLiteral("shape")] = QStringLiteral("Obround"); break;
+            case 'P': entry[QStringLiteral("shape")] = QStringLiteral("Polygon"); break;
+            case 'M': entry[QStringLiteral("shape")] = QStringLiteral("Macro"); break;
+            default: entry[QStringLiteral("shape")] = QString(QLatin1Char(ap.kind)); break;
+            }
+            QJsonArray params;
+            for (const double v : ap.params)
+                params.append(v);
+            entry[QStringLiteral("params")] = params;
+            if (ap.kind == 'M')
+                entry[QStringLiteral("macro")] = ap.macroName;
+            if (ap.holeDiameter > 0)
+                entry[QStringLiteral("hole")] = ap.holeDiameter;
+            entry[QStringLiteral("desc")] = gerberApertureDesc(ap, file);
+            const auto used = usage.find(dcode);
+            entry[QStringLiteral("usage")] =
+                used == usage.end() ? 0 : used->second;
+            table[QStringLiteral("D%1").arg(dcode)] = entry;
+        }
+        const Layer* layer = doc.layer(layerId);
+        QJsonObject meta = layer ? layer->camMeta : QJsonObject();
+        meta[QStringLiteral("apertures")] = table;
+        doc.setLayerCamMeta(layerId, meta);
+    }
 
     if (tx)
         tx->commit();

@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS layers (
     sort        INTEGER NOT NULL DEFAULT 0,
     alpha       INTEGER NOT NULL DEFAULT 100,
     paint_rank  INTEGER NOT NULL DEFAULT 0,
-    gerber_role TEXT NOT NULL DEFAULT ''
+    gerber_role TEXT NOT NULL DEFAULT '',
+    cam_meta    TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS layouts (
     id      INTEGER PRIMARY KEY,
@@ -161,6 +162,9 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         exec(db.get(),
              "ALTER TABLE layers ADD COLUMN gerber_role TEXT NOT NULL DEFAULT '';",
              ignored);
+        exec(db.get(),
+             "ALTER TABLE layers ADD COLUMN cam_meta TEXT NOT NULL DEFAULT '';",
+             ignored);
     }
     if (!exec(db.get(), "BEGIN;", error))
         return false;
@@ -229,11 +233,16 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
 
     sqlite3_prepare_v2(db.get(),
                        "INSERT INTO layers(id,name,color,visible,locked,printable,sort,"
-                       "alpha,paint_rank,gerber_role) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?);",
+                       "alpha,paint_rank,gerber_role,cam_meta) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?);",
                        -1, &stmt, nullptr);
     int sort = 0;
     for (const Layer& l : doc.layers()) {
+        // Compact JSON, empty string when the layer carries no CAM tables.
+        const QByteArray camMeta =
+            l.camMeta.isEmpty()
+                ? QByteArray()
+                : QJsonDocument(l.camMeta).toJson(QJsonDocument::Compact);
         sqlite3_reset(stmt);
         sqlite3_bind_int64(stmt, 1, l.id);
         sqlite3_bind_text(stmt, 2, l.name.toUtf8().constData(), -1, SQLITE_TRANSIENT);
@@ -245,6 +254,8 @@ bool NativeStore::save(const Document& doc, const QString& path, QString& error)
         sqlite3_bind_int(stmt, 8, l.alpha);
         sqlite3_bind_int(stmt, 9, l.rank);
         sqlite3_bind_text(stmt, 10, l.gerberRole.toUtf8().constData(), -1,
+                          SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 11, camMeta.constData(), camMeta.size(),
                           SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             error = QString::fromUtf8(sqlite3_errmsg(db.get()));
@@ -418,21 +429,34 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
         sqlite3_finalize(stmt);
     }
 
-    // Layer-stack columns (alpha/paint_rank/gerber_role) are absent in files
-    // written before G2: try the full SELECT first, fall back to the legacy
-    // one (defaults then apply: opaque, rank 0, no role).
-    bool fullLayerColumns = true;
+    // Layer columns grew twice (G2 stack: alpha/paint_rank/gerber_role, then
+    // G2 inspection: cam_meta). Try the newest SELECT first and degrade so
+    // every earlier file still loads (missing columns keep their defaults).
+    int layerColumnTier = 2; // 2 = +cam_meta, 1 = +stack columns, 0 = legacy
     if (sqlite3_prepare_v2(db.get(),
                            "SELECT id,name,color,visible,locked,printable,"
-                           "alpha,paint_rank,gerber_role FROM layers ORDER BY sort;",
-                           -1, &stmt, nullptr) != SQLITE_OK) {
-        fullLayerColumns = false;
-        stmt = nullptr;
-        sqlite3_prepare_v2(db.get(),
-                           "SELECT id,name,color,visible,locked,printable FROM layers "
+                           "alpha,paint_rank,gerber_role,cam_meta FROM layers "
                            "ORDER BY sort;",
-                           -1, &stmt, nullptr);
+                           -1, &stmt, nullptr) != SQLITE_OK) {
+        layerColumnTier = 1;
+        stmt = nullptr;
+        if (sqlite3_prepare_v2(db.get(),
+                               "SELECT id,name,color,visible,locked,printable,"
+                               "alpha,paint_rank,gerber_role FROM layers "
+                               "ORDER BY sort;",
+                               -1, &stmt, nullptr) != SQLITE_OK) {
+            layerColumnTier = 0;
+            stmt = nullptr;
+            sqlite3_prepare_v2(db.get(),
+                               "SELECT id,name,color,visible,locked,printable "
+                               "FROM layers ORDER BY sort;",
+                               -1, &stmt, nullptr);
+        }
     }
+    // Fab-kit documents live WITHOUT the default layer "0" (dropped by the
+    // importer): when no id-0 row comes back, the constructor's default is
+    // a ghost to drop after the entities are restored.
+    bool sawLayerZeroRow = false;
     if (stmt) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             Layer l;
@@ -443,12 +467,21 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
             l.visible = sqlite3_column_int(stmt, 3) != 0;
             l.locked = sqlite3_column_int(stmt, 4) != 0;
             l.printable = sqlite3_column_int(stmt, 5) != 0;
-            if (fullLayerColumns) {
+            if (layerColumnTier >= 1) {
                 l.alpha = std::clamp(sqlite3_column_int(stmt, 6), 0, 100);
                 l.rank = sqlite3_column_int(stmt, 7);
                 l.gerberRole = QString::fromUtf8(
                     reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8)));
             }
+            if (layerColumnTier >= 2) {
+                const QByteArray raw(
+                    reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9)),
+                    sqlite3_column_bytes(stmt, 9));
+                if (!raw.isEmpty())
+                    l.camMeta = QJsonDocument::fromJson(raw).object();
+            }
+            if (l.id == 0)
+                sawLayerZeroRow = true;
             doc->restoreLayer(l);
         }
         sqlite3_finalize(stmt);
@@ -594,6 +627,12 @@ std::unique_ptr<Document> NativeStore::load(const QString& path, QString& error)
             doc->restoreEntity(std::move(entity), id);
     }
     sqlite3_finalize(stmt);
+
+    // Files saved without a layer-"0" row (fab-kit documents): the layer the
+    // constructor pre-created is residue, not document state — drop it if
+    // nothing ended up referencing it.
+    if (!sawLayerZeroRow)
+        doc->dropEmptyLayerZero();
 
     return doc;
 }

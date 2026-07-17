@@ -95,6 +95,9 @@ public:
     void setLayerRank(LayerId id, int rank);
     // CAM role metadata token (see doc/GerberRole.h); empty clears it.
     void setLayerGerberRole(LayerId id, const QString& role);
+    // CAM source tables (aperture/tool JSON — see Layer.camMeta). Direct
+    // edit like every other layer property; {} clears.
+    void setLayerCamMeta(LayerId id, const QJsonObject& meta);
     // Layers stable-sorted by rank (ties keep table order) — the render stack.
     std::vector<const Layer*> layersByPaintOrder() const;
     // Move a layer one slot up (+1 = painted later / on top) or down (-1)
@@ -102,6 +105,12 @@ public:
     bool moveLayerPaintOrder(LayerId id, int delta);
     // Deletes an empty, non-current layer. False if it has entities/is current/is 0.
     bool removeLayer(LayerId id);
+    // Drops the DEFAULT layer "0" (id 0) when it is pure constructor residue:
+    // not current, no document entity and no block entity references it.
+    // Used after a fab-kit import into a virgin document (the kit brings its
+    // own named layers) and by the load path when the file has no id-0 row.
+    // Ordinary flows (DXF, 2D drawing) keep layer "0" untouched.
+    bool dropEmptyLayerZero();
     LayerId currentLayer() const { return m_currentLayer; }
     void setCurrentLayer(LayerId id) { m_currentLayer = id; }
     uint32_t resolveColor(const Entity& e) const;

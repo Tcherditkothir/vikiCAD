@@ -103,6 +103,11 @@ struct GerberFile {
     // X2 file attributes from BOTH forms — naked %TF...*% and the Altium
     // comment form `G04 #@! TF...*`. Key ".FileFunction" etc -> raw value.
     QMap<QString, QString> fileAttributes;
+    // Altium aperture metadata comments `G04:AMPARAMS|DCode=15|XSize=...|
+    // Shape=RoundedRectangle|*`, keyed by D-code, raw pipe-separated body.
+    // Purely descriptive (the macro primitives stay the render truth): used
+    // to build the human aperture description shown by the inspector.
+    QMap<int, QString> amParams;
     // TA/TO/TD statements accepted but not interpreted (absent from the kits).
     QStringList otherAttributes;
     QStringList warnings;
@@ -117,6 +122,15 @@ struct GerberParseResult {
 
 GerberParseResult parseGerber(const QString& path);
 GerberParseResult parseGerberData(const QByteArray& data);
+
+// One-line human description of an aperture, mm everywhere:
+//   C -> "Circle d=0.200"        R -> "Rect 1.200x2.000"
+//   O -> "Obround 1.500x0.800"   P -> "Polygon d=1.000 n=6 rot 45deg"
+//   M -> "RoundedRect 0.600x0.900 r=0.054 rot 270deg" when the file carries
+//        the Altium AMPARAMS comment for this D-code, else "Macro <name>".
+// A round hole appends " hole=d". This is what the PropertiesPanel inspector
+// and the APERTURES table print (stored in the layer's camMeta at import).
+QString gerberApertureDesc(const GerberAperture& ap, const GerberFile& file);
 
 // ---------------------------------------------------------------------------
 // Stage 2 — conversion to entities
@@ -143,7 +157,12 @@ struct GerberImportResult {
 //    "GBR-Dnn") + an InsertEntity per flash,
 //  - G36/G37 regions -> solid HatchEntity (arcs tessellated at 0.001 mm),
 //  - LPC objects carry "gpol":"C" in their entity JSON; document order is
-//    preserved so a later renderer can erase-paint them correctly.
+//    preserved so a later renderer can erase-paint them correctly,
+//  - every aperture-painted entity carries "dcode":N in its extra JSON
+//    (regions have no aperture, hence no tag), and the layer's camMeta
+//    stores the full aperture table ({"apertures":{"Dnn":{shape, params mm,
+//    macro?, hole?, desc, usage}}}) — persisted in .vkd for the inspector
+//    and the future RS-274X exporter.
 // All mutations run inside one transaction (single undo step).
 GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                                     const QString& layerName);

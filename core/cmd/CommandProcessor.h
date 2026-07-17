@@ -73,6 +73,7 @@ void registerLayoutCommands(CommandProcessor& processor);
 void registerSolidCommands(CommandProcessor& processor);
 void registerSolidFinishCommands(CommandProcessor& processor);
 void registerMeasureCommands(CommandProcessor& processor);
+void registerCamCommands(CommandProcessor& processor);
 void registerGearCommands(CommandProcessor& processor);
 void registerAssemblyCommands(CommandProcessor& processor);
 void registerPattern3DCommands(CommandProcessor& processor);

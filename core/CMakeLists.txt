@@ -37,6 +37,7 @@ add_library(vikicore STATIC
     cmd/Commands3D.cpp
     cmd/Commands3DFinish.cpp
     cmd/CommandsMeasure.cpp
+    cmd/CommandsCam.cpp
     cmd/CommandsGear.cpp
     cmd/CommandsAssembly.cpp
     cmd/CommandsPattern3D.cpp

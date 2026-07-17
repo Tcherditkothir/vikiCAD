@@ -20,7 +20,10 @@
 #        initial clean render), LAYER <name> ALPHA over IPC;
 #        G2 measuring: MINDIST drill-to-drill (JSON trailer vs the by-hand
 #        formula, witness overlay on the canvas), DIMALIGNED pad-center to
-#        pad-center (stable clean capture, UNDO restores the render).
+#        pad-center (stable clean capture, UNDO restores the render);
+#        G2 inspection: APERTURES (Altium AMPARAMS desc verbatim),
+#        DRILLREPORT (totals == the kit's .DRR), layer "0" dropped, and
+#        the PropertiesPanel gerber section via SELECT + query ui propRows.
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
@@ -680,6 +683,55 @@ print(a['id'], b['id'], round(math.hypot(bx - ax, by - ay) - ar - br, 6),
     rpc screenshot "$TMP/dim_undo.png" clean >/dev/null
     assert_eq "measure: undo restores the clean render" \
         0 "$(img_px_changed "$TMP/bv_a100.png" "$TMP/dim_undo.png")"
+
+    # --- G2 inspection: APERTURES / DRILLREPORT / SELECT-driven panel --------
+    # The aperture + tool tables the importer persisted, read back over IPC.
+    # DRILLREPORT totals are the .DRR ground truth of S5M0PCBA (182 holes =
+    # 180 PTH + 2 NPTH — the same numbers the ctest golden compares); the
+    # PropertiesPanel gerber section is checked through `query ui` propRows
+    # after a headless SELECT.
+    layers_json="$(rpc query layers)"
+    assert_eq "inspect: layer '0' dropped by kit open" 0 \
+        "$(jget "$layers_json" "sum(1 for l in d['result']['layers'] if l['name']=='0')")"
+    assert_eq "inspect: current layer is a kit layer" Bottom-Copper \
+        "$(jget "$layers_json" "next(l['name'] for l in d['result']['layers'] if l['current'])")"
+    assert_ge "inspect: Top-Copper aperture table in query layers" \
+        "$(jget "$layers_json" "len(next(l for l in d['result']['layers'] if l['name']=='Top-Copper')['cam']['apertures'])")" 10
+
+    out="$(rpc exec "APERTURES Top-Copper")"
+    assert_eq "inspect: APERTURES header line" True \
+        "$(jget "$out" "any(m.startswith(\"apertures on 'Top-Copper'\") for m in d['result']['messages'])")"
+    assert_eq "inspect: APERTURES D15 = the Altium AMPARAMS desc" \
+        "RoundedRect 0.600x0.900 r=0.054 rot 270deg" \
+        "$(jget "$out" "next(json.loads(m)['apertures']['Top-Copper']['D15']['desc'] for m in d['result']['messages'] if m.startswith('{'))")"
+
+    out="$(rpc exec DRILLREPORT)"
+    drj="$(jget "$out" "json.dumps(next(json.loads(m)['drillreport'] for m in d['result']['messages'] if m.startswith('{')))")"
+    assert_eq "inspect: DRILLREPORT total == .DRR" 182 "$(jget "$drj" "d['total']")"
+    assert_eq "inspect: DRILLREPORT plated == .DRR" 180 "$(jget "$drj" "d['plated']")"
+    assert_eq "inspect: DRILLREPORT NPTH == .DRR" 2 "$(jget "$drj" "d['npth']")"
+
+    read -r PAD_ID PAD_D DRL_ID DRL_T <<<"$(printf '%s' "$(rpc query entities)" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+es = d['result']['entities']
+pad = next(e for e in es if e['type'] == 'insert' and 'dcode' in e)
+drl = next(e for e in es if e['type'] == 'circle' and 'tool' in e)
+print(pad['id'], pad['dcode'], drl['id'], drl['tool'])
+")"
+    gexec "inspect: SELECT a flashed pad" "SELECT $PAD_ID"
+    ui="$(rpc query ui)"
+    assert_eq "inspect: panel shows the pad D-code" "D$PAD_D" \
+        "$(jget "$ui" "dict((r[0], r[1]) for r in d['result']['propRows']).get('gerber D-code')")"
+    assert_eq "inspect: panel describes the aperture" True \
+        "$(jget "$ui" "len(dict((r[0], r[1]) for r in d['result']['propRows']).get('gerber aperture', '')) > 0")"
+    gexec "inspect: SELECT a drill hit" "SELECT $DRL_ID"
+    ui="$(rpc query ui)"
+    assert_eq "inspect: panel names the drill tool" True \
+        "$(jget "$ui" "dict((r[0], r[1]) for r in d['result']['propRows']).get('drill tool', '').startswith('$DRL_T')")"
+    assert_eq "inspect: panel tells the plating" "plated (PTH)" \
+        "$(jget "$ui" "dict((r[0], r[1]) for r in d['result']['propRows']).get('drill plating')")"
+    gexec "inspect: clear the selection" "SELECT"
 
     # A LONE fab file (not a directory) opens through the same kit path
     # thanks to the content sniff -- regression for the single-.GTL IPC open.

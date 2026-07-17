@@ -33,8 +33,8 @@ QJsonArray entitiesJson(const Document& doc)
 QJsonArray layersJson(const Document& doc)
 {
     QJsonArray out;
-    for (const Layer& l : doc.layers())
-        out.append(QJsonObject{
+    for (const Layer& l : doc.layers()) {
+        QJsonObject obj{
             {QStringLiteral("id"), qint64(l.id)},
             {QStringLiteral("name"), l.name},
             {QStringLiteral("color"),
@@ -45,7 +45,13 @@ QJsonArray layersJson(const Document& doc)
             {QStringLiteral("alpha"), l.alpha},
             {QStringLiteral("rank"), l.rank},
             {QStringLiteral("gerberRole"), l.gerberRole},
-            {QStringLiteral("current"), l.id == doc.currentLayer()}});
+            {QStringLiteral("current"), l.id == doc.currentLayer()}};
+        // CAM source tables (aperture/tool JSON) — only when present, so
+        // ordinary documents keep their compact layer rows.
+        if (!l.camMeta.isEmpty())
+            obj[QStringLiteral("cam")] = l.camMeta;
+        out.append(obj);
+    }
     return out;
 }
 

@@ -412,6 +412,57 @@ private:
     std::vector<EntityId> m_picked;
 };
 
+// ---- SELECT --------------------------------------------------------------------
+
+// SELECT [id id ...] — replace the selection set by ids (Enter/no id =
+// clear). The headless way to drive every pickfirst behavior: MINDIST's
+// pre-selected pair, ERASE, the PropertiesPanel inspector in the GUI...
+class SelectCommand : public Command {
+public:
+    const char* name() const override { return "SELECT"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select entities (Enter to clear):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        switch (v.kind) {
+        case InputValue::Kind::EntitySet:
+            return apply(ctx, v.entitySet);
+        case InputValue::Kind::EntityRef:
+            return apply(ctx, {v.entityRef});
+        case InputValue::Kind::Finish:
+            ctx.selection().clear();
+            ctx.info(QStringLiteral("selection cleared"));
+            return Step::done();
+        default:
+            return Step::cancelled();
+        }
+    }
+
+private:
+    static Step apply(CommandContext& ctx, const std::vector<EntityId>& ids)
+    {
+        ctx.selection().clear();
+        int missing = 0;
+        for (const EntityId id : ids) {
+            if (ctx.doc().entity(id))
+                ctx.selection().add(id);
+            else
+                ++missing;
+        }
+        ctx.info(QStringLiteral("%1 entity(ies) selected")
+                     .arg(ctx.selection().size()));
+        if (missing > 0)
+            ctx.info(QStringLiteral("%1 id(s) do not exist (ignored)")
+                         .arg(missing));
+        return Step::done();
+    }
+};
+
 // ---- UNDO / REDO ---------------------------------------------------------------
 
 // Safety valve shared by UNDO/REDO: a leaked OPEN transaction (a begin without
@@ -533,6 +584,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     p.registerCommand(&make<CircleCommand>, {QStringLiteral("C")});
     p.registerCommand(&make<ArcCommand>, {QStringLiteral("A")});
     p.registerCommand(&make<EraseCommand>, {QStringLiteral("E"), QStringLiteral("DEL")});
+    p.registerCommand(&make<SelectCommand>, {QStringLiteral("SEL")});
     p.registerCommand(&make<UndoCommand>, {QStringLiteral("U")});
     p.registerCommand(&make<RedoCommand>);
     p.registerCommand(&make<ZoomCommand>, {QStringLiteral("Z")});
@@ -547,6 +599,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerSolidCommands(p);
     registerSolidFinishCommands(p);
     registerMeasureCommands(p);
+    registerCamCommands(p);
     registerGearCommands(p);
     registerAssemblyCommands(p);
     registerPattern3DCommands(p);

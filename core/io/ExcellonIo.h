@@ -92,9 +92,11 @@ struct ExcellonImportResult {
 
 // Builds one CircleEntity per hit (radius = tool diameter / 2) on the layer
 // `layerName` (created if missing; must be a single token — the command
-// grammar splits on whitespace). Every entity carries "plated":true/false in
-// its extra JSON bag. Slots are NOT converted (warning). All mutations run
-// inside one transaction (single undo step).
+// grammar splits on whitespace). Every entity carries "plated":true/false
+// and "tool":"Tn" in its extra JSON bag, and the layer's camMeta stores the
+// tool table ({"tools":{"Tn":{dia mm, plated, usage}}}) — persisted in .vkd
+// for DRILLREPORT and the future Excellon exporter. Slots are NOT converted
+// (warning). All mutations run inside one transaction (single undo step).
 ExcellonImportResult excellonToDocument(Document& doc, const ExcellonFile& file,
                                         const QString& layerName);
 

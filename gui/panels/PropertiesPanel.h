@@ -9,6 +9,7 @@
 #include "solid/FeatureParams.h"
 
 class QComboBox;
+class QJsonArray;
 class QLabel;
 class QPushButton;
 class QTableWidget;
@@ -24,6 +25,10 @@ public:
 
     void attach(Document* doc, SelectionSet* selection);
     void refresh();
+    // The visible property rows as [["key","value"],...] — the `query ui`
+    // self-description, so a headless agent can read what the panel shows
+    // (e.g. the gerber inspector rows after a SELECT).
+    QJsonArray tableRows() const;
 
 signals:
     void propertiesApplied();

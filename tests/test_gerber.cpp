@@ -272,9 +272,13 @@ TEST_CASE("Gerber: round draws, modal coordinates, LPC marks entities", "[gerber
     CHECK(plines[0]->width() == Approx(0.254).margin(1e-9));
     CHECK(plines[0]->vertices()[1].pos.x == Approx(25.4));
     CHECK(plines[0]->vertices()[2].pos.y == Approx(25.4));
-    CHECK(plines[0]->extra().isEmpty());
+    // G2 inspection: the stroking aperture rides on the entity ("dcode");
+    // dark entities still carry NO gpol marker.
+    CHECK(plines[0]->extra().value(QLatin1String("dcode")).toInt() == 10);
+    CHECK_FALSE(plines[0]->extra().contains(QLatin1String("gpol")));
     REQUIRE(plines[1]->vertices().size() == 2);
     CHECK(plines[1]->width() == Approx(0.508).margin(1e-9));
+    CHECK(plines[1]->extra().value(QLatin1String("dcode")).toInt() == 11);
     CHECK(plines[1]->extra().value(QLatin1String("gpol")).toString()
           == QStringLiteral("C"));
 
@@ -396,10 +400,15 @@ TEST_CASE("Gerber: LPC/LPD order preserved, gpol + width survive .vkd", "[gerber
         REQUIRE(dynamic_cast<const HatchEntity*>(e1) != nullptr);
         const auto* pl = dynamic_cast<const PolylineEntity*>(e2);
         REQUIRE(pl != nullptr);
-        CHECK(e0->extra().isEmpty());
+        // G2 inspection: aperture-painted entities carry their D-code; the
+        // region (G36/G37, aperture-less) carries gpol only.
+        CHECK(e0->extra().value(QLatin1String("dcode")).toInt() == 10);
+        CHECK_FALSE(e0->extra().contains(QLatin1String("gpol")));
         CHECK(e1->extra().value(QLatin1String("gpol")).toString()
               == QStringLiteral("C"));
-        CHECK(e2->extra().isEmpty());
+        CHECK_FALSE(e1->extra().contains(QLatin1String("dcode")));
+        CHECK(e2->extra().value(QLatin1String("dcode")).toInt() == 11);
+        CHECK_FALSE(e2->extra().contains(QLatin1String("gpol")));
         CHECK(pl->width() == Approx(0.254).margin(1e-9));
     };
     checkDoc(doc);

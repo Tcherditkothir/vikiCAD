@@ -301,6 +301,17 @@ void Document::setLayerGerberRole(LayerId id, const QString& role)
     }
 }
 
+void Document::setLayerCamMeta(LayerId id, const QJsonObject& meta)
+{
+    for (Layer& l : m_layers) {
+        if (l.id == id) {
+            l.camMeta = meta;
+            notifyChanged();
+            return;
+        }
+    }
+}
+
 std::vector<const Layer*> Document::layersByPaintOrder() const
 {
     std::vector<const Layer*> out;
@@ -343,6 +354,30 @@ bool Document::removeLayer(LayerId id)
     m_layers.erase(std::remove_if(m_layers.begin(), m_layers.end(),
                                   [id](const Layer& l) { return l.id == id; }),
                    m_layers.end());
+    notifyChanged();
+    return true;
+}
+
+bool Document::dropEmptyLayerZero()
+{
+    if (m_currentLayer == 0)
+        return false;
+    const auto it = std::find_if(m_layers.begin(), m_layers.end(),
+                                 [](const Layer& l) { return l.id == 0; });
+    if (it == m_layers.end())
+        return false;
+    // Any reference — a document entity OR a block-definition entity —
+    // keeps the layer (undo can resurrect document entities on it too, but
+    // the two call sites run on a virgin document / a fresh load where the
+    // undo stack holds nothing older than the check below).
+    for (const auto& [eid, e] : m_entities)
+        if (e->layerId() == 0)
+            return false;
+    for (const auto& blk : m_blocks)
+        for (const auto& e : blk->entities)
+            if (e->layerId() == 0)
+                return false;
+    m_layers.erase(it);
     notifyChanged();
     return true;
 }

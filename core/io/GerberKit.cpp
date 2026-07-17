@@ -555,6 +555,15 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
         taken << name;
     }
 
+    // A VIRGIN document (fresh Document(): no entities, no blocks, just the
+    // default layer "0") gets the constructor residue dropped after the
+    // import: a fab kit brings its own named layers, an empty white "0" in
+    // the middle of the CAM stack is noise (G1 debt). Any pre-existing
+    // content keeps layer "0" untouched.
+    const bool virginDoc = doc.entityCount() == 0 && doc.blocks().empty() &&
+                           doc.layers().size() == 1 &&
+                           doc.layers().front().id == 0;
+
     // ---- import: the WHOLE kit is one transaction (single undo step).
     // gerberToDocument / excellonToDocument detect the open transaction and
     // join it instead of opening their own (nested transactions assert).
@@ -599,6 +608,17 @@ GerberKitResult importGerberKit(Document& doc, const QString& path)
         res.entities += added;
     }
     tx.commit();
+
+    // Kit into a virgin document: the current layer moves to the first
+    // imported layer (bottom of the paint stack) and the empty default "0"
+    // goes away — the LayerPanel then shows the pure CAM stack. UNDO keeps
+    // the kit layers anyway (layer edits are direct, the v1 choice), so
+    // dropping "0" loses nothing undo could want back.
+    if (virginDoc && !res.layers.isEmpty()) {
+        if (Layer* first = doc.layerByName(res.layers.first()))
+            doc.setCurrentLayer(first->id);
+        doc.dropEmptyLayerZero();
+    }
     res.ok = true;
     return res;
 }

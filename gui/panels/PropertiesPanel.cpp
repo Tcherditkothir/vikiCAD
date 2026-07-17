@@ -14,6 +14,8 @@
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
+#include "doc/Annotations.h"
+#include "doc/Entities.h"
 #include "solid/SolidEntity.h"
 
 namespace viki {
@@ -135,6 +137,68 @@ void PropertiesPanel::rebuildGeometryTable()
             };
             addRow(QStringLiteral("type"), QLatin1String(e->typeName()), false);
             addRow(QStringLiteral("id"), QString::number(e->id()), false);
+            // --- Gerber/Excellon inspector (G2): a fab-file entity tells
+            // its CAM story — D-code + aperture (from the layer's persisted
+            // aperture table), polarity, drill tool + plating, layer role.
+            // Read-only: this is imported fabrication data.
+            {
+                const Layer* layer = m_doc->layer(e->layerId());
+                const QJsonObject& extra = e->extra();
+                const QJsonValue dcode = extra.value(QLatin1String("dcode"));
+                if (dcode.isDouble()) {
+                    const QString code =
+                        QStringLiteral("D%1").arg(dcode.toInt());
+                    addRow(QStringLiteral("gerber D-code"), code, false);
+                    if (layer) {
+                        const QJsonObject ap =
+                            layer->camMeta.value(QLatin1String("apertures"))
+                                .toObject()
+                                .value(code)
+                                .toObject();
+                        if (!ap.isEmpty())
+                            addRow(QStringLiteral("gerber aperture"),
+                                   ap.value(QLatin1String("desc")).toString(),
+                                   false);
+                    }
+                }
+                const bool isRegion =
+                    dynamic_cast<const HatchEntity*>(e) && layer &&
+                    !layer->camMeta.value(QLatin1String("apertures"))
+                         .toObject()
+                         .isEmpty();
+                if (isRegion)
+                    addRow(QStringLiteral("gerber region"),
+                           QStringLiteral("G36/G37 filled contour"), false);
+                if (dcode.isDouble() || isRegion)
+                    addRow(QStringLiteral("gerber polarity"),
+                           extra.value(QLatin1String("gpol")).toString() ==
+                                   QLatin1String("C")
+                               ? QStringLiteral("clear (LPC, erases below)")
+                               : QStringLiteral("dark"),
+                           false);
+                const QString tool =
+                    extra.value(QLatin1String("tool")).toString();
+                if (!tool.isEmpty()) {
+                    const auto* c = dynamic_cast<const CircleEntity*>(e);
+                    addRow(QStringLiteral("drill tool"),
+                           c ? QStringLiteral("%1  d=%2 mm")
+                                   .arg(tool)
+                                   .arg(c->radius() * 2.0, 0, 'f', 3)
+                             : tool,
+                           false);
+                }
+                if (extra.contains(QLatin1String("plated")))
+                    addRow(QStringLiteral("drill plating"),
+                           extra.value(QLatin1String("plated")).toBool()
+                               ? QStringLiteral("plated (PTH)")
+                               : QStringLiteral("non-plated (NPTH)"),
+                           false);
+                if (layer && !layer->gerberRole.isEmpty())
+                    addRow(QStringLiteral("layer role"),
+                           QStringLiteral("%1 (%2)")
+                               .arg(layer->gerberRole, layer->name),
+                           false);
+            }
             for (auto it = geom.begin(); it != geom.end(); ++it) {
                 if (it.key() == QLatin1String("brep"))
                     continue; // huge base64 BREP blob — not human-editable
@@ -181,6 +245,18 @@ void PropertiesPanel::rebuildGeometryTable()
         }
     }
     m_geomTable->blockSignals(false);
+}
+
+QJsonArray PropertiesPanel::tableRows() const
+{
+    QJsonArray rows;
+    for (int r = 0; r < m_geomTable->rowCount(); ++r) {
+        const QTableWidgetItem* k = m_geomTable->item(r, 0);
+        const QTableWidgetItem* v = m_geomTable->item(r, 1);
+        rows.append(QJsonArray{k ? k->text() : QString(),
+                               v ? v->text() : QString()});
+    }
+    return rows;
 }
 
 void PropertiesPanel::geometryCellChanged(int row, int column)

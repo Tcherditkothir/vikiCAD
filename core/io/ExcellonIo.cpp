@@ -1,9 +1,11 @@
 #include "ExcellonIo.h"
 
 #include <cmath>
+#include <map>
 #include <optional>
 
 #include <QFile>
+#include <QJsonObject>
 
 #include "doc/Entities.h"
 
@@ -516,15 +518,42 @@ ExcellonImportResult excellonToDocument(Document& doc, const ExcellonFile& file,
     std::optional<TransactionScope> tx;
     if (!doc.inTransaction())
         tx.emplace(doc, QStringLiteral("EXCELLONIMPORT"));
+    std::map<int, int> usage; // hits per tool, for the layer's tool table
     for (const ExcellonHit& h : file.hits) {
         const ExcellonTool& tool = file.tools.at(h.tool);
         auto c = std::make_unique<CircleEntity>(h.pos, tool.diameter * 0.5);
         c->setLayerId(layerId);
         c->setExtraValue(QStringLiteral("plated"), tool.plated);
+        // Which drill bit made this hole — "T3" like the source file. The
+        // diameter stays readable on the circle itself (radius * 2).
+        c->setExtraValue(QStringLiteral("tool"),
+                         QStringLiteral("T%1").arg(h.tool));
         doc.addEntity(std::move(c));
+        ++usage[h.tool];
         ++res.hits;
         ++res.entities;
     }
+
+    // The TOOL TABLE becomes layer metadata (persisted in .vkd): every
+    // declared tool with its mm diameter, plating and hit count — the
+    // DRILLREPORT source and the future Excellon exporter's truth.
+    // Re-importing onto the same layer replaces the "tools" table only.
+    {
+        QJsonObject table;
+        for (const auto& [num, tool] : file.tools) {
+            const auto used = usage.find(num);
+            table[QStringLiteral("T%1").arg(num)] =
+                QJsonObject{{QStringLiteral("dia"), tool.diameter},
+                            {QStringLiteral("plated"), tool.plated},
+                            {QStringLiteral("usage"),
+                             used == usage.end() ? 0 : used->second}};
+        }
+        const Layer* layer = doc.layer(layerId);
+        QJsonObject meta = layer ? layer->camMeta : QJsonObject();
+        meta[QStringLiteral("tools")] = table;
+        doc.setLayerCamMeta(layerId, meta);
+    }
+
     if (tx)
         tx->commit();
     res.ok = true;

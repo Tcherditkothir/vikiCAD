@@ -917,6 +917,9 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
             messages.append(m);
         refreshPromptAndMessages();
         m_canvas->markDocumentDirty();
+        // Commands can change the selection (SELECT) or entity properties:
+        // keep the Properties panel live for IPC-driven sessions too.
+        m_propsPanel->refresh();
         sync3DView(); // IPC-driven 3D commands must show up too
         if (!r.ok)
             return {{QStringLiteral("error"), r.error},
@@ -958,6 +961,9 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                     docks.append(d->windowTitle());
             }
             result[QStringLiteral("tabbedDocks")] = docks;
+            // What the Properties panel currently SHOWS (key/value rows):
+            // lets an agent verify the gerber inspector after a SELECT.
+            result[QStringLiteral("propRows")] = m_propsPanel->tableRows();
         }
         return result;
     }
