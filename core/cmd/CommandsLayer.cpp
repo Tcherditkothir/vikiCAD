@@ -12,6 +12,9 @@
 //   LAYER <name> RANK <n>        paint rank (lower paints first)
 //   LAYER <name> ROLE <token>    reassign the CAM role (recolors + reranks)
 //   LAYER <name> UP|DOWN         move one slot in the paint order
+//   LAYER <name> CURRENT         make it the current layer (new entities
+//                                land here — the headless LayerPanel click,
+//                                e.g. CIRCLE a new hole on "Drill")
 //
 //   BOARDVIEW TOP|BOTTOM|ALL     CAM stack presets: TOP = bottom-side layers
 //                                dimmed; BOTTOM = top-side dimmed + X-mirrored
@@ -86,13 +89,14 @@ public:
             m_layerId = l->id;
             m_layerName = l->name;
             m_st = St::Option;
-            return Step::cont(InputKind::Keyword,
-                              QStringLiteral("Option [Alpha/Rank/Role/Up/Down]:"));
+            return Step::cont(
+                InputKind::Keyword,
+                QStringLiteral("Option [Alpha/Rank/Role/Up/Down/Current]:"));
         }
         case St::Option: {
             if (v.kind != InputValue::Kind::Keyword) {
                 ctx.info(QStringLiteral("expected an option: Alpha, Rank, Role, "
-                                        "Up or Down"));
+                                        "Up, Down or Current"));
                 return Step::cancelled();
             }
             const QString o = v.text; // already uppercased
@@ -116,8 +120,15 @@ public:
                 return move(ctx, +1);
             if (o == QLatin1String("D") || o == QLatin1String("DOWN"))
                 return move(ctx, -1);
+            if (o == QLatin1String("C") || o == QLatin1String("CURRENT")) {
+                ctx.doc().setCurrentLayer(m_layerId);
+                ctx.info(QStringLiteral("layer '%1' is now current (new "
+                                        "entities land here)")
+                             .arg(m_layerName));
+                return Step::done();
+            }
             ctx.info(QStringLiteral("unknown option: %1 (try Alpha, Rank, "
-                                    "Role, Up or Down)").arg(o));
+                                    "Role, Up, Down or Current)").arg(o));
             return Step::cancelled();
         }
         case St::AlphaValue: {

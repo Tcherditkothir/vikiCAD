@@ -9,6 +9,8 @@
 #include <QJsonObject>
 
 #include "doc/Entities.h"
+#include "doc/EntitiesEx.h"
+#include "geom/GeomUtil.h"
 
 // CAM inspection commands (G2) — read-only reports over the metadata the
 // fab-file importers stored (entity "dcode"/"tool" tags + layer camMeta):
@@ -20,6 +22,15 @@
 //                       (grouped diameter + plating, counts, total), checked
 //                       against the .DRR reports of the reference kits in
 //                       the test suite — aligned text + one JSON trailer.
+//
+// And CAM editing commands (G3):
+//
+//   PLWIDTH w [ids]     set the stroke width (mm) of polylines — THE trace
+//                       edit; the RS-274X writer then regenerates a C,<w>
+//                       aperture for the edited traces.
+//   PANELIZE c r px py  duplicate the fab content (every layer with a CAM
+//                       role) into a c x r grid at the given pitches — one
+//                       transaction, one undo. v1: no rails/mousebites.
 //
 // Results go through ctx.info(): GUI history bar, CLI/IPC "messages" array
 // (single CommandProcessor = automatic parity). Like MINDIST, the LAST
@@ -237,6 +248,226 @@ public:
     }
 };
 
+// PLWIDTH <width mm> [ids...] — set the stroke width of polylines (traces).
+// Numeric parameter BEFORE the greedy entity set (project grammar law); a
+// pre-selected set (SELECT) is honored. The Gerber writer regenerates a
+// C,<width> aperture for edited traces, so this IS the CAM trace edit.
+class PlWidthCommand : public Command {
+public:
+    const char* name() const override { return "PLWIDTH"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+        }
+        return Step::cont(InputKind::Distance,
+                          QStringLiteral("New width (mm):"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (!m_haveWidth) {
+            if (v.kind != InputValue::Kind::Number)
+                return Step::cancelled();
+            if (v.number < 0.0) {
+                ctx.info(QStringLiteral("width must be >= 0"));
+                return Step::cancelled();
+            }
+            m_width = v.number;
+            m_haveWidth = true;
+            if (!m_ids.empty())
+                return apply(ctx);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select polylines:"));
+        }
+        switch (v.kind) {
+        case InputValue::Kind::EntitySet:
+            m_ids = v.entitySet;
+            return apply(ctx);
+        case InputValue::Kind::EntityRef:
+            m_ids.push_back(v.entityRef);
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select polylines:"));
+        case InputValue::Kind::Finish:
+            return m_ids.empty() ? Step::cancelled() : apply(ctx);
+        default:
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select polylines:"));
+        }
+    }
+
+private:
+    Step apply(CommandContext& ctx)
+    {
+        int n = 0, notPl = 0;
+        TransactionScope tx(ctx.doc(), QStringLiteral("PLWIDTH"));
+        for (const EntityId id : m_ids) {
+            auto* pl = dynamic_cast<PolylineEntity*>(ctx.doc().beginModify(id));
+            if (!pl) {
+                if (ctx.doc().entity(id))
+                    ++notPl;
+                continue;
+            }
+            pl->setWidth(m_width);
+            ctx.doc().endModify(id);
+            ++n;
+        }
+        tx.commit();
+        ctx.info(QStringLiteral("width %1 mm set on %2 polyline(s)%3")
+                     .arg(m_width)
+                     .arg(n)
+                     .arg(notPl ? QStringLiteral(" — %1 non-polyline(s) skipped")
+                                      .arg(notPl)
+                                : QString()));
+        return Step::done();
+    }
+
+    std::vector<EntityId> m_ids;
+    double m_width = 0.0;
+    bool m_haveWidth = false;
+};
+
+// PANELIZE <cols> <rows> <pitchX mm> <pitchY mm> — duplicate the document's
+// fab content (every entity on a layer with a CAM role, drills included)
+// into a cols x rows grid. The original board is cell (0,0); every other
+// cell gets a translated CLONE (tags dcode/gpol/tool/plated ride along, so
+// exports and DRILLREPORT see the whole panel). ONE transaction = one undo.
+// v1 keeps it simple: no rails, no mousebites, no %SR (PCB_CAM debt) —
+// pitches smaller than the board size overlap the cells (caveat emptor).
+class PanelizeCommand : public Command {
+public:
+    const char* name() const override { return "PANELIZE"; }
+
+    Step start(CommandContext&) override
+    {
+        return Step::cont(InputKind::Number, QStringLiteral("Columns:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (v.kind != InputValue::Kind::Number)
+            return Step::cancelled();
+        switch (m_stage) {
+        case 0:
+            m_cols = int(std::llround(v.number));
+            if (m_cols < 1) {
+                ctx.info(QStringLiteral("columns must be >= 1"));
+                return Step::cancelled();
+            }
+            ++m_stage;
+            return Step::cont(InputKind::Number, QStringLiteral("Rows:"));
+        case 1:
+            m_rows = int(std::llround(v.number));
+            if (m_rows < 1) {
+                ctx.info(QStringLiteral("rows must be >= 1"));
+                return Step::cancelled();
+            }
+            ++m_stage;
+            return Step::cont(InputKind::Distance,
+                              QStringLiteral("Pitch X (mm):"));
+        case 2:
+            m_pitchX = v.number;
+            if (m_pitchX <= 0.0) {
+                ctx.info(QStringLiteral("pitch X must be > 0"));
+                return Step::cancelled();
+            }
+            ++m_stage;
+            return Step::cont(InputKind::Distance,
+                              QStringLiteral("Pitch Y (mm):"));
+        default:
+            m_pitchY = v.number;
+            if (m_pitchY <= 0.0) {
+                ctx.info(QStringLiteral("pitch Y must be > 0"));
+                return Step::cancelled();
+            }
+            return run(ctx);
+        }
+    }
+
+private:
+    Step run(CommandContext& ctx)
+    {
+        // The fab content: entities on layers that carry a CAM role.
+        std::vector<EntityId> src;
+        for (const EntityId id : ctx.doc().drawOrder()) {
+            const Entity* e = ctx.doc().entity(id);
+            if (!e)
+                continue;
+            const Layer* l = ctx.doc().layer(e->layerId());
+            if (l && !l->gerberRole.isEmpty())
+                src.push_back(id);
+        }
+        if (src.empty()) {
+            ctx.info(QStringLiteral(
+                "no fab content: no layer carries a CAM role (LAYER <name> "
+                "ROLE <role>, or import a Gerber kit)"));
+            return Step::done();
+        }
+        if (m_cols * m_rows == 1) {
+            ctx.info(QStringLiteral("1 x 1 panel = the board itself — "
+                                    "nothing to duplicate"));
+            return Step::done();
+        }
+
+        int created = 0;
+        {
+            TransactionScope tx(ctx.doc(), QStringLiteral("PANELIZE"));
+            for (int j = 0; j < m_rows; ++j) {
+                for (int i = 0; i < m_cols; ++i) {
+                    if (i == 0 && j == 0)
+                        continue; // the original board
+                    const Xform2d xf = Xform2d::translation(
+                        Vec2d(i * m_pitchX, j * m_pitchY));
+                    for (const EntityId id : src) {
+                        const Entity* e = ctx.doc().entity(id);
+                        if (!e)
+                            continue;
+                        auto dup = e->clone();
+                        dup->transform(xf);
+                        ctx.doc().addEntity(std::move(dup));
+                        ++created;
+                    }
+                }
+            }
+            tx.commit();
+        }
+        ctx.info(QStringLiteral(
+                     "panelized %1 x %2 at pitch %3 x %4 mm: %5 fab "
+                     "entity(ies) -> %6 copies (%7 new)")
+                     .arg(m_cols)
+                     .arg(m_rows)
+                     .arg(m_pitchX)
+                     .arg(m_pitchY)
+                     .arg(src.size())
+                     .arg(m_cols * m_rows)
+                     .arg(created));
+        ctx.info(QString::fromUtf8(
+            QJsonDocument(
+                QJsonObject{
+                    {QStringLiteral("panelize"),
+                     QJsonObject{{QStringLiteral("cols"), m_cols},
+                                 {QStringLiteral("rows"), m_rows},
+                                 {QStringLiteral("pitchx"), m_pitchX},
+                                 {QStringLiteral("pitchy"), m_pitchY},
+                                 {QStringLiteral("source"), qint64(src.size())},
+                                 {QStringLiteral("created"), created}}}})
+                .toJson(QJsonDocument::Compact)));
+        return Step::done();
+    }
+
+    int m_stage = 0;
+    int m_cols = 0;
+    int m_rows = 0;
+    double m_pitchX = 0.0;
+    double m_pitchY = 0.0;
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -249,6 +480,8 @@ void registerCamCommands(CommandProcessor& p)
 {
     p.registerCommand(&make<AperturesCommand>, {QStringLiteral("APER")});
     p.registerCommand(&make<DrillReportCommand>, {QStringLiteral("DR")});
+    p.registerCommand(&make<PlWidthCommand>, {QStringLiteral("PLW")});
+    p.registerCommand(&make<PanelizeCommand>, {QStringLiteral("PNL")});
 }
 
 } // namespace viki
