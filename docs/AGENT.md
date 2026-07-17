@@ -601,7 +601,10 @@ $CLI open kitA.vkd --exec "APERTURES Top-Silk"
 **DRILLREPORT** (alias `DR`) is the hole table by diameter+plating over the
 LIVE drill circles (erase a hole, the count drops). Verified on S5M0PCBA —
 the totals ARE the kit's .DRR report (182 = 180 PTH + 2 NPTH), which the
-test suite compares tool by tool on both kits:
+test suite compares tool by tool on both kits. The G3 Excellon writer
+(ExcellonWriter.h) regenerates its Tn table from the same live circles
+(grouped at 1e-4 mm, plated first) and writes METRIC with explicit decimal
+coordinates — export -> re-import reproduces this report exactly:
 
 ```sh
 $CLI open kitA.vkd --exec "DRILLREPORT"

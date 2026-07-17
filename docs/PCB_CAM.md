@@ -229,18 +229,59 @@
     plus ré-import sémantique (mêmes entités, coordonnées à 1e-3).
     SKIP sans kits ou sans gerbv.
 
+  **Fait (2026-07-17) — écrivain Excellon (`core/io/ExcellonWriter.{h,cpp}`)** :
+  - API `exportExcellon(doc, layerNames, path)` / `writeExcellon(...,
+    QByteArray&)` → `ExcellonExportResult{ok, error, holes, skipped, tools,
+    warnings}` ; regroupe PLUSIEURS calques dans UN fichier (liste vide =
+    tous les calques au rôle Drill/Drill-NPTH — la paire du kit importeur) ;
+    platage d'un cercle : son tag `plated` s'il existe, sinon le rôle du
+    calque (Drill-NPTH → NPTH) ;
+  - dialecte : M48, `METRIC,TZ`, sections `;TYPE=PLATED`/`;TYPE=NON_PLATED`
+    (le dialecte Altium que notre importeur lit), table `TnC<dia mm>`, hits
+    modaux par axe (modalité RÉINITIALISÉE à chaque changement d'outil),
+    M30. Coordonnées en **DÉCIMALES EXPLICITES** (`X23.999952`) et non en
+    entiers zéro-supprimés : les deux candidats (METRIC,TZ 3:3 entiers vs
+    décimales) ont été rendus par gerbv sur le kit A — BIT-IDENTIQUES à
+    l'original Altium (dhash 0/1024, delta d'encre 0.000 pt, modalité
+    exercée sur 87 lignes) ; les décimales gagnent en robustesse :
+    auto-descriptives (immunes au piège classique Excellon du consommateur
+    qui suppose 3:3 vs 4:4 ou LZ vs TZ) et pleine précision 1e-6 mm là où
+    3:3 arrondit à 1e-3. Garde-fou : coordonnée > ±9999.999999 = erreur
+    dure (même plage que le Gerber writer) ;
+  - table d'outils RÉGÉNÉRÉE des cercles vivants : un outil par (diamètre
+    arrondi 1e-4 mm, platage) distinct, diamètre écrit = celui du PREMIER
+    cercle rencontré (pleine précision 1e-6 → un import non édité fait le
+    round-trip exact) ; plated d'abord puis NPTH, chaque groupe par
+    diamètre croissant, numérotation T1+ (la forme de la table Altium) ;
+    hits groupés par outil en ordre de peinture du document (tri stable) ;
+  - garde-fous : `test_excellon_export.cpp` — dialecte à l'octet (sections,
+    modalité, restatement sur trou dupliqué, aucune coordonnée non
+    décimale), round-trips synthétiques et golden tz_inch à 1e-6 mm, cas de
+    régénération (groupage 1e-4, plated-first, défaut de platage par rôle,
+    export multi-calques = export auto), stabilité à travers .vkd
+    save/load (octets identiques), erreurs (calque inconnu, hors-plage,
+    skip non-cercles) ; ET LE TEST DE VÉRITÉ kits réels : export →
+    ré-import → comptes par outil ET diamètres == .DRR (182 PCBA /
+    330 PCBB), chaque position à 1e-6 mm, et gerbv rend l'original et
+    l'exporté : dhash 0/1024, delta d'encre 0 % sur les deux kits
+    (seuils < 30 / ≤ 1 pt). SKIP sans kits ; sans gerbv les checks
+    sémantiques tournent quand même.
+
   **Dette G3-export assumée** :
   - la dette G2 « flashes ronds cuits en polygones inscrits (~2 µm) » reste :
     l'export re-génère les empreintes standard depuis camMeta (analytique,
     pas depuis les anneaux cuits), seul le fallback outline hérite de la
     tessellation inscrite — MINDIST garde son biais documenté ;
   - pas encore de commande utilisateur (CLI/GUI) pour l'export : API C++
-    seulement, l'intégration commande + Excellon writer + panélisation
+    seulement (Gerber ET Excellon), l'intégration commande + panélisation
     restent à faire dans la suite de G3 ;
   - entités sans image Gerber (texte, cotes, hatch non solide) → warning +
     skip ; cercles Excellon (`plated`) exportés en région disque si on
     exporte une couche de perçage en Gerber (l'écrivain Excellon est le
-    vrai chemin, warning émis).
+    vrai chemin, warning émis) ; réciproquement l'écrivain Excellon skippe
+    (warning) toute entité non-cercle des calques demandés ;
+  - G85 (slots) : toujours pas d'entité slot (dette G1) — rien à écrire
+    côté writer tant que l'import ne les convertit pas.
 
 ## Stratégie de test (process obligatoire habituel)
 

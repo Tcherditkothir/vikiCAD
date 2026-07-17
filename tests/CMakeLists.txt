@@ -42,6 +42,7 @@ add_executable(vikicad-tests
     test_gerber.cpp
     test_gerber_export.cpp
     test_excellon.cpp
+    test_excellon_export.cpp
     test_gerberkit.cpp
     test_cam_inspect.cpp
     test_layer_stack.cpp

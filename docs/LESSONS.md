@@ -300,3 +300,27 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
 - **Piège Catch2/QString** : `text.contains("D15*")` matche aussi
   `%ADD10ROUNDEDRECTD15*%` — sur du Gerber, toujours ancrer les checks de
   sous-chaînes sur le préfixe de statement complet (`%ADD10...`, `%AM...*`).
+
+## 2026-07-17 — G3 écrivain Excellon
+
+- **Trancher un dialecte par l'expérience, pas par la doctrine.** Les deux
+  candidats (METRIC,TZ 3:3 entiers vs coordonnées décimales explicites) ont
+  été générés depuis le kit A réel et rendus par gerbv AVANT d'écrire le
+  writer : bit-identiques à l'original Altium (dhash 0/1024, encre 0.000 pt),
+  y compris avec hits modaux (87 lignes à axe omis) et picture
+  `METRIC,TZ,0000.000`. gerbv honore aussi le commentaire `;FILE_FORMAT=4:4`
+  (prouvé par l'absence de facteur 10 sur le rendu). Choix : décimales
+  explicites — auto-descriptives (immunes au piège 3:3 vs 4:4 et LZ/TZ qui
+  a justifié tout le soin du parseur G1) et pleine précision 1e-6 mm là où
+  3:3 tronque à 1e-3.
+- **Jamais de coordonnée sans point décimal dans ce dialecte.** Le trim des
+  zéros de traîne doit garder « .0 » (`X24.0`, pas `X24`) : un entier nu
+  retomberait dans l'arithmétique de suppression de zéros du consommateur —
+  exactement l'ambiguïté que les décimales éliminent. Le test du dialecte
+  vérifie qu'AUCUNE ligne X/Y n'est sans point.
+- **Diamètre d'outil = celui du PREMIER cercle du groupe, pas le seau
+  1e-4.** Grouper à 1e-4 mm mais écrire le diamètre pleine précision du
+  premier cercle rencontré : un import Altium non édité (0.299974 mm issu de
+  0.01181 in) fait alors le round-trip exact à 1e-6, au lieu de ressortir
+  « 0.3 » arrondi. Les conversions 2:5 inch → mm tombent d'ailleurs
+  TOUJOURS sur 6 décimales exactes (entier × 254 / 1e6).
