@@ -738,6 +738,98 @@ print(pad['id'], pad['dcode'], drl['id'], drl['tool'])
     out="$(rpc open "$KIT_DIR/S5M0PCBA1.GTL")"
     assert_eq "kit: open lone .GTL (IPC)" True "$(jget "$out" "d['result'].get('ok')")"
     assert_ge "kit: lone .GTL entities" "$(count)" 500
+
+    # --- G3 CAM loop: edit -> export the kit -> re-import -> edits persist ---
+    # THE scenario the whole chantier exists for: move a pad 2 mm, change a
+    # trace width (PLWIDTH), erase a silk stroke, add a drill hole (LAYER
+    # Drill CURRENT + CIRCLE), export the whole kit over IPC into a
+    # directory, re-open THAT directory, and read every edit back from the
+    # re-imported fabrication files.
+    out="$(rpc open "$KIT_DIR")"
+    assert_eq "camloop: re-open kit A" True "$(jget "$out" "d['result'].get('ok')")"
+    cam_n="$(count)"
+    lj="$(rpc query layers)"
+    cam_cop="$(jget "$lj" "next(l['id'] for l in d['result']['layers'] if l['name']=='Top-Copper')")"
+    cam_silk="$(jget "$lj" "next(l['id'] for l in d['result']['layers'] if l['name']=='Top-Silk')")"
+    read -r PAD_ID PAD_TX PAD_TY TRACE_ID SILK_EID SILK_N <<<"$(printf '%s' "$(rpc query entities)" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+es = d['result']['entities']
+cop, silk = int(sys.argv[1]), int(sys.argv[2])
+pad = next(e for e in es if e['type'] == 'insert' and e['layer'] == cop)
+tr = next(e for e in es if e['type'] == 'polyline' and e['layer'] == cop
+          and e['geom'].get('width', 0) > 0)
+se = [e for e in es if e['layer'] == silk]
+px, py = pad['geom']['pos']
+print(pad['id'], f'{px + 2:.6f}', f'{py:.6f}', tr['id'], se[0]['id'], len(se))
+" "$cam_cop" "$cam_silk")"
+    gexec "camloop: MOVE pad +2mm" "MOVE $PAD_ID 0,0 2,0"
+    gexec "camloop: PLWIDTH 0.42 on a trace" "PLWIDTH 0.42 $TRACE_ID"
+    gexec "camloop: ERASE a silk stroke" "ERASE $SILK_EID"
+    gexec "camloop: LAYER Drill CURRENT" "LAYER Drill CURRENT"
+    gexec "camloop: CIRCLE new hole d=1.1" "CIRCLE 45,-10 0.55"
+    assert_eq "camloop: erase -1, hole +1" "$cam_n" "$(count)"
+
+    mkdir -p "$TMP/camkit"
+    out="$(rpc export "$TMP/camkit")"
+    assert_eq "camloop: export kit (IPC dir)" True "$(jget "$out" "d['result'].get('ok')")"
+    assert_ge "camloop: kit files written" "$(ls "$TMP/camkit" | wc -l)" 9
+
+    # Single fab layer over IPC too: by extension, and by explicit layer.
+    out="$(rpc export "$TMP/edited.GTS")"
+    assert_eq "camloop: single .GTS by extension" True \
+        "$(jget "$out" "d['result'].get('ok')")"
+    out="$(rpc export "$TMP/mech.GBR" Mech-15)"
+    assert_eq "camloop: .GBR with layer name" True \
+        "$(jget "$out" "d['result'].get('ok')")"
+
+    out="$(rpc open "$TMP/camkit")"
+    assert_eq "camloop: re-open the EXPORTED kit" True \
+        "$(jget "$out" "d['result'].get('ok')")"
+    lj2="$(rpc query layers)"
+    cam_cop2="$(jget "$lj2" "next(l['id'] for l in d['result']['layers'] if l['name']=='Top-Copper')")"
+    cam_silk2="$(jget "$lj2" "next(l['id'] for l in d['result']['layers'] if l['name']=='Top-Silk')")"
+    cam_checks="$(printf '%s' "$(rpc query entities)" | python3 -c "
+import json, math, sys
+d = json.load(sys.stdin)
+es = d['result']['entities']
+cop, silk = int(sys.argv[1]), int(sys.argv[2])
+tx, ty = float(sys.argv[3]), float(sys.argv[4])
+pads = [e for e in es if e['type'] == 'insert' and e['layer'] == cop]
+new = sum(1 for e in pads
+          if math.hypot(e['geom']['pos'][0] - tx, e['geom']['pos'][1] - ty) < 1e-3)
+old = sum(1 for e in pads
+          if math.hypot(e['geom']['pos'][0] - (tx - 2), e['geom']['pos'][1] - ty) < 0.5)
+w = sum(1 for e in es if e['type'] == 'polyline' and e['layer'] == cop
+        and abs(e['geom'].get('width', 0) - 0.42) < 1e-6)
+silkn = sum(1 for e in es if e['layer'] == silk)
+hole = sum(1 for e in es if e['type'] == 'circle'
+           and abs(e['geom']['radius'] - 0.55) < 1e-6
+           and math.hypot(e['geom']['center'][0] - 45,
+                          e['geom']['center'][1] + 10) < 1e-3
+           and e.get('plated') is True)
+print(new, old, w, silkn, hole)
+" "$cam_cop2" "$cam_silk2" "$PAD_TX" "$PAD_TY")"
+    read -r CK_NEW CK_OLD CK_W CK_SILK CK_HOLE <<<"$cam_checks"
+    assert_eq "camloop: moved pad at +2mm" 1 "$CK_NEW"
+    assert_eq "camloop: no pad left at old spot" 0 "$CK_OLD"
+    assert_ge "camloop: 0.42mm trace present" "$CK_W" 1
+    assert_eq "camloop: silk stroke stays erased" "$((SILK_N - 1))" "$CK_SILK"
+    assert_eq "camloop: new hole d=1.1 plated" 1 "$CK_HOLE"
+    out="$(rpc exec DRILLREPORT)"
+    assert_eq "camloop: DRILLREPORT total 182+1" 183 \
+        "$(jget "$out" "next(json.loads(m)['drillreport']['total'] for m in d['result']['messages'] if m.startswith('{'))")"
+
+    # --- G3 PANELIZE: 2x2 grid, DRILLREPORT x4, one undo -----------------------
+    out="$(rpc open "$KIT_DIR")"
+    assert_eq "panel: fresh kit A" True "$(jget "$out" "d['result'].get('ok')")"
+    panel_n="$(count)"
+    gexec "panel: PANELIZE 2 2 95 55" "PANELIZE 2 2 95 55"
+    out="$(rpc exec DRILLREPORT)"
+    assert_eq "panel: DRILLREPORT total x4" 728 \
+        "$(jget "$out" "next(json.loads(m)['drillreport']['total'] for m in d['result']['messages'] if m.startswith('{'))")"
+    gexec "panel: UNDO the whole panel" "UNDO"
+    assert_eq "panel: one undo restores the board" "$panel_n" "$(count)"
 else
     record SKIP "kit: Gerber kit phase" "pcb-ref kits absent on this machine"
 fi

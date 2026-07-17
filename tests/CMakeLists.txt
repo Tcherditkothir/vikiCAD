@@ -45,6 +45,7 @@ add_executable(vikicad-tests
     test_excellon_export.cpp
     test_gerberkit.cpp
     test_cam_inspect.cpp
+    test_cam_export.cpp
     test_layer_stack.cpp
     test_mindist.cpp
 )
