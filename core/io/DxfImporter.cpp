@@ -303,7 +303,13 @@ public:
             skip("degenerate-lwpolyline");
             return;
         }
-        place(std::make_unique<PolylineEntity>(std::move(verts), (data.flags & 1) != 0), data);
+        auto pl = std::make_unique<PolylineEntity>(std::move(verts),
+                                                   (data.flags & 1) != 0);
+        // Constant width (code 43): a wide stroke — the Gerber-trace bridge.
+        // Per-vertex start/end widths (tapers) are beyond PolylineEntity.
+        if (data.width > 0.0)
+            pl->setWidth(data.width);
+        place(std::move(pl), data);
     }
 
     void addPolyline(const DRW_Polyline& data) override
@@ -321,7 +327,12 @@ public:
             skip("degenerate-polyline");
             return;
         }
-        place(std::make_unique<PolylineEntity>(std::move(verts), (data.flags & 1) != 0), data);
+        auto pl = std::make_unique<PolylineEntity>(std::move(verts),
+                                                   (data.flags & 1) != 0);
+        // Legacy default widths (codes 40/41): honor a CONSTANT width only.
+        if (data.defstawidth > 0.0 && data.defstawidth == data.defendwidth)
+            pl->setWidth(data.defstawidth);
+        place(std::move(pl), data);
     }
 
     void addSpline(const DRW_Spline* data) override

@@ -224,6 +224,9 @@ private:
                 DRW_Polyline out;
                 applyCommon(e, out);
                 out.flags = pl->isClosed() ? 1 : 0;
+                // Constant stroke width (a Gerber trace): legacy default
+                // start/end widths, codes 40/41.
+                out.defstawidth = out.defendwidth = pl->width();
                 for (const PolyVertex& v : pl->vertices())
                     out.addVertex(DRW_Vertex(v.pos.x, v.pos.y, 0.0, v.bulge));
                 m_rw.writePolyline(&out);
@@ -231,6 +234,9 @@ private:
                 DRW_LWPolyline out;
                 applyCommon(e, out);
                 out.flags = pl->isClosed() ? 1 : 0;
+                // Constant width, code 43 — how a Gerber trace crosses the
+                // DXF bridge (round-tripped by our importer).
+                out.width = pl->width();
                 for (const PolyVertex& v : pl->vertices())
                     out.addVertex(DRW_Vertex2D(v.pos.x, v.pos.y, v.bulge));
                 m_rw.writeLWPolyline(&out);
