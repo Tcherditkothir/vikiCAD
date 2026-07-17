@@ -46,6 +46,8 @@ private slots:
     void saveFileAs();
     void importDxfFile();
     void openGerberKit(); // pick a fab-output directory -> one layer per file
+    void exportGerberKitDir();   // pick a directory -> <docname>.GTL/... + .TXT
+    void exportGerberLayerFile(); // pick one fab layer -> one Gerber/Excellon file
     void insertStepComponent(); // additive STEP import into the current doc (menu)
     void toggleUnits();
 
@@ -61,10 +63,17 @@ private:
     // CLI "import" JSON. Cleared on every loadFile().
     QStringList m_openWarnings;
     bool insertStepFile(const QString& path, QString& error); // additive, shared
-    // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj) — shared
-    // by the File>Export dialogs and the IPC "export" verb.
-    bool exportToPath(const QString& path, QString& message);
+    // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj, the fab
+    // extensions .gtl/.gbs/.../.gko/.gbr/.txt) or a DIRECTORY (Gerber kit) —
+    // shared by the File>Export dialogs and the IPC "export" verb. `layer`
+    // names the source layer for a single fab file (else it is resolved from
+    // the extension); writer warnings land in *warnings when given AND in the
+    // command-bar history.
+    bool exportToPath(const QString& path, QString& message,
+                      const QString& layer = QString(),
+                      QStringList* warnings = nullptr);
     void exportAs(const QString& kind); // "step" | "dxf" | "stl" | "obj"
+    QString docBaseName() const; // file base name of the document, or "board"
     void beginSketchOnFace(); // set the work plane to the picked 3D face
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);

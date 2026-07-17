@@ -22,6 +22,7 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QTabWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -33,7 +34,9 @@
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
+#include "io/ExcellonWriter.h"
 #include "io/GerberKit.h"
+#include "io/GerberKitWriter.h"
 #include "io/NativeStore.h"
 #include "io/ObjIo.h"
 #include "io/StepIo.h"
@@ -190,6 +193,13 @@ MainWindow::MainWindow()
                           [this] { exportAs(QStringLiteral("stl")); });
     exportMenu->addAction(QStringLiteral("OBJ (mesh)..."), this,
                           [this] { exportAs(QStringLiteral("obj")); });
+    exportMenu->addSeparator();
+    // G3: fabrication outputs — the whole kit into a directory
+    // (<docname>.GTL/.GBL/... + .TXT drills) or one layer to one file.
+    exportMenu->addAction(QStringLiteral("Gerber kit (directory)..."), this,
+                          &MainWindow::exportGerberKitDir);
+    exportMenu->addAction(QStringLiteral("Gerber/Excellon layer..."), this,
+                          &MainWindow::exportGerberLayerFile);
     fileMenu->addSeparator();
     // Output commands (they run through the processor like typed commands).
     fileMenu->addAction(QStringLiteral("Page &Layout..."), this,
@@ -901,10 +911,18 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         if (path.isEmpty())
             return {{QStringLiteral("error"), QStringLiteral("export needs a path")}};
         QString message;
-        const bool ok = exportToPath(path, message);
+        QStringList warnings;
+        const bool ok = exportToPath(path, message,
+                                     params[QStringLiteral("layer")].toString(),
+                                     &warnings);
         if (!ok)
             return {{QStringLiteral("error"), message}};
-        return {{QStringLiteral("ok"), true}, {QStringLiteral("message"), message}};
+        QJsonObject reply{{QStringLiteral("ok"), true},
+                          {QStringLiteral("message"), message}};
+        if (!warnings.isEmpty())
+            reply[QStringLiteral("warnings")] =
+                QJsonArray::fromStringList(warnings);
+        return reply;
     }
     if (method == QLatin1String("exec")) {
         const QString line = params[QStringLiteral("line")].toString();
@@ -1617,9 +1635,112 @@ void MainWindow::insertStepComponent()
                                              : error);
 }
 
-bool MainWindow::exportToPath(const QString& path, QString& message)
+namespace {
+// Fab extensions the export dispatch recognizes (lone-layer Gerber/Excellon).
+bool isFabSuffix(const QString& suffix)
 {
+    static const QStringList kFab{
+        QStringLiteral("gtl"), QStringLiteral("gbl"), QStringLiteral("gts"),
+        QStringLiteral("gbs"), QStringLiteral("gto"), QStringLiteral("gbo"),
+        QStringLiteral("gtp"), QStringLiteral("gbp"), QStringLiteral("gko"),
+        QStringLiteral("gbr"), QStringLiteral("ger"), QStringLiteral("txt"),
+        QStringLiteral("drl")};
+    return kFab.contains(suffix);
+}
+} // namespace
+
+QString MainWindow::docBaseName() const
+{
+    const QString base =
+        m_doc ? QFileInfo(m_doc->filePath()).completeBaseName() : QString();
+    return base.isEmpty() ? QStringLiteral("board") : base;
+}
+
+bool MainWindow::exportToPath(const QString& path, QString& message,
+                              const QString& layer, QStringList* warnings)
+{
+    const auto reportWarnings = [this, warnings](const QStringList& ws) {
+        for (const QString& w : ws)
+            m_commandBar->appendHistory(QStringLiteral("! export: %1").arg(w));
+        if (warnings)
+            *warnings += ws;
+    };
+
+    // Gerber kit: a directory target writes <docname>.GTL/... + .TXT drills.
+    if (QFileInfo(path).isDir() || path.endsWith(QLatin1Char('/'))) {
+        const GerberKitExportResult r =
+            exportGerberKit(*m_doc, path, docBaseName());
+        if (!r.ok) {
+            message = r.error;
+            return false;
+        }
+        reportWarnings(r.warnings);
+        for (const QString& s : r.skippedLayers)
+            m_commandBar->appendHistory(
+                QStringLiteral("export kit: skipped %1").arg(s));
+        QStringList names;
+        for (const GerberKitExportFile& f : r.files)
+            names << QFileInfo(f.path).fileName();
+        message = QStringLiteral("Gerber kit: %1 file(s) → %2 (%3)")
+                      .arg(r.files.size())
+                      .arg(path, names.join(QStringLiteral(", ")));
+        return true;
+    }
+
     const QString suffix = QFileInfo(path).suffix().toLower();
+    if (isFabSuffix(suffix)) {
+        QString layerName = layer;
+        if (layerName.isEmpty()) {
+            const QStringList candidates = layersForKitExtension(*m_doc, suffix);
+            if (candidates.isEmpty()) {
+                message = QStringLiteral(
+                              "no layer matches .%1 — name the source layer")
+                              .arg(suffix);
+                return false;
+            }
+            if (candidates.size() > 1 && (suffix == QLatin1String("txt") ||
+                                          suffix == QLatin1String("drl"))) {
+                // Several drill layers group into ONE Excellon file.
+                const ExcellonExportResult r =
+                    exportExcellon(*m_doc, candidates, path);
+                if (!r.ok) {
+                    message = r.error;
+                    return false;
+                }
+                reportWarnings(r.warnings);
+                message = QStringLiteral(
+                              "Excellon: %1 hole(s), %2 tool(s) [%3] → %4")
+                              .arg(r.holes)
+                              .arg(r.tools)
+                              .arg(candidates.join(QStringLiteral("+")), path);
+                return true;
+            }
+            if (candidates.size() > 1) {
+                message = QStringLiteral("ambiguous .%1 (%2) — name the "
+                                         "source layer")
+                              .arg(suffix, candidates.join(QStringLiteral(", ")));
+                return false;
+            }
+            layerName = candidates.first();
+        }
+        const GerberKitExportResult r = exportFabLayer(*m_doc, layerName, path);
+        if (!r.ok) {
+            message = r.error;
+            return false;
+        }
+        reportWarnings(r.warnings);
+        const GerberKitExportFile& f = r.files.front();
+        message = f.isDrill
+                      ? QStringLiteral("Excellon: %1 hole(s) [%2] → %3")
+                            .arg(f.entities)
+                            .arg(layerName, path)
+                      : QStringLiteral("Gerber: %1 entit%2 [%3] → %4")
+                            .arg(f.entities)
+                            .arg(f.entities == 1 ? QStringLiteral("y")
+                                                 : QStringLiteral("ies"))
+                            .arg(layerName, path);
+        return true;
+    }
     if (suffix == QLatin1String("step") || suffix == QLatin1String("stp")) {
         const StepResult r = exportStep(*m_doc, path);
         message = r.ok ? QStringLiteral("STEP: %1 solid(s), %2 note(s) → %3")
@@ -1686,6 +1807,67 @@ void MainWindow::exportAs(const QString& kind)
         path += QLatin1Char('.') + kind;
     QString message;
     if (exportToPath(path, message)) {
+        m_commandBar->appendHistory(message);
+        statusBar()->showMessage(message, 4000);
+    } else {
+        m_commandBar->appendHistory(QStringLiteral("! export: %1").arg(message));
+        QMessageBox::warning(this, QStringLiteral("Export failed"), message);
+    }
+}
+
+void MainWindow::exportGerberKitDir()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Export Gerber kit — choose a directory"));
+    if (dir.isEmpty())
+        return;
+    QString message;
+    if (exportToPath(dir, message)) {
+        m_commandBar->appendHistory(message);
+        statusBar()->showMessage(message, 4000);
+    } else {
+        m_commandBar->appendHistory(QStringLiteral("! export: %1").arg(message));
+        QMessageBox::warning(this, QStringLiteral("Export failed"), message);
+    }
+}
+
+void MainWindow::exportGerberLayerFile()
+{
+    // Fab-mapped layers first (with their kit extension), then the rest.
+    QStringList items;
+    for (const Layer& l : m_doc->layers()) {
+        const QString ext = kitExtensionForLayer(l);
+        if (!ext.isEmpty())
+            items << QStringLiteral("%1 (%2)").arg(l.name, ext);
+    }
+    for (const Layer& l : m_doc->layers())
+        if (kitExtensionForLayer(l).isEmpty())
+            items << l.name;
+    if (items.isEmpty())
+        return;
+    bool okd = false;
+    const QString item = QInputDialog::getItem(
+        this, QStringLiteral("Export Gerber/Excellon layer"),
+        QStringLiteral("Layer:"), items, 0, false, &okd);
+    if (!okd || item.isEmpty())
+        return;
+    const QString layerName = item.section(QStringLiteral(" ("), 0, 0);
+    const Layer* layer = m_doc->layerByName(layerName);
+    if (!layer)
+        return;
+    QString ext = kitExtensionForLayer(*layer);
+    if (ext.isEmpty())
+        ext = QStringLiteral(".GBR");
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export layer %1").arg(layerName),
+        docBaseName() + ext,
+        QStringLiteral("Fabrication files (*.gtl *.gbl *.gts *.gbs *.gto "
+                       "*.gbo *.gtp *.gbp *.gko *.gbr *.txt *.drl);;"
+                       "All files (*)"));
+    if (path.isEmpty())
+        return;
+    QString message;
+    if (exportToPath(path, message, layerName)) {
         m_commandBar->appendHistory(message);
         statusBar()->showMessage(message, 4000);
     } else {

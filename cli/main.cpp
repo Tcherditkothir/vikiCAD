@@ -15,7 +15,9 @@
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
+#include "io/ExcellonWriter.h"
 #include "io/GerberKit.h"
+#include "io/GerberKitWriter.h"
 #include "io/NativeStore.h"
 #include "io/PdfPlotter.h"
 #include "io/StepIo.h"
@@ -71,6 +73,10 @@ int printUsage(FILE* out)
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
         "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
         "  vikicad-cli export FILE.vkd OUT.stl [--deflection MM] [--ascii]\n"
+        "  vikicad-cli export FILE.vkd OUTDIR   (Gerber kit: OUTDIR exists or ends "
+        "with '/'; writes <base>.GTL/... + .TXT)\n"
+        "  vikicad-cli export FILE.vkd OUT.gtl|.gbs|...|.gko|.gbr|.txt "
+        "[--layer NAME]   (one fab layer)\n"
         "  vikicad-cli import IN.step --save-as OUT.vkd\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
         "All output is JSON on stdout.\n");
@@ -291,8 +297,106 @@ int cmdImport(const QStringList& args)
 #endif
 }
 
+// Result JSON for the fab exports (kit directory or single layer).
+QJsonObject fabFilesJson(const GerberKitExportResult& r)
+{
+    QJsonObject out;
+    QJsonArray files;
+    for (const GerberKitExportFile& f : r.files)
+        files.append(QJsonObject{{QStringLiteral("path"), f.path},
+                                 {QStringLiteral("layers"),
+                                  QJsonArray::fromStringList(f.layers)},
+                                 {QStringLiteral("drill"), f.isDrill},
+                                 {QStringLiteral("entities"), f.entities},
+                                 {QStringLiteral("skipped"), f.skipped}});
+    out[QStringLiteral("files")] = files;
+    out[QStringLiteral("skippedLayers")] = QJsonArray::fromStringList(r.skippedLayers);
+    out[QStringLiteral("warnings")] = QJsonArray::fromStringList(r.warnings);
+    return out;
+}
+
+// Gerber kit (OUT is a directory) or one fab layer (OUT has a fab extension).
+// Returns -1 when OUT is neither — the caller falls through to DXF & co.
+int cmdExportFab(const QString& inPath, const QString& outPath,
+                 const QStringList& args)
+{
+    static const QStringList kFabExts{
+        QStringLiteral("gtl"), QStringLiteral("gbl"), QStringLiteral("gts"),
+        QStringLiteral("gbs"), QStringLiteral("gto"), QStringLiteral("gbo"),
+        QStringLiteral("gtp"), QStringLiteral("gbp"), QStringLiteral("gko"),
+        QStringLiteral("gbr"), QStringLiteral("ger"), QStringLiteral("txt"),
+        QStringLiteral("drl")};
+    const QString suffix = QFileInfo(outPath).suffix().toLower();
+    const bool kitDir =
+        QFileInfo(outPath).isDir() || outPath.endsWith(QLatin1Char('/'));
+    if (!kitDir && !kFabExts.contains(suffix))
+        return -1;
+
+    QString error;
+    const auto doc = NativeStore::load(inPath, error);
+    if (!doc)
+        return emitError(QStringLiteral("E_OPEN"), error);
+
+    if (kitDir) {
+        const GerberKitExportResult r = exportGerberKit(
+            *doc, outPath, QFileInfo(inPath).completeBaseName());
+        if (!r.ok)
+            return emitError(QStringLiteral("E_GERBERKIT"), r.error);
+        QJsonObject result = fabFilesJson(r);
+        result[QStringLiteral("savedTo")] = outPath;
+        return emitOk(result);
+    }
+
+    QString layerName;
+    const int li = args.indexOf(QLatin1String("--layer"));
+    if (li >= 0 && li + 1 < args.size())
+        layerName = args[li + 1];
+    if (layerName.isEmpty()) {
+        const QStringList candidates = layersForKitExtension(*doc, suffix);
+        if (candidates.isEmpty())
+            return emitError(
+                QStringLiteral("E_LAYER"),
+                QStringLiteral("no layer matches .%1 — name one with --layer")
+                    .arg(suffix));
+        if (candidates.size() > 1 &&
+            !(suffix == QLatin1String("txt") || suffix == QLatin1String("drl")))
+            return emitError(QStringLiteral("E_LAYER"),
+                             QStringLiteral("ambiguous .%1 (%2) — name one with "
+                                            "--layer")
+                                 .arg(suffix, candidates.join(QLatin1String(", "))));
+        if (candidates.size() > 1) {
+            // Drill file: several drill layers group into ONE Excellon file
+            // (plated + NPTH sections), like the kit export.
+            const ExcellonExportResult r = exportExcellon(*doc, candidates, outPath);
+            if (!r.ok)
+                return emitError(QStringLiteral("E_GERBEREXPORT"), r.error);
+            return emitOk(QJsonObject{
+                {QStringLiteral("savedTo"), outPath},
+                {QStringLiteral("layers"), QJsonArray::fromStringList(candidates)},
+                {QStringLiteral("drill"), true},
+                {QStringLiteral("holes"), r.holes},
+                {QStringLiteral("tools"), r.tools},
+                {QStringLiteral("skipped"), r.skipped},
+                {QStringLiteral("warnings"),
+                 QJsonArray::fromStringList(r.warnings)}});
+        }
+        layerName = candidates.first();
+    }
+    const GerberKitExportResult r = exportFabLayer(*doc, layerName, outPath);
+    if (!r.ok)
+        return emitError(QStringLiteral("E_GERBEREXPORT"), r.error);
+    QJsonObject result = fabFilesJson(r);
+    result[QStringLiteral("savedTo")] = outPath;
+    return emitOk(result);
+}
+
 int cmdExport(const QStringList& args)
 {
+    if (args.size() >= 2) {
+        const int fab = cmdExportFab(args[0], args[1], args);
+        if (fab >= 0)
+            return fab;
+    }
 #ifndef VIKICAD_HAS_DXF
     (void)args;
     return emitError(QStringLiteral("E_NODXF"), QStringLiteral("built without DXF support"));
@@ -433,6 +537,10 @@ int cmdConnect(const QStringList& args)
         if (method == QLatin1String("screenshot") && args.size() > 2 &&
             args[2] == QLatin1String("clean"))
             params[QStringLiteral("overlays")] = false;
+        // `export OUT.gts <layer>` = one fab layer by name (else the layer is
+        // resolved from the extension; a directory path exports the whole kit).
+        if (method == QLatin1String("export") && args.size() > 2)
+            params[QStringLiteral("layer")] = args[2];
     }
     else if (method == QLatin1String("view3d") && args.size() > 1)
         params[QStringLiteral("on")] = args[1] != QLatin1String("off");
