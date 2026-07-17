@@ -1,6 +1,9 @@
 #include "CanvasWidget.h"
 
+#include <set>
+
 #include <QFontMetrics>
+#include <QImage>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -128,6 +131,26 @@ void CanvasWidget::rebuildStaticLayer()
                          m_camera.screenToWorld({double(width()), 0}));
     ctx.doc = m_doc;
 
+    // Gerber clear polarity (LPC, "gpol":"C") is an ERASE within its own
+    // Gerber layer only: a clearance in a copper plane is a hole in that
+    // plane, never a window through the layers painted below it. Painting
+    // LPC with the background color would fake exactly that bug, and
+    // QPainter composition modes on the shared pixmap would erase every
+    // layer at once. So each layer that CONTAINS clear entities is composed
+    // in its own transparent ARGB image (dark = paint, clear = punch a
+    // transparent hole with CompositionMode_Clear) and composited onto the
+    // canvas in one blit when its first entity comes up in draw order —
+    // paint order inside the layer AND the layer's place in the global
+    // stack are both preserved. Layers without LPC keep the direct path.
+    std::set<int64_t> lpcLayers;
+    for (const EntityId id : m_doc->drawOrder()) {
+        const Entity* e = m_doc->entity(id);
+        if (e && e->extra().value(QLatin1String("gpol")).toString() ==
+                     QLatin1String("C"))
+            lpcLayers.insert(e->layerId());
+    }
+    std::set<int64_t> composedLayers;
+
     for (const EntityId id : m_doc->drawOrder()) {
         const Entity* e = m_doc->entity(id);
         if (!e)
@@ -147,6 +170,13 @@ void CanvasWidget::rebuildStaticLayer()
             if (active != 0 && m_doc->entitySketch(id) != active)
                 continue;
         }
+        if (lpcLayers.count(e->layerId())) {
+            // Composed as a whole (with its own culling) on first contact;
+            // later entities of the layer are already in the blit.
+            if (composedLayers.insert(e->layerId()).second)
+                composeLpcLayer(painter, e->layerId(), ctx);
+            continue;
+        }
         // View culling.
         if (!m_doc->entityBounds(*e).intersects(ctx.viewBox))
             continue;
@@ -156,6 +186,37 @@ void CanvasWidget::rebuildStaticLayer()
         drawPrimitives(painter, list);
     }
     m_staticDirty = false;
+}
+
+void CanvasWidget::composeLpcLayer(QPainter& target, int64_t layerId,
+                                   RenderContext& ctx)
+{
+    QImage image(size() * devicePixelRatioF(),
+                 QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(devicePixelRatioF());
+    image.fill(Qt::transparent);
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    for (const EntityId id : m_doc->drawOrder()) {
+        const Entity* e = m_doc->entity(id);
+        if (!e || e->layerId() != layerId)
+            continue;
+        if (!m_doc->entityBounds(*e).intersects(ctx.viewBox))
+            continue;
+        const bool clear = e->extra().value(QLatin1String("gpol")).toString() ==
+                           QLatin1String("C");
+        // Clear entities erase whatever the layer painted so far (their
+        // shape's alpha is what matters, the color is irrelevant).
+        p.setCompositionMode(clear ? QPainter::CompositionMode_Clear
+                                   : QPainter::CompositionMode_SourceOver);
+        ctx.resolvedColor = m_doc->resolveColor(*e);
+        PrimitiveList list;
+        e->buildPrimitives(ctx, list);
+        drawPrimitives(p, list);
+    }
+    p.end();
+    target.drawImage(QPointF(0, 0), image);
 }
 
 void CanvasWidget::drawPrimitives(QPainter& painter, const PrimitiveList& list,

@@ -67,6 +67,11 @@ protected:
 
 private:
     void rebuildStaticLayer();
+    // Gerber layers holding clear-polarity (LPC) entities: composed in a
+    // transparent offscreen image (dark paints, clear erases via
+    // CompositionMode_Clear) then blitted, so LPC only punches holes in its
+    // OWN layer — see rebuildStaticLayer for the full rationale.
+    void composeLpcLayer(QPainter& target, int64_t layerId, RenderContext& ctx);
     void drawGrid(QPainter& painter) const;
     void drawPrimitives(QPainter& painter, const PrimitiveList& list,
                         const QColor& overrideColor = QColor()) const;

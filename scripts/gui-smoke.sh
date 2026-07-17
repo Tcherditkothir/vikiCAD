@@ -12,6 +12,9 @@
 #        bbox/features) ; viewdir ISO/TOP -> renders differ (camera moved) ;
 #        SPLIT XY -> 2 solids ; COMBINE -> 1 ;
 #        export STL -> non-empty + header/size check.
+#   Gerber kit (real S5M0PCBA, SKIPs when absent): IPC open of the fab
+#        directory -> layer list, stable non-empty render, one UNDO
+#        empties the document, REDO restores it (screenshot diffs).
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
@@ -537,6 +540,49 @@ if grep -q "ENTITIES" "$TMP/smoke.dxf" 2>/dev/null; then
   record PASS "export: DXF has ENTITIES" "yes"
 else
   record FAIL "export: DXF has ENTITIES" "no"
+fi
+
+# --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
+# Opens the fab-output directory headless through the IPC "open" verb (one
+# layer per file, ONE transaction), checks the layer list, proves the render
+# is non-empty and stable (LPC compositing is deterministic), and that a
+# single UNDO restores an empty document (screenshots diff like the 3D
+# phase); REDO brings everything back.
+KIT_DIR=/home/lex/computer/pcb-ref/S5M0PCBA
+if [[ -d "$KIT_DIR" ]]; then
+    out="$(rpc open "$KIT_DIR")"
+    assert_eq "kit: open S5M0PCBA (IPC)" True "$(jget "$out" "d['result'].get('ok')")"
+    kit_count="$(count)"
+    assert_ge "kit: entities imported" "$kit_count" 1000
+
+    layers="$(jget "$(rpc query layers)" "','.join(l['name'] for l in d['result']['layers'])")"
+    for want in Top-Copper Bottom-Copper Top-Mask Bottom-Mask Top-Silk \
+                Bottom-Silk Top-Paste Bottom-Paste Drill Drill-NPTH; do
+        if [[ ",$layers," == *",$want,"* ]]; then
+            record PASS "kit: layer $want" "present"
+        else
+            record FAIL "kit: layer $want" "missing from: $layers"
+        fi
+    done
+
+    shot "kit: screenshot K (board)" "$TMP/kit_a.png"
+    shot "kit: screenshot K' (again)" "$TMP/kit_b.png"
+    assert_le "kit: render stable (K' == K)" \
+        "$(img_hash_dist "$TMP/kit_a.png" "$TMP/kit_b.png")" "$SAME_HASH_MAX"
+
+    gexec "kit: UNDO whole kit" "UNDO"
+    assert_eq "kit: ONE undo empties the document" 0 "$(count)"
+    shot "kit: screenshot E (empty)" "$TMP/kit_empty.png"
+    assert_ge "kit: E differs from K (board gone)" \
+        "$(img_pixel_bp "$TMP/kit_a.png" "$TMP/kit_empty.png")" "$DIFF_PIXELS_MIN"
+
+    gexec "kit: REDO whole kit" "REDO"
+    assert_eq "kit: REDO restores every entity" "$kit_count" "$(count)"
+    shot "kit: screenshot K'' (redo)" "$TMP/kit_c.png"
+    assert_le "kit: K'' == K (render restored)" \
+        "$(img_hash_dist "$TMP/kit_a.png" "$TMP/kit_c.png")" "$SAME_HASH_MAX"
+else
+    record SKIP "kit: Gerber kit phase" "pcb-ref kits absent on this machine"
 fi
 
 # ---- (5) report -------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include <QFile>
 #include <QJsonObject>
@@ -1114,7 +1115,14 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
     res.warnings = file.warnings;
 
     const LayerId layerId = doc.ensureLayer(layerName);
-    TransactionScope tx(doc, QStringLiteral("GERBERIMPORT"));
+    // A kit import (GerberKit) wraps several files in ONE transaction so a
+    // single undo restores the document; nested transactions assert, so we
+    // only open our own scope when the caller has none. Error paths return
+    // early: our scope (if any) rolls back in its destructor, and a caller's
+    // outer scope rolls back the whole kit the same way.
+    std::optional<TransactionScope> tx;
+    if (!doc.inTransaction())
+        tx.emplace(doc, QStringLiteral("GERBERIMPORT"));
 
     // One block definition per flashed aperture.
     std::map<int, QString> blockName;
@@ -1283,7 +1291,8 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
     }
     flush();
 
-    tx.commit();
+    if (tx)
+        tx->commit();
     res.ok = true;
     return res;
 }

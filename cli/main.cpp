@@ -1,5 +1,6 @@
 #include <cstdio>
 
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocalSocket>
 #include <QJsonArray>
@@ -14,6 +15,7 @@
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
+#include "io/GerberKit.h"
 #include "io/NativeStore.h"
 #include "io/PdfPlotter.h"
 #include "io/StepIo.h"
@@ -63,6 +65,8 @@ int printUsage(FILE* out)
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "              [--notes] [--blocks] [--layouts] [--describe]\n"
         "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
+        "  vikicad-cli import KITDIR|IN.gbr|IN.txt --save-as OUT.vkd\n"
+        "              (Gerber kit: directory or single Gerber/Excellon file)\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
         "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
@@ -197,16 +201,52 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
 
 int cmdImport(const QStringList& args)
 {
-#ifndef VIKICAD_HAS_DXF
-    (void)args;
-    return emitError(QStringLiteral("E_NODXF"),
-                     QStringLiteral("built without DXF support"));
-#else
     if (args.size() < 3 || args[1] != QLatin1String("--save-as"))
         return emitError(QStringLiteral("E_ARGS"),
-                         QStringLiteral("usage: import IN.dxf|IN.step --save-as OUT.vkd"));
+                         QStringLiteral("usage: import IN.dxf|IN.step|KITDIR|"
+                                        "IN.gbr --save-as OUT.vkd"));
     const QString inPath = args[0];
     const QString outPath = args[2];
+
+    // Gerber kit: a directory, or any single file that is neither DXF/DWG
+    // nor STEP (the kit importer sniffs Gerber/Excellon content and reports
+    // a clear error for anything else).
+    const bool dxfLike = inPath.endsWith(QLatin1String(".dxf"), Qt::CaseInsensitive) ||
+                         inPath.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive);
+    const bool stepLike = inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
+                          inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive);
+    if (QFileInfo(inPath).isDir() || (!dxfLike && !stepLike)) {
+        Document doc;
+        const GerberKitResult r = importGerberKit(doc, inPath);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_GERBERKIT"), r.error);
+        QString error;
+        if (!NativeStore::save(doc, outPath, error))
+            return emitError(QStringLiteral("E_SAVE"), error);
+        QJsonObject result;
+        result[QStringLiteral("files")] = int(r.files.size());
+        result[QStringLiteral("entities")] = r.entities;
+        result[QStringLiteral("savedTo")] = outPath;
+        QJsonArray layers;
+        for (const QString& l : r.layers)
+            layers.append(l);
+        result[QStringLiteral("layers")] = layers;
+        QJsonArray skipped;
+        for (const QString& s : r.skipped)
+            skipped.append(s);
+        result[QStringLiteral("skipped")] = skipped;
+        QJsonArray warnings;
+        for (const QString& w : r.warnings)
+            warnings.append(w);
+        result[QStringLiteral("warnings")] = warnings;
+        return emitOk(result);
+    }
+
+#ifndef VIKICAD_HAS_DXF
+    if (dxfLike)
+        return emitError(QStringLiteral("E_NODXF"),
+                         QStringLiteral("built without DXF support"));
+#endif
 
     if (inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
         inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive)) {
@@ -222,6 +262,7 @@ int cmdImport(const QStringList& args)
                                   {QStringLiteral("savedTo"), outPath}});
     }
 
+#ifdef VIKICAD_HAS_DXF
     DxfImportResult r = inPath.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)
                             ? importDwg(inPath)
                             : importDxf(inPath);
@@ -244,6 +285,9 @@ int cmdImport(const QStringList& args)
         layers.append(l.name);
     result[QStringLiteral("layers")] = layers;
     return emitOk(result);
+#else
+    return emitError(QStringLiteral("E_NODXF"),
+                     QStringLiteral("built without DXF support"));
 #endif
 }
 

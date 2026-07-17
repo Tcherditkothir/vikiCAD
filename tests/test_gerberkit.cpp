@@ -1,0 +1,326 @@
+// "Open a Gerber kit" — directory recognition, content sniffing, layer
+// naming/colors/paint order, drill split, outline election, X2 override,
+// and the one-transaction contract.
+//
+// Two tiers, like test_gerber.cpp:
+//  - synthetic kits written into a QTemporaryDir (self-contained);
+//  - the real Altium Designer 18 kits under /home/lex/computer/pcb-ref/
+//    (private, machine-local): those tests SKIP when the directory is absent.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+
+#include "doc/Document.h"
+#include "doc/Entities.h"
+#include "io/GerberKit.h"
+
+using namespace viki;
+
+namespace {
+
+const char* kKitRoot = "/home/lex/computer/pcb-ref";
+
+bool kitsPresent()
+{
+    return QDir(QLatin1String(kKitRoot) + QLatin1String("/S5M0PCBA")).exists() &&
+           QDir(QLatin1String(kKitRoot) + QLatin1String("/S5M0PCBB")).exists();
+}
+
+void writeFile(const QString& dir, const QString& name, const QByteArray& data)
+{
+    QFile f(dir + QLatin1Char('/') + name);
+    REQUIRE(f.open(QIODevice::WriteOnly));
+    f.write(data);
+}
+
+// Minimal RS-274X body (mm, 2.4): one 10 mm dark draw with a 0.2 mm round
+// aperture. `extraHeader` is inserted before %FS (X2 attributes...).
+QByteArray simpleGerber(const QByteArray& extraHeader = {},
+                        const QByteArray& extraBody = {})
+{
+    return "G04 synthetic kit layer*\n" + extraHeader +
+           "%FSLAX24Y24*%\n"
+           "%MOMM*%\n"
+           "G01*\n"
+           "%ADD10C,0.2*%\n"
+           "D10*\n"
+           "X0Y0D02*\n"
+           "X100000Y0D01*\n" +
+           extraBody + "M02*\n";
+}
+
+// Header-only Gerber (parses fine, zero graphical objects) — Altium's usual
+// empty GKO.
+QByteArray emptyGerber()
+{
+    return "G04 empty layer*\n"
+           "%FSLAX24Y24*%\n"
+           "%MOMM*%\n"
+           "M02*\n";
+}
+
+const Layer* layerNamed(Document& doc, const char* name)
+{
+    return doc.layerByName(QLatin1String(name));
+}
+
+int entitiesOnLayer(const Document& doc, const Layer* layer)
+{
+    REQUIRE(layer != nullptr);
+    int n = 0;
+    for (const EntityId id : doc.drawOrder())
+        if (const Entity* e = doc.entity(id); e && e->layerId() == layer->id)
+            ++n;
+    return n;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Synthetic kits
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GerberKit: recognition, sniffing, colors, order, drill split, one undo",
+          "[gerberkit]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+
+    // Copper with a clear-polarity (LPC) second draw.
+    writeFile(dir, QStringLiteral("board.GTL"),
+              simpleGerber({}, "%LPC*%\nX0Y50000D02*\nX100000Y50000D01*\n"));
+    writeFile(dir, QStringLiteral("board.GBL"), simpleGerber());
+    writeFile(dir, QStringLiteral("board.GTO"), simpleGerber());
+    // Altium-style empty keepout: the outline election must fall to GM1.
+    writeFile(dir, QStringLiteral("board.GKO"), emptyGerber());
+    writeFile(dir, QStringLiteral("board.GM1"), simpleGerber());
+    writeFile(dir, QStringLiteral("board.GM13"), simpleGerber());
+    // Drill: T1 plated (1 mm), T2 non-plated (3 mm). INCH,TZ 2:4.
+    writeFile(dir, QStringLiteral("board.TXT"),
+              "M48\n"
+              ";FILE_FORMAT=2:4\n"
+              "INCH,TZ\n"
+              ";TYPE=PLATED\n"
+              "T1C0.03937\n"
+              ";TYPE=NON_PLATED\n"
+              "T2C0.11811\n"
+              "%\n"
+              "T1\n"
+              "X10000Y10000\n"
+              "T2\n"
+              "X20000Y20000\n"
+              "M30\n");
+    // Decoys: report files and a TXT that is NOT a drill file.
+    writeFile(dir, QStringLiteral("Status Report.Txt"),
+              "Output: NC Drill Files\nType  : NC Drill\n");
+    writeFile(dir, QStringLiteral("board.DRR"), "Tool Table\nT1 holes\n");
+    writeFile(dir, QStringLiteral("board.REP"), "Aperture report\n");
+
+    Document doc;
+    const GerberKitResult r = importGerberKit(doc, dir);
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+
+    // Layers in paint order: copper at the bottom, outline + drills on top.
+    const QStringList expected{
+        QStringLiteral("Bottom-Copper"), QStringLiteral("Top-Copper"),
+        QStringLiteral("Top-Silk"),      QStringLiteral("Mech-13"),
+        QStringLiteral("Outline"),       QStringLiteral("Drill"),
+        QStringLiteral("Drill-NPTH")};
+    CHECK(r.layers == expected);
+
+    // The empty GKO never created a layer; GM1 was promoted to Outline.
+    CHECK(layerNamed(doc, "Keepout") == nullptr);
+    CHECK(layerNamed(doc, "Mech-1") == nullptr);
+    REQUIRE(layerNamed(doc, "Outline") != nullptr);
+
+    // Decoys skipped: content sniff for the fake TXT, extension for reports.
+    REQUIRE(r.skipped.size() == 4); // GKO + Status Report.Txt + DRR + REP
+    CHECK(r.skipped.filter(QStringLiteral("Status Report.Txt")).size() == 1);
+    CHECK(r.skipped.filter(QStringLiteral("board.DRR")).size() == 1);
+    CHECK(r.skipped.filter(QStringLiteral("board.REP")).size() == 1);
+    CHECK(r.skipped.filter(QStringLiteral("board.GKO")).size() == 1);
+
+    // Default colors (readable set from the mission brief).
+    CHECK(layerNamed(doc, "Top-Copper")->rgb == 0xE53935);
+    CHECK(layerNamed(doc, "Bottom-Copper")->rgb == 0x3D7EFF);
+    CHECK(layerNamed(doc, "Top-Silk")->rgb == 0xF2D544);
+    CHECK(layerNamed(doc, "Outline")->rgb == 0xFF00FF);
+    CHECK(layerNamed(doc, "Drill")->rgb == 0x000000u);
+    CHECK(layerNamed(doc, "Drill-NPTH")->rgb == 0x3C3C3C);
+
+    // Entities landed on their layers; paint order = draw order: the very
+    // first entity belongs to the bottom copper, the very last to a drill.
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Top-Copper")) == 2); // dark + LPC
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Drill")) == 1);
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Drill-NPTH")) == 1);
+    REQUIRE(doc.entityCount() == size_t(r.entities));
+    const Entity* first = doc.entity(doc.drawOrder().front());
+    const Entity* last = doc.entity(doc.drawOrder().back());
+    CHECK(first->layerId() == layerNamed(doc, "Bottom-Copper")->id);
+    CHECK(last->layerId() == layerNamed(doc, "Drill-NPTH")->id);
+
+    // LPC entity kept its clear-polarity marker.
+    bool sawClear = false;
+    for (const EntityId id : doc.drawOrder())
+        if (const Entity* e = doc.entity(id);
+            e && e->extra().value(QLatin1String("gpol")).toString() ==
+                     QLatin1String("C"))
+            sawClear = true;
+    CHECK(sawClear);
+
+    // Drill geometry: plated hit at 1 in = 25.4 mm, radius 0.5 mm.
+    {
+        const Layer* drill = layerNamed(doc, "Drill");
+        const CircleEntity* c = nullptr;
+        for (const EntityId id : doc.drawOrder())
+            if (const auto* e = dynamic_cast<const CircleEntity*>(doc.entity(id));
+                e && e->layerId() == drill->id)
+                c = e;
+        REQUIRE(c != nullptr);
+        CHECK(std::abs(c->center().x - 25.4) < 1e-6);
+        CHECK(std::abs(c->radius() - 0.5) < 1e-3);
+        CHECK(c->extra().value(QLatin1String("plated")).toBool());
+    }
+
+    // ONE transaction: a single undo restores the empty document.
+    CHECK(doc.undo() == QStringLiteral("GERBERKIT"));
+    CHECK(doc.entityCount() == 0);
+    CHECK(doc.redo() == QStringLiteral("GERBERKIT"));
+    CHECK(doc.entityCount() == size_t(r.entities));
+}
+
+TEST_CASE("GerberKit: X2 TF.FileFunction prevails over the extension", "[gerberkit]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+
+    // Extension says nothing ('.pho'), X2 says top soldermask — both the
+    // naked %TF form and Altium's comment form must work (parser handles
+    // both; use one of each here).
+    writeFile(dir, QStringLiteral("weird.pho"),
+              simpleGerber("%TF.FileFunction,Soldermask,Top*%\n"));
+    // Extension says mechanical 7, X2 says board profile -> Outline wins,
+    // and the GKO candidate below loses the election to the explicit profile.
+    writeFile(dir, QStringLiteral("board.GM7"),
+              simpleGerber("G04 #@! TF.FileFunction,Profile,NP*\n"));
+    writeFile(dir, QStringLiteral("board.GKO"), simpleGerber());
+
+    Document doc;
+    const GerberKitResult r = importGerberKit(doc, dir);
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+
+    CHECK(layerNamed(doc, "Top-Mask") != nullptr);
+    CHECK(layerNamed(doc, "Outline") != nullptr);
+    CHECK(layerNamed(doc, "Mech-7") == nullptr);
+    // The non-empty GKO keeps its keepout fallback (profile already taken).
+    CHECK(layerNamed(doc, "Keepout") != nullptr);
+    CHECK(r.layers == QStringList{QStringLiteral("Top-Mask"),
+                                  QStringLiteral("Keepout"),
+                                  QStringLiteral("Outline")});
+}
+
+TEST_CASE("GerberKit: single-file import and error paths", "[gerberkit]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString dir = tmp.path();
+
+    writeFile(dir, QStringLiteral("only.GTL"), simpleGerber());
+    writeFile(dir, QStringLiteral("junk.bin"), "just some text, no fab data");
+
+    SECTION("a single Gerber file imports onto its role layer")
+    {
+        Document doc;
+        const GerberKitResult r =
+            importGerberKit(doc, dir + QStringLiteral("/only.GTL"));
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(r.layers == QStringList{QStringLiteral("Top-Copper")});
+        CHECK(doc.entityCount() == 1);
+    }
+    SECTION("a non-fab file is a clean error, not a crash")
+    {
+        Document doc;
+        const GerberKitResult r =
+            importGerberKit(doc, dir + QStringLiteral("/junk.bin"));
+        CHECK_FALSE(r.ok);
+        CHECK(doc.entityCount() == 0);
+    }
+    SECTION("a missing path is a clean error")
+    {
+        Document doc;
+        const GerberKitResult r =
+            importGerberKit(doc, dir + QStringLiteral("/nope"));
+        CHECK_FALSE(r.ok);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Real Altium kits (skip when /home/lex/computer/pcb-ref is absent)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GerberKit: real S5M0PCBA kit end to end", "[gerberkit][kits]")
+{
+    if (!kitsPresent())
+        SKIP("real Gerber kits not present on this machine");
+
+    Document doc;
+    const GerberKitResult r =
+        importGerberKit(doc, QLatin1String(kKitRoot) + QLatin1String("/S5M0PCBA"));
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+
+    // The full stack, one layer per non-empty file. PCBA's GKO and GM1 are
+    // both header-only (verified by inspection): no Outline layer exists —
+    // that is the tolerant-heuristic contract, not a bug.
+    for (const char* name :
+         {"Top-Copper", "Bottom-Copper", "Top-Mask", "Bottom-Mask", "Top-Silk",
+          "Bottom-Silk", "Top-Paste", "Bottom-Paste", "Top-Pads", "Bottom-Pads",
+          "Mech-13", "Mech-15", "Drill", "Drill-NPTH"}) {
+        INFO(name);
+        CHECK(layerNamed(doc, name) != nullptr);
+    }
+    CHECK(layerNamed(doc, "Outline") == nullptr);
+    CHECK(r.skipped.filter(QStringLiteral(".GKO")).size() == 1);
+    CHECK(r.skipped.filter(QStringLiteral(".GM1")).size() == 1);
+    CHECK(r.skipped.filter(QStringLiteral("Status Report.Txt")).size() == 1);
+
+    // Drill split against the .TXT ground truth: 180 plated + 2 non-plated.
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Drill")) == 180);
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Drill-NPTH")) == 2);
+
+    // A dense real board: thousands of entities, all inside one transaction.
+    CHECK(doc.entityCount() > 1000);
+    CHECK(doc.undo() == QStringLiteral("GERBERKIT"));
+    CHECK(doc.entityCount() == 0);
+}
+
+TEST_CASE("GerberKit: real S5M0PCBB kit — GKO carries the outline", "[gerberkit][kits]")
+{
+    if (!kitsPresent())
+        SKIP("real Gerber kits not present on this machine");
+
+    Document doc;
+    const GerberKitResult r =
+        importGerberKit(doc, QLatin1String(kKitRoot) + QLatin1String("/S5M0PCBB"));
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+
+    // PCBB's GKO has real draws -> it wins the outline election; its GM1 is
+    // non-empty too and stays Mech-1.
+    REQUIRE(layerNamed(doc, "Outline") != nullptr);
+    CHECK(layerNamed(doc, "Mech-1") != nullptr);
+    CHECK(entitiesOnLayer(doc, layerNamed(doc, "Outline")) >= 1);
+    for (const char* name : {"Mech-4", "Mech-13", "Mech-15", "Mech-16"}) {
+        INFO(name);
+        CHECK(layerNamed(doc, name) != nullptr);
+    }
+    CHECK(doc.entityCount() > 1000);
+}

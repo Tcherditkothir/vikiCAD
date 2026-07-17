@@ -1,6 +1,7 @@
 #include "ExcellonIo.h"
 
 #include <cmath>
+#include <optional>
 
 #include <QFile>
 
@@ -509,7 +510,12 @@ ExcellonImportResult excellonToDocument(Document& doc, const ExcellonFile& file,
         res.warnings << QStringLiteral("%1 G85 slot(s) not converted").arg(file.drillSlots.size());
 
     const LayerId layerId = doc.ensureLayer(layerName);
-    TransactionScope tx(doc, QStringLiteral("EXCELLONIMPORT"));
+    // Kit imports (GerberKit) wrap several files in ONE transaction; nested
+    // transactions assert, so only open our own scope when the caller has
+    // none (same contract as gerberToDocument).
+    std::optional<TransactionScope> tx;
+    if (!doc.inTransaction())
+        tx.emplace(doc, QStringLiteral("EXCELLONIMPORT"));
     for (const ExcellonHit& h : file.hits) {
         const ExcellonTool& tool = file.tools.at(h.tool);
         auto c = std::make_unique<CircleEntity>(h.pos, tool.diameter * 0.5);
@@ -519,7 +525,8 @@ ExcellonImportResult excellonToDocument(Document& doc, const ExcellonFile& file,
         ++res.hits;
         ++res.entities;
     }
-    tx.commit();
+    if (tx)
+        tx->commit();
     res.ok = true;
     return res;
 }

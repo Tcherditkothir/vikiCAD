@@ -33,6 +33,7 @@
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
+#include "io/GerberKit.h"
 #include "io/NativeStore.h"
 #include "io/ObjIo.h"
 #include "io/StepIo.h"
@@ -172,6 +173,8 @@ MainWindow::MainWindow()
 #ifdef VIKICAD_HAS_DXF
     fileMenu->addAction(QStringLiteral("&Import DXF/DWG..."), this, &MainWindow::importDxfFile);
 #endif
+    fileMenu->addAction(QStringLiteral("Open &Gerber kit..."), this,
+                        &MainWindow::openGerberKit);
     fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
                         &MainWindow::insertStepComponent);
     // Leaving the .vkd world: export to the planet's formats. The engines
@@ -946,7 +949,8 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
     }
     if (method == QLatin1String("open")) {
         const QString path = params[QStringLiteral("path")].toString();
-        // Same extension dispatch as File>Open: .vkd/.dxf/.dwg/.step.
+        // Same dispatch as File>Open: .vkd/.dxf/.dwg/.step, and a
+        // directory opens as a Gerber kit.
         if (!loadFile(path, /*interactive=*/false))
             return {{QStringLiteral("error"),
                      QStringLiteral("could not open %1").arg(path)}};
@@ -1317,6 +1321,11 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
         return path.endsWith(QLatin1String(ext), Qt::CaseInsensitive);
     };
 
+    // A directory is a Gerber kit (fab outputs, one layer per file) — this is
+    // also the headless path (IPC "open"), so gui-smoke can exercise kits.
+    if (QFileInfo(path).isDir())
+        return loadGerberKit(path, interactive);
+
     if (ends(".vkd")) {
         QString error;
         auto doc = NativeStore::load(path, error);
@@ -1412,6 +1421,47 @@ void MainWindow::importDxfFile()
                    .arg(r.skippedTypes.join(QStringLiteral(", ")));
     m_commandBar->appendHistory(msg);
 #endif
+}
+
+void MainWindow::openGerberKit()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Open Gerber kit (fabrication output directory)"));
+    if (dir.isEmpty())
+        return;
+    loadGerberKit(dir, /*interactive=*/true);
+}
+
+bool MainWindow::loadGerberKit(const QString& path, bool interactive)
+{
+    auto doc = std::make_unique<Document>();
+    const GerberKitResult r = importGerberKit(*doc, path);
+    if (!r.ok) {
+        if (interactive)
+            QMessageBox::warning(this, QStringLiteral("Gerber kit import failed"),
+                                 r.error);
+        else
+            m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+        return false;
+    }
+    // The kit was imported as ONE transaction into the fresh document, so a
+    // single Ctrl+Z after adoption restores an empty drawing.
+    adoptDocument(std::move(doc));
+    m_commandBar->appendHistory(
+        QStringLiteral("Gerber kit: %1 file(s) -> %2 layer(s), %3 entities from %4")
+            .arg(r.files.size())
+            .arg(r.layers.size())
+            .arg(r.entities)
+            .arg(path));
+    if (!r.skipped.isEmpty())
+        m_commandBar->appendHistory(
+            QStringLiteral("  skipped: %1").arg(r.skipped.join(QStringLiteral("; "))));
+    if (!r.warnings.isEmpty())
+        m_commandBar->appendHistory(
+            QStringLiteral("  %1 warning(s), first: %2")
+                .arg(r.warnings.size())
+                .arg(r.warnings.first()));
+    return true;
 }
 
 bool MainWindow::saveTo(const QString& path)

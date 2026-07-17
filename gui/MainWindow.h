@@ -45,13 +45,17 @@ private slots:
     void saveFile();
     void saveFileAs();
     void importDxfFile();
+    void openGerberKit(); // pick a fab-output directory -> one layer per file
     void insertStepComponent(); // additive STEP import into the current doc (menu)
     void toggleUnits();
 
 private:
-    // Load any supported drawing by extension (.vkd/.dxf/.dwg/.step). On
-    // failure, shows a dialog when interactive, else logs to the command bar.
+    // Load any supported drawing by extension (.vkd/.dxf/.dwg/.step); a
+    // DIRECTORY is opened as a Gerber kit. On failure, shows a dialog when
+    // interactive, else logs to the command bar.
     bool loadFile(const QString& path, bool interactive);
+    // Gerber kit import (directory or single fab file) into a fresh document.
+    bool loadGerberKit(const QString& path, bool interactive);
     bool insertStepFile(const QString& path, QString& error); // additive, shared
     // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj) — shared
     // by the File>Export dialogs and the IPC "export" verb.
