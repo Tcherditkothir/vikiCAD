@@ -105,6 +105,33 @@
   - garde-fous : suite ctest (test_layer_stack + test_gerberkit étendu),
     gui-smoke bloc `stack:` sur S5M0PCBA (16 checks), gerber-ref-diff
     toujours 32/32 (les rendus par défaut n'ont pas bougé).
+
+  **Fait (2026-07-17) — mesurer sur les gerbers comme un outil CAM** :
+  - snaps CAM : le point d'insertion d'un Insert (= origine de flash d'une
+    pastille GBR-*) est offert en Endpoint ET en **Center** — coter de
+    centre de pastille à centre de pastille marche avec le seul osnap
+    Center ; extrémités/milieux des traces larges et centres d'arcs/perçages
+    déjà couverts par les snapPoints existants (verrouillé par test_snap) ;
+  - **MINDIST <idA> <idB>** (alias MD, sélection préalable honorée) : LA
+    mesure de clearance — distance minimale BORD À BORD avec sémantique
+    matière (trace large = empreinte à bouts ronds, largeur/2 de chaque
+    côté ; cercle/perçage = rayon ; pastille = l'empreinte RÉELLE du bloc
+    GBR-* à travers la transformation d'insert ; région/pour = anneaux
+    remplis ; texte et cie = repli bbox DIT honnêtement : method
+    `exact`→`bbox` + note). Noyau : soupe capsules/disques/polygones dans
+    core/edit/MinDist.cpp, réutilise l'aplatissement du renderer ;
+    recouvrement/contact → distance 0 + `overlap:true` (y compris
+    containment pur : perçage entièrement DANS sa pastille). Sortie : ligne
+    humaine, points les plus proches, et un trailer JSON compact parsable
+    (`mindist.mm/pa/pb/method/overlap`) ; ligne témoin pointillée + tics
+    sur le canvas jusqu'à la prochaine commande (overlay transitoire du
+    CommandContext, jamais dans les captures clean). Tests aux valeurs
+    calculées à la main (traces parallèles 1.6, trace-cercle 3.8, pastilles
+    3.0, perçages réels 7.510364...) ;
+  - cotes sur kit réel : DIMALIGNED centre-pastille → centre-pastille
+    vérifié sur S5M0PCBA (unitaire + gui-smoke bloc `measure:` : MINDIST
+    perçage-perçage recoupé avec la formule à la main, cote posée, capture
+    clean stable, UNDO restaure le rendu à l'identique).
 - **G3 — Édition + export** : édition avec tout l'outillage 2D existant,
   export RS-274X + Excellon (round-trip golden : import→export→réimport =
   géométrie identique), panélisation (réseaux existants → SR ou dépliage),

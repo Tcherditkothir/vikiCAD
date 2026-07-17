@@ -501,3 +501,50 @@ $CLI connect exec "BOARDVIEW BOTTOM"
 #   [...,"view mirrored left-right (solder side)"]
 $CLI connect exec "BOARDVIEW"        # bare = ALL (the default)
 ```
+
+### 7b. Measuring on gerbers (G2): MINDIST + DIM, CAM semantics
+
+`MINDIST <idA> <idB>` (alias `MD`; also honors a pre-selected pair) is the
+CAM clearance measurement: minimum **edge-to-edge** distance with material
+semantics — a wide trace counts its round-capped footprint (width/2 off
+each side of the centerline), a circle/drill counts its radius, a flashed
+pad (insert of a `GBR-*` block) counts the block's REAL aperture footprint
+through the insert transform, a region/pour its filled rings. Entities
+that cannot be reduced to strokes (text...) fall back to their bounding
+box and the output SAYS so (`method` flips from `"exact"` to `"bbox"`,
+plus a `"#id measured on its bounding box"` note). Both channels, same
+line (offline `--exec` shown; `connect exec` identical — verified).
+
+```sh
+$CLI open kitA.vkd --exec "MINDIST 2391 2392"   # two real drill hits
+#  messages:
+#   ["min edge-to-edge distance #2391 -> #2392 = 7.5104 mm (exact)",
+#    "closest points: (24.0076, -8.9503) -> (24.3923, -1.4498) mm",
+#    "{\"mindist\":{\"a\":2391,\"b\":2392,\"method\":\"exact\",
+#      \"mm\":7.510364123916017,\"overlap\":false,
+#      \"pa\":[24.007634...,-8.950267...],\"pb\":[24.392319...,-1.449762...]}}"]
+```
+
+Agent contract: the LAST message that starts with `{` is a compact JSON
+trailer — `mindist.mm` (mm, full precision), `overlap` (touching or
+overlapping material reports `mm: 0, overlap: true`), `method`
+(`exact`/`bbox`), `pa`/`pb` (the two closest material-edge points, mm).
+Parse that, not the human lines. Verified against the by-hand value
+`|c1-c2| - r1 - r2 = 7.510364123916017` from the same drills' `query
+entities` data; pads work too (`MINDIST 376 377` → `14.8007 mm (exact)`
+between two GBR-D67 flashes). In the GUI the result also draws a dashed
+witness line + end ticks on the canvas until the next command starts.
+
+Dimensioning pad-to-pad: every insert's flash origin is BOTH an Endpoint
+and a **Center** snap (so the Center osnap alone reaches pad centers in
+the GUI); headless you pass the centers straight from `query entities`
+(`geom.pos` of the inserts). Verified on the real kit:
+
+```sh
+$CLI open kitA.vkd \
+     --exec "DIMALIGNED 83.134962,21.26996 80.635094,6.26999 85,14" \
+     --save-as kitA_dim.vkd
+#  entityCount 2572 -> 2573; the new entity is
+#  {"type":"dimension","geom":{"kind":1,"a":[83.134962,21.26996],
+#   "b":[80.635094,6.26999],"pos":[85,14],...}}  (aligned = 15.207 mm)
+```

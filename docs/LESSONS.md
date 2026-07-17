@@ -197,3 +197,26 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   de plus — et la sérigraphie bottom (stockée en miroir dans le Gerber) se
   lit à l'endroit, comme dans un vrai viewer CAM. Seul drawGrid a demandé
   une normalisation min/max de la fenêtre monde.
+
+## 2026-07-17 — G2 mesure (MINDIST, snaps pastilles)
+
+- **La distance « matière » se calcule sur la soupe du renderer** : plutôt
+  qu'un algorithme par paire de types (n² de cas spéciaux), chaque entité
+  se réduit via son propre buildPrimitives en capsules (stroke width/2),
+  disques et polygones remplis — segment-segment/point-segment font le
+  reste. Les caps ronds Gerber rendent ça EXACT pour les traces : distance
+  des axes moins les demi-largeurs. Seuls les cercles gardent un chemin
+  analytique dédié (disque plein, pas d'aplatissement).
+- **Un bord-à-bord positif peut mentir : tester le containment.** Un
+  perçage entièrement DANS sa pastille a une distance de FRONTIÈRE
+  positive alors que la matière se recouvre — après la passe par paires,
+  tester un point représentatif de chaque forme contre les polygones de
+  l'autre (even-odd), sinon la « clearance » d'un via annulaire sort
+  fausse.
+- **Les bp du diff d'images planchonnent sur les traits fins** : une cote
+  sur une carte de 90 mm change ~150 pixels sur un canvas d'1 Mpx = 1 bp,
+  et le dhash 32×32 n'en voit RIEN. Le canvas 2D étant déterministe
+  (QPainter, même process), le compte BRUT de pixels changés
+  (img_px_changed, 0 attendu pour « identique ») est le bon outil pour les
+  petits deltas — les seuils bp/dhash restent pour les changements de
+  masse.

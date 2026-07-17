@@ -663,3 +663,46 @@ RGB (pixel du plan : (229,57,53) → (61,126,255)), pas par le bp gris.
 
 **État des tests : 3961 assertions / 285 cas ctest verts ; gui-smoke
 173 checks verts (16 nouveaux `stack:`, refdiff 32/32 inchangé).**
+
+## 2026-07-17 — G2 : mesurer sur les gerbers comme un outil CAM (MINDIST, snaps, cotes) ✅
+
+- **Snaps pastilles** : `InsertEntity::snapPoints` offre désormais le point
+  d'insertion en Endpoint ET en **Center** (l'origine de flash d'un bloc
+  GBR-* est le centre de la pastille) ; le SnapEngine passe par la même
+  méthode au lieu de son push manuel. Coter centre-à-centre marche avec le
+  seul osnap Center. Traces larges (extrémités/milieux), arcs à bulge
+  (centres) et perçages (centres) étaient déjà couverts — verrouillés par
+  deux nouveaux tests [snap][gerber].
+- **MINDIST** (alias MD, CommandProcessor unique donc parité CLI/IPC/GUI
+  gratuite — vérifiée dans les deux canaux) : distance minimale BORD À
+  BORD, sémantique matière. Noyau core/edit/MinDist.cpp : chaque entité
+  devient une soupe capsules (segment + rayon — trace large = width/2) /
+  disques (cercle = rayon) / polygones remplis (empreinte réelle des blocs
+  GBR-* via la transformation d'insert, anneaux even-odd des pours), en
+  réutilisant l'aplatissement du renderer (buildPrimitives, strokes filled
+  → anneaux, width → rayon de capsule). Ce qui ne se réduit pas à des
+  strokes (texte...) replie sur sa bbox et la sortie LE DIT (`method:
+  "bbox"` + note). Recouvrement/contact → 0 + `overlap:true`, containment
+  pur détecté (perçage entièrement dans sa pastille). Sortie : ligne
+  humaine, points les plus proches, trailer JSON compact (`mindist.mm/pa/
+  pb/method/overlap`, mm pleine précision) documenté dans AGENT.md §7b.
+- **Ligne témoin** : overlay transitoire posé dans le CommandContext
+  (ligne pointillée + tics aux deux points), dessiné par le canvas jusqu'à
+  la PROCHAINE commande (le processor le purge au démarrage suivant) ;
+  jamais dans contentImage() donc les captures clean restent géométrie
+  pure.
+- **Valeurs à la main** : traces parallèles 2.0−0.25−0.15 = 1.6 ; trace vs
+  perçage 5−1−0.2 = 3.8 ; pastilles rect 2×1 à 5 mm = 3.0 ; perçages réels
+  du kit A : |c1−c2|−r1−r2 = 7.510364123916017 mm reproduit à 1e-9 près
+  (unitaire + gui-smoke recoupent la formule depuis les données query).
+- **Cotes sur kit réel** : DIMALIGNED centre-pastille → centre-pastille
+  vérifié offline (entité dimension avec a/b exacts) et en live : bloc
+  gui-smoke `measure:` (12 checks) — MINDIST perçage-perçage == formule,
+  témoin visible au canvas, cote posée (+1 entité, capture clean stable à
+  0 pixel changé), UNDO restaure le rendu initial pixel pour pixel. Au
+  passage : img_cmp exporte le compte BRUT de pixels changés
+  (img_px_changed) — les bp planchonnent à zéro sur une cote fine, le
+  canvas 2D étant déterministe le compte brut est fiable.
+
+**État des tests : 4046 assertions / 299 cas ctest verts ; gui-smoke
+185 checks verts (12 nouveaux `measure:`, refdiff 32/32 inchangé).**
