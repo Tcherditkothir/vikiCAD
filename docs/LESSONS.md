@@ -103,3 +103,20 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   nomme les zéros CONSERVÉS (TZ = trailing gardés = leading supprimés),
   alors que Gerber %FS L/T nomme les zéros OMIS. Même arithmétique, noms
   croisés — les deux parseurs le documentent côte à côte.
+
+## 2026-07-16 — Ouverture de kit + rendu LPC (G1 suite)
+
+- **LPC = pixmap ARGB par calque, pas un mode de composition global** : un
+  CompositionMode_Clear sur le pixmap partagé du canvas efface TOUS les
+  calques dessous ; peindre le LPC couleur-fond simule le même bug. Seule
+  la composition par calque (LPD peint, LPC troue l'alpha, blit ensuite)
+  donne la sémantique Gerber. Les calques sans LPC gardent le chemin rapide.
+- **Fausse alerte à connaître (kits 2 couches)** : sur la vue kit complète,
+  des « pistes bleues par-dessus le plan rouge » ne sont PAS un bug d'ordre
+  de peinture — ce sont les canaux d'isolation LPC du plan top qui laissent
+  voir le plan bottom (bleu) en dessous. Le GTL importé SEUL montre les
+  mêmes canaux en noir (fond) : c'est le test discriminant.
+- **Fixtures Gerber synthétiques** : notre parseur (fidèle au dialecte)
+  exige un mode G01 avant le premier D01 — un fixture minimal sans `G01*`
+  échoue avec « D01 before any G01/G02/G03 mode ». Toujours copier l'en-tête
+  des goldens existants (`%FS` + `%MO` + `G01*`).
