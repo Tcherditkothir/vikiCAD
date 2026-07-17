@@ -62,7 +62,11 @@ private:
     // empty" fab files) — surfaced in the IPC "open" reply, mirroring the
     // CLI "import" JSON. Cleared on every loadFile().
     QStringList m_openWarnings;
-    bool insertStepFile(const QString& path, QString& error); // additive, shared
+    // additive, shared by the menu action (multi-select loop) and IPC
+    // "insertstep"; refreshView=false skips the 3D/assembly-panel refresh so
+    // a multi-file batch can do it once at the end instead of per file.
+    bool insertStepFile(const QString& path, QString& error, bool refreshView = true);
+    void refreshAfterAssemblyChange(); // shared post-insert 3D/assembly-panel sync
     // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj, the fab
     // extensions .gtl/.gbs/.../.gko/.gbr/.txt) or a DIRECTORY (Gerber kit) —
     // shared by the File>Export dialogs and the IPC "export" verb. `layer`

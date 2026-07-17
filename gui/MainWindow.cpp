@@ -1627,16 +1627,33 @@ void MainWindow::beginSketchOnFace()
 
 void MainWindow::insertStepComponent()
 {
-    const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Insert STEP as component"), {},
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Insert STEP as component(s)"), {},
         QStringLiteral("STEP (*.step *.stp);;All files (*)"));
-    if (path.isEmpty())
+    if (paths.isEmpty())
         return;
-    QString error;
-    if (!insertStepFile(path, error))
-        QMessageBox::warning(this, QStringLiteral("Insert failed"),
-                             error.isEmpty() ? QStringLiteral("STEP import failed")
-                                             : error);
+    QStringList failures;
+    for (const QString& path : paths) {
+        QString error;
+        // refreshView=false: one file per assembly part is common (5-20+),
+        // and each 3D/assembly-panel refresh is expensive — do it once below
+        // instead of once per file.
+        if (!insertStepFile(path, error, /*refreshView=*/false))
+            failures << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(),
+                                                      error.isEmpty()
+                                                          ? QStringLiteral("STEP import failed")
+                                                          : error);
+    }
+    refreshAfterAssemblyChange();
+    if (!failures.isEmpty())
+        QMessageBox::warning(
+            this, QStringLiteral("Insert failed"),
+            failures.size() == 1
+                ? failures.first()
+                : QStringLiteral("%1 of %2 file(s) failed:\n%3")
+                      .arg(failures.size())
+                      .arg(paths.size())
+                      .arg(failures.join(QLatin1Char('\n'))));
 }
 
 namespace {
@@ -1880,7 +1897,7 @@ void MainWindow::exportGerberLayerFile()
     }
 }
 
-bool MainWindow::insertStepFile(const QString& path, QString& error)
+bool MainWindow::insertStepFile(const QString& path, QString& error, bool refreshView)
 {
     if (!m_doc)
         return false;
@@ -1914,7 +1931,17 @@ bool MainWindow::insertStepFile(const QString& path, QString& error)
     m_commandBar->appendHistory(
         QStringLiteral("Inserted component '%1' (%2 solid%3)")
             .arg(comp).arg(added).arg(added == 1 ? QString() : QStringLiteral("s")));
-    // Sync the 3D view exactly once (a double refresh crashed some GL drivers).
+    if (refreshView)
+        refreshAfterAssemblyChange();
+    return true;
+}
+
+// Sync the 3D view + assembly panel after one or more component insertions.
+// Shared so a multi-file insert does this ONCE instead of per file (each
+// refresh is expensive on real parts, and a double refresh in one call
+// crashed some GL drivers — so batching, not repeating, is the fix).
+void MainWindow::refreshAfterAssemblyChange()
+{
     const bool already3d = m_3dButton && m_3dButton->isChecked();
     if (documentIsSolidsOnly() && !already3d)
         setView3D(true); // switches AND refreshes
@@ -1923,7 +1950,6 @@ bool MainWindow::insertStepFile(const QString& path, QString& error)
     m_canvas->markDocumentDirty();
     if (m_assemblyPanel)
         m_assemblyPanel->refresh();
-    return true;
 }
 
 void MainWindow::editEntity(EntityId id)
