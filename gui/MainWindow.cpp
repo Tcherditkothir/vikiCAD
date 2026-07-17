@@ -1452,11 +1452,15 @@ void MainWindow::openFile()
 {
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
-        QStringLiteral("All supported (*.vkd *.dxf *.dwg *.step *.stp);;"
-                       "VikiCAD drawings (*.vkd);;"
-                       "DXF/DWG (*.dxf *.dwg);;"
-                       "STEP (*.step *.stp);;"
-                       "All files (*)"));
+        QStringLiteral(
+            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.gtl *.gbl *.gts "
+            "*.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 *.gbr *.txt *.drl);;"
+            "VikiCAD drawings (*.vkd);;"
+            "DXF/DWG (*.dxf *.dwg);;"
+            "STEP (*.step *.stp);;"
+            "Gerber/Excellon (*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp "
+            "*.gko *.gm1 *.gbr *.txt *.drl);;"
+            "All files (*)"));
     if (path.isEmpty())
         return;
     loadFile(path, /*interactive=*/true);
