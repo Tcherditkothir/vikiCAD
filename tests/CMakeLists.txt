@@ -40,6 +40,7 @@ add_executable(vikicad-tests
     test_solid_metrics.cpp
     test_edgeops_mate_draft.cpp
     test_gerber.cpp
+    test_gerber_export.cpp
     test_excellon.cpp
     test_gerberkit.cpp
     test_cam_inspect.cpp

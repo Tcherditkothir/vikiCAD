@@ -580,7 +580,9 @@ Shapes: `Circle`/`Rect`/`Obround`/`Polygon`/`Macro`; `params` are mm; a
 macro's `desc` uses Altium's `G04:AMPARAMS|...` comment when present (the
 designer-level truth: RoundedRect sizes, corner radius, rotation), else
 `Macro <name> ~WxH`. `usage` counts painting OPERATIONS (a coalesced
-polyline still counts each stroke). A kit opened into a virgin document
+polyline still counts each stroke). Layers with macro apertures also carry
+`cam.macros` (`{name: [[code, params...], ...]}`, primitives in mm) — the
+%AM bodies the G3 RS-274X writer re-emits verbatim (GerberWriter.h). A kit opened into a virgin document
 also DROPS the default layer "0" (pure CAM stack; the current layer becomes
 the first kit layer — that is why `query layers` shows no `"0"` above).
 

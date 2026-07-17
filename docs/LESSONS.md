@@ -280,3 +280,23 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   cercles/arcs internes. Comportement voulu (symétrie Endpoint/Center,
   utile aussi pour les blocs mécaniques) — si un jour ça gêne, restreindre
   au préfixe de nom de bloc, pas au SnapEngine.
+
+## 2026-07-17 — G3 écrivain RS-274X
+
+- **Ré-émettre la définition D'ORIGINE bat toute reconstruction.** Le
+  renderer VikiCAD approxime les tracés à aperture RECT en bouts ronds
+  (dette G1), mais l'export n'a PAS à reproduire notre rendu : il ressort
+  l'ADD..R d'origine (camMeta) et gerbv peint l'exporté exactement comme
+  l'original — dhash 0/1024 sur 28 couches réelles. Corollaire : le juge
+  du test de vérité doit être le renderer de référence des DEUX côtés
+  (gerbv vs gerbv), jamais notre propre pipeline.
+- **Un comparateur point-à-point casse sur les formes RE-TESSELLÉES.** Un
+  insert de pastille ronde scalé ×2 ressort en `C,d×2` ; au ré-import la
+  tessellation (tolérance de corde fixe 1e-3) met PLUS de points sur le
+  cercle plus grand — anneaux 61 vs 87 points pour la MÊME forme. Le
+  comparateur de round-trip doit dégrader en métriques de forme (bbox à
+  2 tolérances de corde près + aire à 1 %) quand les comptes de points
+  diffèrent, et rester point-à-point sinon.
+- **Piège Catch2/QString** : `text.contains("D15*")` matche aussi
+  `%ADD10ROUNDEDRECTD15*%` — sur du Gerber, toujours ancrer les checks de
+  sous-chaînes sur le préfixe de statement complet (`%ADD10...`, `%AM...*`).

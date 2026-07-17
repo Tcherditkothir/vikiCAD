@@ -132,6 +132,13 @@ GerberParseResult parseGerberData(const QByteArray& data);
 // and the APERTURES table print (stored in the layer's camMeta at import).
 QString gerberApertureDesc(const GerberAperture& ap, const GerberFile& file);
 
+// Solid contours (rings) of one aperture, centered on the flash origin, mm.
+// The exact rings the importer bakes into GBR-* block definitions — exposed
+// so the RS-274X writer can measure macro footprints the same way.
+std::vector<std::vector<Vec2d>> gerberApertureRings(const GerberAperture& ap,
+                                                    const GerberFile& file,
+                                                    QStringList& warnings);
+
 // ---------------------------------------------------------------------------
 // Stage 2 — conversion to entities
 // ---------------------------------------------------------------------------
@@ -161,8 +168,9 @@ struct GerberImportResult {
 //  - every aperture-painted entity carries "dcode":N in its extra JSON
 //    (regions have no aperture, hence no tag), and the layer's camMeta
 //    stores the full aperture table ({"apertures":{"Dnn":{shape, params mm,
-//    macro?, hole?, desc, usage}}}) — persisted in .vkd for the inspector
-//    and the future RS-274X exporter.
+//    macro?, hole?, desc, usage}}}) plus the referenced %AM macro bodies
+//    ({"macros":{name:[[code,p...],...]}}, primitives in mm) — persisted in
+//    .vkd for the inspector and the RS-274X writer (GerberWriter.h).
 // All mutations run inside one transaction (single undo step).
 GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                                     const QString& layerName);

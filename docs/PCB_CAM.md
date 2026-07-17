@@ -201,6 +201,47 @@
   pont DXF↔Gerber (contour de carte, trous de fixation — l'interface
   méca-élec, LA force différenciante de VikiCAD).
 
+  **Fait (2026-07-17) — écrivain RS-274X (`core/io/GerberWriter.{h,cpp}`)** :
+  - API `exportGerberLayer(doc, layerName, path)` / `writeGerberLayer(...,
+    QByteArray&)` + warnings collectés ; dialecte moderne écrit :
+    `%FSLAX46Y46*%` (absolu, 1e-6 mm), `%MOMM*%`, G75, G01/G02/G03,
+    D01/D02/D03, `%LPD*%`/`%LPC*%` émis en suivant l'ORDRE de peinture du
+    document (tag `gpol` des entités), G36/G37 pour les Hatch solides,
+    en-tête G04 + `TF.GenerationSoftware`, M02 ;
+  - table d'apertures RÉGÉNÉRÉE depuis les entités : trace au width intact →
+    la définition D'ORIGINE de `Layer.camMeta` revient telle quelle (un tracé
+    à aperture RECT ressort en R — gerbv peint alors l'exporté comme
+    l'original, la dette G1 « bouts ronds » est contournée à l'export) ;
+    width édité → nouvelle entrée `C,<w>` ; pastille : macro %AM re-émise
+    VERBATIM (nouvelle table `camMeta.macros`, primitives en mm, posée par
+    l'importeur et persistée .vkd) ; échelle uniforme/rotation d'insert
+    repliées dans les paramètres standard (C : toute rotation ; R/O :
+    multiples de 90° ; P : rotation quelconque ; trou scalé) ; transform
+    non-uniforme, rect hors-axe, macro scalée ou bloc sans camMeta →
+    macro outline (primitive 4) reconstruite de la géométrie du bloc +
+    warning ; dédup (forme, params arrondis 1e-6), numérotation D10+ ;
+  - garde-fous : `test_gerber_export.cpp` — round-trip des 12 goldens
+    synthétiques à 1e-6 mm, cas de régénération (dédup, width édité, insert
+    scalé/tourné, fallback outline, .vkd save/load des macros), et LE TEST
+    DE VÉRITÉ : les 28 couches Gerber non vides des 2 kits réels, gerbv
+    rend l'ORIGINAL et l'EXPORTÉ (notre renderer hors boucle) — observé
+    dhash ≤ 1/1024 et delta d'encre ≤ 0.002 pt (seuils : <30 / ≤1 pt),
+    plus ré-import sémantique (mêmes entités, coordonnées à 1e-3).
+    SKIP sans kits ou sans gerbv.
+
+  **Dette G3-export assumée** :
+  - la dette G2 « flashes ronds cuits en polygones inscrits (~2 µm) » reste :
+    l'export re-génère les empreintes standard depuis camMeta (analytique,
+    pas depuis les anneaux cuits), seul le fallback outline hérite de la
+    tessellation inscrite — MINDIST garde son biais documenté ;
+  - pas encore de commande utilisateur (CLI/GUI) pour l'export : API C++
+    seulement, l'intégration commande + Excellon writer + panélisation
+    restent à faire dans la suite de G3 ;
+  - entités sans image Gerber (texte, cotes, hatch non solide) → warning +
+    skip ; cercles Excellon (`plated`) exportés en région disque si on
+    exporte une couche de perçage en Gerber (l'écrivain Excellon est le
+    vrai chemin, warning émis).
+
 ## Stratégie de test (process obligatoire habituel)
 
 - Goldens synthétiques petits commités dans `tests/golden/gerber/` (chaque

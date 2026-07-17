@@ -64,6 +64,7 @@ add_library(vikicore STATIC
     io/StlIo.cpp
     io/ObjIo.cpp
     io/GerberIo.cpp
+    io/GerberWriter.cpp
     io/ExcellonIo.cpp
     io/GerberKit.cpp
 )

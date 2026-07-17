@@ -29,12 +29,15 @@ struct Layer {
     // the Gerber kit importer, editable via the LAYER command / LayerPanel.
     QString gerberRole;
     // CAM source tables, set by the fab-file importers and persisted in .vkd
-    // (empty for ordinary layers). Two shapes today:
+    // (empty for ordinary layers). Shapes today:
     //   {"apertures": {"D10": {"shape","params"[mm],"macro"?,"hole"?,
-    //                          "desc","usage"}, ...}}   (Gerber layer)
+    //                          "desc","usage"}, ...},
+    //    "macros":    {name: [[code, p...], ...]}}      (Gerber layer; the
+    //                          %AM bodies in mm, re-emitted verbatim at export)
     //   {"tools":     {"T1":  {"dia"[mm],"plated","usage"}, ...}} (Excellon)
-    // Consumed by the APERTURES/DRILLREPORT commands and the PropertiesPanel
-    // gerber inspector; G3 export will regenerate its tables from here.
+    // Consumed by the APERTURES/DRILLREPORT commands, the PropertiesPanel
+    // gerber inspector and the RS-274X writer (io/GerberWriter.h), which
+    // regenerates its aperture table from here.
     QJsonObject camMeta;
 };
 

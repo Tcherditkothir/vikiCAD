@@ -1156,6 +1156,13 @@ QString fmtDeg(double deg)
 
 } // namespace
 
+std::vector<std::vector<Vec2d>> gerberApertureRings(const GerberAperture& ap,
+                                                    const GerberFile& file,
+                                                    QStringList& warnings)
+{
+    return apertureRings(ap, file, warnings);
+}
+
 QString gerberApertureDesc(const GerberAperture& ap, const GerberFile& file)
 {
     const auto p = [&ap](size_t i) {
@@ -1472,9 +1479,34 @@ GerberImportResult gerberToDocument(Document& doc, const GerberFile& file,
                 used == usage.end() ? 0 : used->second;
             table[QStringLiteral("D%1").arg(dcode)] = entry;
         }
+        // The %AM macro bodies referenced by the table (primitives in mm,
+        // one row per primitive: [code, p1, p2, ...]). The RS-274X writer
+        // re-emits them VERBATIM for unedited flashes — without this the
+        // exact footprint (rounded rects, rotations) would be lost.
+        QJsonObject macroTable;
+        for (const auto& [dcode, ap] : file.apertures) {
+            (void)dcode;
+            if (ap.kind != 'M' || macroTable.contains(ap.macroName))
+                continue;
+            const auto mIt = file.macros.find(ap.macroName);
+            if (mIt == file.macros.end())
+                continue;
+            QJsonArray prims;
+            for (const GerberMacroPrim& p : mIt->second.prims) {
+                QJsonArray row;
+                row.append(p.code);
+                for (const double v : p.params)
+                    row.append(v);
+                prims.append(row);
+            }
+            macroTable[ap.macroName] = prims;
+        }
         const Layer* layer = doc.layer(layerId);
         QJsonObject meta = layer ? layer->camMeta : QJsonObject();
         meta[QStringLiteral("apertures")] = table;
+        meta.remove(QStringLiteral("macros")); // re-import: drop a stale table
+        if (!macroTable.isEmpty())
+            meta[QStringLiteral("macros")] = macroTable;
         doc.setLayerCamMeta(layerId, meta);
     }
 
