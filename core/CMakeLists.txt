@@ -60,6 +60,7 @@ add_library(vikicore STATIC
     io/StlIo.cpp
     io/ObjIo.cpp
     io/GerberIo.cpp
+    io/ExcellonIo.cpp
 )
 
 if(VIKICAD_HAS_DXF)
