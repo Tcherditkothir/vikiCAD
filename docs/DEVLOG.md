@@ -511,3 +511,29 @@ de source, zéro tâtonnement.
 - État : **2182 assertions / 243 cas + gui-smoke 124 checks verts.**
 - Prochaine étape convenue avec Lex : TOUR de l'appli + BRAINSTORM d'une
   nouvelle fonctionnalité (session suivante, après compaction).
+
+## 2026-07-16 — Brainstorm : le prochain chantier est le PCB CAM
+
+Backup du repo (source + .git, sans build/) sur la clé TRANSCEND :
+`vikicad-backup-20260716-2020.tar.gz` — seule copie hors machine tant que
+GitHub reste injoignable (Ethernet IPv6-only).
+
+**Brainstorm avec Lex (le rituel convenu avant tout gros chantier).** Son
+idée : lire et éditer les Gerbers et fichiers PCB sans repasser par un gros
+EDA (Altium & co). Analyse : le Gerber RS-274X est du dessin 2D vectoriel —
+tracés à épaisseur = polylignes à bulge, flashes = inserts de blocs, régions
+= hatches, couches = calques, X2 = JSON préservé. Ajustement quasi parfait
+avec le moteur existant, et trou réel dans l'écosystème (aucun ÉDITEUR
+Gerber libre ; gerbv/GerbView = visualisation seulement).
+
+**Décisions (AskUserQuestion)** : périmètre = CAM Gerber/Excellon (PAS d'EDA
+complet — nets/routage/DRC = territoire KiCad) ; schémas = chantier SUIVANT
+(scope pré-réfléchi : blocs intelligents + WIRE + refs auto) ; goldens = les
+kits Gerber réels de Lex (il les fournit) + synthétiques commités + diff
+d'images contre gerbv en renderer de référence.
+
+Plan complet : **docs/PCB_CAM.md** (mapping, 3 défis — polarité LPC,
+regénération de la table d'apertures à l'export, perf des cartes denses —
+phases G1 import/rendu, G2 ergonomie CAM, G3 édition/export/panélisation/
+pont DXF↔Gerber). En attente : kits de Lex dans ~/computer/pcb-ref/ et
+`sudo apt install gerbv`.

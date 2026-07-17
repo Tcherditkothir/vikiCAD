@@ -1,15 +1,19 @@
-# REPRISE — état au 2026-07-12 ; PROCHAINE ÉTAPE : tour + brainstorm
+# REPRISE — état au 2026-07-16 ; CHANTIER EN COURS : PCB CAM (Gerber/Excellon)
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
 complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
 
-## 🎯 PROCHAINE SESSION (convenu avec Lex le 2026-07-12)
+## 🎯 CHANTIER DÉCIDÉ (brainstorm avec Lex le 2026-07-16)
 
-Lex veut : (1) continuer le TOUR de l'appli (valider les derniers lots en
-GUI, remonter ce qui accroche), puis (2) BRAINSTORMER une NOUVELLE
-FONCTIONNALITÉ ensemble. Ne rien implémenter de gros sans ce brainstorm.
-Candidats déjà identifiés (§ prochains chantiers plus bas) : gizmo de drag,
-EXTRUDE/REVOLVE dans FeatureTree, contraintes de sketch, release GPLv3.
+**PCB CAM — lire/éditer/réexporter Gerber RS-274X + Excellon** sans passer
+par un gros EDA. Plan complet, périmètre, phases G1/G2/G3 et stratégie de
+test : **`docs/PCB_CAM.md`**. Décisions fermes : PAS d'EDA complet
+(nets/routage/DRC = territoire KiCad) ; schémas = chantier SUIVANT (scope
+pré-réfléchi dans PCB_CAM.md). En attente de Lex : kits Gerber réels →
+`/home/lex/computer/pcb-ref/` + `sudo apt install gerbv` (renderer de
+référence pour les goldens).
+
+Le TOUR de validation GUI (§ 👀 plus bas) reste ouvert en parallèle.
 
 ## ⏸️ ÉTAT À LA PAUSE (décidée par Lex le 2026-07-11)
 
