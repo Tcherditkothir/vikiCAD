@@ -591,6 +591,56 @@ else
     record SKIP "kit: Gerber kit phase" "pcb-ref kits absent on this machine"
 fi
 
+# --- Gerber LPC paint-order phase (synthetic golden, self-contained) ----------
+# lpc_redraw.gbr alternates polarity 4 times: LPD plane region -> LPC corridor
+# -> LPD trace REDRAWN inside the corridor -> LPC second clear punched over
+# the trace -> LPD pad flashed back. The Gerber semantics is a strict paint
+# ORDER: the redrawn trace/pad must be visible INSIDE their clears, and the
+# second clear must eat the first trace where they overlap. A two-pass
+# composition (all darks then all clears, the classic bug) fails the
+# trace-redrawn/pad-redrawn probes; ignoring later clears fails 2nd-clear.
+# Probed on a CLEAN capture (screenshot ... clean = no grid/axes/crosshair),
+# world->pixel mapped through the ink bbox (the 40x40 mm plane).
+out="$(rpc open "$ROOT/tests/golden/gerber/lpc_redraw.gbr")"
+assert_eq "lpc: open lpc_redraw.gbr" True "$(jget "$out" "d['result'].get('ok')")"
+shot "lpc: clean capture" "$TMP/lpc.png"
+rpc screenshot "$TMP/lpc.png" clean >/dev/null # overwrite with the clean one
+lpc_probes="$(python3 - "$TMP/lpc.png" <<'PYEOF'
+import sys
+import warnings
+warnings.simplefilter("ignore")
+from collections import Counter
+from PIL import Image
+img = Image.open(sys.argv[1]).convert("L")
+bg = Counter(img.getdata()).most_common(1)[0][0]
+m = img.point(lambda v: 255 if abs(v - bg) > 10 else 0)
+box = m.getbbox()
+if box is None:
+    print("empty-render")
+    sys.exit(0)
+x0, y0, x1, y1 = box
+mp = m.load()
+def probe(wx, wy):  # world mm (plane = 0..40 on both axes) -> ink?
+    px = x0 + wx / 40.0 * (x1 - 1 - x0)
+    py = y1 - 1 - wy / 40.0 * (y1 - 1 - y0)
+    return mp[int(round(px)), int(round(py))] > 127
+checks = [  # name, world x, world y, ink expected
+    ("plane-ink", 20, 32, True),        # plane above the corridor
+    ("corridor-clear", 7, 22.5, False), # corridor punched out of the plane
+    ("trace-redrawn", 27, 20, True),    # LPD trace back INSIDE the corridor
+    ("pad-redrawn", 20, 20, True),      # LPD pad back INSIDE the 2nd clear
+    ("2nd-clear", 22.2, 19.5, False),   # 2nd LPC eats the 1st trace
+]
+print(" ".join(f"{n}={'ok' if probe(x, y) == want else 'BAD'}"
+               for n, x, y, want in checks))
+PYEOF
+)"
+for pr in $lpc_probes; do
+    name="${pr%%=*}"
+    if [[ "$pr" == *"=ok" ]]; then record PASS "lpc: $name" "pixel probe"
+    else record FAIL "lpc: $name" "$pr (paint order broken?)"; fi
+done
+
 # ---- (5) report -------------------------------------------------------------
 
 print_table

@@ -1,0 +1,41 @@
+G04 synthetic golden: strict LPD/LPC paint-order alternation*
+G04 1) LPD plane region 0,0-40,40  2) LPC corridor 5,15-35,25*
+G04 3) LPD trace redrawn INSIDE the corridor (10,20)-(30,20) w=2*
+G04 4) LPC second clear 17,17-23,23 punched over the trace*
+G04 5) LPD pad d=3 flashed back at 20,20 inside the second clear*
+%FSLAX34Y34*%
+%MOMM*%
+G01*
+%ADD10C,2.00000*%
+%ADD11C,3.00000*%
+G36*
+X0Y0D02*
+X400000D01*
+Y400000D01*
+X0D01*
+Y0D01*
+G37*
+%LPC*%
+G36*
+X50000Y150000D02*
+X350000D01*
+Y250000D01*
+X50000D01*
+Y150000D01*
+G37*
+%LPD*%
+D10*
+X100000Y200000D02*
+X300000D01*
+%LPC*%
+G36*
+X170000Y170000D02*
+X230000D01*
+Y230000D01*
+X170000D01*
+Y170000D01*
+G37*
+%LPD*%
+D11*
+X200000Y200000D03*
+M02*
