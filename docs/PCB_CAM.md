@@ -62,8 +62,11 @@
   - tracé à aperture RECTANGLE (D01 avec ADD..R) rendu en trait à bouts
     ronds — exact seulement pour les apertures C ; à faire exact en G3
     (l'export doit régénérer la vraie empreinte) ;
-  - `gerber-ref-diff.sh` écrit mais jamais exécuté en réel : gerbv pas
-    installé (sudo → Lex) ; seuils premier-run à calibrer ;
+  - ~~`gerber-ref-diff.sh` écrit mais jamais exécuté en réel~~ → **FAIT
+    (2026-07-17)** : gerbv installé, 32/32 couches VERTES, seuils calibrés
+    sur les chiffres réels (dhash ≤ 170, ink-delta ≤ 3 pts). Divergence
+    résiduelle connue : les perçages sont des ANNEAUX (CircleEntity) chez
+    nous vs disques pleins chez gerbv — candidat G2 (affichage rempli) ;
   - l'élection de contour est une heuristique : un kit dont le contour vit
     ailleurs que GKO/GM1/GM13 (ou X2 Profile) n'aura pas d'Outline ; G2
     devrait offrir un « réassigner le rôle d'un calque » à la souris ;

@@ -142,3 +142,25 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
 - **Excellon seul via IPC** : `connect open` d'un .TXT de perçage marche
   depuis le fix single-file (sniff M48) — 330 cercles pour PCBB1.TXT,
   utile pour inspecter les perçages sans le reste du kit.
+
+## 2026-07-17 — Premier run réel de gerber-ref-diff (calibration)
+
+- **Fausse alerte (récidive, variante capture)** : le premier run réel
+  affichait ~27 % d'écart d'encre sur les 4 couches cuivre et un diagnostic
+  « les pistes re-dessinées après LPC sont mangées ». FAUX : la composition
+  par calque suit déjà strictement l'ordre du document (vérifié par golden
+  synthétique lpc_redraw.gbr + sondes de pixels, ET en injectant exprès le
+  bug « deux passes » — les sondes le détectent). Le vrai coupable : les
+  DÉCORATIONS du canvas (glyphe UCS, réticule collé aux bords) gonflaient la
+  bbox d'encre de la capture côté VikiCAD → crop faussé → dhash/encre
+  divergents sur TOUTES les couches. Règle : toute comparaison d'images
+  contre un renderer de référence passe par `screenshot PATH clean` (capture
+  sans overlays), jamais par le grab décoré.
+- **Un masque « plus clair que le fond » perd les calques noirs** : les
+  perçages (calque Drill, noir 0x000000) se dessinent PLUS SOMBRES que le
+  fond du canvas (24,26,28) — un seuil de luminance les efface du masque.
+  Côté VikiCAD le masque d'encre est « différent de la couleur du fond »
+  (échantillonnée au coin, zoom-extents garantit la marge), pas un seuil.
+- **Divergence résiduelle connue** : perçages = ANNEAUX (CircleEntity
+  cosmétique) chez nous vs DISQUES pleins chez gerbv → dhash .TXT plus haut
+  (58/104 vs médiane ~25) mais sous seuil. Affichage rempli = candidat G2.
