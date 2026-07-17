@@ -29,6 +29,10 @@
 #        directory, single-layer exports (.GTS by extension, .GBR by layer
 #        name), the EXPORTED kit re-opened and every edit read back
 #        (DRILLREPORT 183); PANELIZE 2x2 (DRILLREPORT x4, one undo).
+#   Final optional stages (SKIP without gerbv/kits): gerber-ref-diff.sh
+#        (VikiCAD render vs gerbv, 32 layers, ~12 s) and
+#        gerber-export-diff.sh (gerbv on ORIGINAL vs gerbv on EXPORTED —
+#        the G3 fabrication truth, 31 layers, tight thresholds, ~5 s).
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
@@ -906,6 +910,25 @@ if command -v gerbv >/dev/null 2>&1 && [[ -d /home/lex/computer/pcb-ref/S5M0PCBA
     fi
 else
     record SKIP "refdiff: layers vs gerbv" "gerbv or pcb-ref kits absent"
+fi
+
+# ---- (5b) OPTIONAL: the G3 export truth — gerbv orig vs gerbv EXPORT --------
+# gerber-export-diff.sh imports both kits, exports them back (kit dir +
+# single-layer for the unmapped ones) and lets gerbv render ORIGINAL vs
+# EXPORTED, layer by layer, with TIGHT thresholds (gerbv vs gerbv: dhash
+# < 30, ink delta <= 1 pt). Pure CLI — no GUI unit involved. ~5 s.
+# Silently skipped when gerbv or the kits are absent (script exits 0+SKIP).
+if command -v gerbv >/dev/null 2>&1 && [[ -d /home/lex/computer/pcb-ref/S5M0PCBA ]]; then
+    t0=$SECONDS
+    if "$ROOT/scripts/gerber-export-diff.sh" >"$TMP/expdiff.log" 2>&1; then
+        record PASS "expdiff: export vs original (gerbv)" \
+            "$(grep -c '^PASS' "$TMP/expdiff.log") PASS rows, $((SECONDS - t0))s"
+    else
+        record FAIL "expdiff: export vs original (gerbv)" \
+            "$(grep -c '^FAIL' "$TMP/expdiff.log") FAIL rows — see $TMP/expdiff.log"
+    fi
+else
+    record SKIP "expdiff: export vs original (gerbv)" "gerbv or pcb-ref kits absent"
 fi
 
 # ---- (6) report -------------------------------------------------------------
