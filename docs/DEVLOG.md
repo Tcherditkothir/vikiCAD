@@ -706,3 +706,56 @@ RGB (pixel du plan : (229,57,53) → (61,126,255)), pas par le bp gris.
 
 **État des tests : 4046 assertions / 299 cas ctest verts ; gui-smoke
 185 checks verts (12 nouveaux `measure:`, refdiff 32/32 inchangé).**
+
+## 2026-07-17 — G2 : l'inspection — chaque objet gerber sait CE QU'IL EST ✅
+
+Troisième lot G2. Une pastille cliquée doit se raconter ; un agent doit
+pouvoir lire la table d'apertures et le rapport de perçage sans rouvrir le
+fichier source. Le tout pensé fondation G3 : l'export RS-274X/Excellon
+régénérera ses tables depuis ces métadonnées.
+
+- **Tags d'entités** : l'importeur Gerber pose `dcode:N` sur tout objet
+  peint par une aperture (traces coalescées, arcs, flashes ; les régions
+  G36/G37 n'ont pas d'aperture → pas de tag), l'importeur Excellon pose
+  `tool:"Tn"` à côté du `plated` existant. Voyage via l'extra JSON — undo,
+  .vkd et queries gratuits.
+- **Tables persistées au calque** : nouveau `Layer.camMeta` (QJsonObject),
+  colonne `cam_meta` dans .vkd (ALTER TABLE toléré + SELECT à 3 étages :
+  +cam_meta → +alpha/rank/role → legacy — les fichiers d'HIER, avec
+  colonnes G2 mais sans cam_meta, gardent leur pile). Gerber :
+  `{"apertures":{"Dnn":{shape, params mm, macro?, hole?, desc, usage}}}` ;
+  Excellon : `{"tools":{"Tn":{dia, plated, usage}}}`. Visible en `cam`
+  dans query layers (seulement si non vide).
+- **AMPARAMS** : Altium émet `G04:AMPARAMS|DCode=15|XSize=23.62mil|...|
+  Shape=RoundedRectangle|` avant chaque %AM — la vérité niveau designer.
+  Capturé au parse (brut, par D-code), converti en desc lisible :
+  « RoundedRect 0.600x0.900 r=0.054 rot 270deg » (l'exemple du brief,
+  reproduit verbatim sur le kit réel). Sans AMPARAMS : « Macro NOM ~WxH »
+  (bbox des primitives). C/R/O/P décrits depuis leurs params mm.
+- **APERTURES [calque]** (APER) : table alignée D-code/desc/usages + trailer
+  JSON (contrat MINDIST : dernier message commençant par `{`). Test kits
+  réels : {usage>0} == « Used DCodes » du .REP, couche par couche, sur les
+  deux kits — y compris l'égalité vide du GKO keepout de PCBB (un fichier
+  100 % régions ne définit aucune aperture, et le .REP le dit pareil).
+- **DRILLREPORT** (DR) : table par diamètre+platage sur les cercles VIVANTS
+  (un ERASE se voit au rapport suivant), outils et calques listés par
+  rangée, trailer JSON. Golden : chaque outil des .DRR retrouvé (platage,
+  ø ±0.01, compte EXACT), totaux 182 (PCBA) / 330 (PCBB).
+- **Inspecteur PropertiesPanel** : section lecture seule au-dessus de la
+  géométrie — `gerber D-code`, `gerber aperture` (desc de la table du
+  calque), `gerber polarity` (dark / clear LPC), `drill tool` + `drill
+  plating`, `layer role`. Nouvelle commande générique **SELECT [ids]**
+  (SEL, vide = clear) : le pickfirst headless (MINDIST pré-sélectionné
+  vérifié en test) ET le moyen de piloter le panneau par IPC ; `query ui`
+  expose `propRows` (les rangées visibles du QTableWidget) — le panneau
+  est vérifié par gui-smoke sur le vrai widget, pas sur une maquette.
+- **Dette G1 soldée — couche « 0 »** : un kit importé dans un document
+  VIERGE (l'état des trois canaux d'open) supprime la couche « 0 » du
+  constructeur (calque courant → première couche du kit) ;
+  NativeStore::load ne la ressuscite pas quand le fichier n'a pas de ligne
+  id 0 (Document::dropEmptyLayerZero, refus si une entité ou un bloc la
+  référence). Un document NON vierge garde sa « 0 » — flux DXF/2D intacts.
+
+**État des tests : 4380 assertions / 307 cas ctest verts (8 nouveaux cas
+test_cam_inspect dont 2 goldens kits) ; gui-smoke 200 checks verts (15
+nouveaux `inspect:`), refdiff 32/32 inchangé.**

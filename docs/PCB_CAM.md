@@ -76,7 +76,12 @@
     (`LAYER <calque> ROLE Outline`, ou clic droit dans le LayerPanel →
     « Set Gerber role ») — recolorie à la palette du rôle et déplace au
     rang de peinture du rôle. L'heuristique d'élection reste inchangée ;
-  - couche « 0 » vide toujours présente après import kit (défaut Document).
+  - ~~couche « 0 » vide toujours présente après import kit~~ → **FAIT
+    (2026-07-17, G2)** : un kit importé dans un document VIERGE supprime la
+    couche « 0 » résiduelle (le calque courant devient la première couche du
+    kit) ; le `.vkd` sauvé sans ligne « 0 » ne la ressuscite pas au
+    chargement. Les flux DXF/2D ne changent pas (toute entité ou référence
+    de bloc sur « 0 » la conserve).
 - **G2 — Ergonomie CAM** (en cours) : gestion de pile (board multi-fichiers,
   presets de couleurs/visibilité, transparence), mesures et cotes SUR les
   gerbers, inspecteur d'apertures, rapport (compte de perçages par diamètre…).
@@ -132,6 +137,36 @@
     vérifié sur S5M0PCBA (unitaire + gui-smoke bloc `measure:` : MINDIST
     perçage-perçage recoupé avec la formule à la main, cote posée, capture
     clean stable, UNDO restaure le rendu à l'identique).
+
+  **Fait (2026-07-17) — l'inspection : comprendre CE QU'EST chaque objet** :
+  - fondation pensée G3-export : l'importeur Gerber tagge chaque entité
+    peinte par une aperture avec `dcode:N` (les régions G36/G37 n'en ont
+    pas — pas d'aperture) et persiste la TABLE D'APERTURES du fichier dans
+    le `camMeta` du calque (.vkd + `cam` dans `query layers`) : forme
+    (Circle/Rect/Obround/Polygon/Macro), params en mm, trou, `desc`
+    lisible, compte d'usages ; les macros Altium exploitent le commentaire
+    `G04:AMPARAMS|...` (la vérité niveau-designer : « RoundedRect
+    0.600x0.900 r=0.054 rot 270deg ») ; l'importeur Excellon tagge
+    `tool:"Tn"` et persiste la table d'outils (dia mm, plated, usages) ;
+  - inspecteur PropertiesPanel : une entité gerber sélectionnée raconte son
+    histoire en rangées lecture seule (D-code, aperture, polarité
+    dark/clear, outil + platage des perçages, rôle du calque) ; nouvelle
+    commande générique `SELECT [ids]` (alias SEL, vide = déselection) pour
+    piloter le pickfirst headless, et `query ui` expose les rangées du
+    panneau (`propRows`) — l'inspecteur est vérifiable par agent ;
+  - `APERTURES [calque]` (alias APER, sans argument = tous les calques à
+    table) : table alignée D-code / desc / usages + trailer JSON ; test
+    kits réels : l'ensemble {usage>0} == la liste « Used DCodes » du .REP,
+    couche par couche, sur LES DEUX kits (l'égalité stricte inclut le GKO
+    keepout sans apertures de PCBB) ;
+  - `DRILLREPORT` (alias DR) : table de perçage par diamètre+platage sur
+    les cercles VIVANTS du document (un trou effacé disparaît du rapport),
+    trailer JSON ; test golden : chaque outil du .DRR retrouvé (platage,
+    diamètre ±0.01, compte exact) et totaux égaux (182 PCBA / 330 PCBB) ;
+  - garde-fous : test_cam_inspect (8 cas dont 2 golden kits), gui-smoke
+    bloc `inspect:` (APERTURES verbatim AMPARAMS, DRILLREPORT == .DRR,
+    couche « 0 » absente, panneau via SELECT + query ui) — 200 checks
+    verts, refdiff toujours 32/32.
 - **G3 — Édition + export** : édition avec tout l'outillage 2D existant,
   export RS-274X + Excellon (round-trip golden : import→export→réimport =
   géométrie identique), panélisation (réseaux existants → SR ou dépliage),

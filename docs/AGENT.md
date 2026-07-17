@@ -447,10 +447,11 @@ $CLI connect screenshot /tmp/drills.png
 
 Gotchas: `connect open` REPLACES the document (fresh Document per kit, like
 File > Open); entity `extra()` keeps `gpol:"C"` on clear-polarity (LPC)
-objects and `plated:true/false` on drill hits; independent ground truths for
-assertions live next to the kits (.DRR = hole counts per tool, .REP = used
-D-codes). Reference render diff: `scripts/gerber-ref-diff.sh` (SKIPs until
-gerbv is installed).
+objects, `dcode:N` on aperture-painted objects, and `plated:true/false` +
+`tool:"Tn"` on drill hits (see §7c for the whole inspection kit);
+independent ground truths for assertions live next to the kits (.DRR =
+hole counts per tool, .REP = used D-codes). Reference render diff:
+`scripts/gerber-ref-diff.sh` (SKIPs until gerbv is installed).
 
 ### 7a. The layer stack (G2): LAYER + BOARDVIEW
 
@@ -548,3 +549,79 @@ $CLI open kitA.vkd \
 #  {"type":"dimension","geom":{"kind":1,"a":[83.134962,21.26996],
 #   "b":[80.635094,6.26999],"pos":[85,14],...}}  (aligned = 15.207 mm)
 ```
+
+### 7c. Inspecting gerber objects (G2): APERTURES, DRILLREPORT, SELECT
+
+Every fab-file entity knows WHAT it is. The importers tag the extra JSON of
+each entity (`dcode:N` = the aperture that painted it, on traces/arcs/pads;
+`tool:"Tn"` + `plated` on drill hits; G36/G37 regions have no aperture so no
+dcode) and persist the file-level tables on the LAYER (`camMeta`, saved in
+`.vkd`, visible as `cam` in `query layers`):
+
+```sh
+$CLI query kitA.vkd --layers
+#  ...,"name":"Top-Copper","cam":{"apertures":{
+#    "D10":{"desc":"Circle d=0.200","params":[0.199898],"shape":"Circle","usage":126},
+#    "D15":{"desc":"RoundedRect 0.600x0.900 r=0.054 rot 270deg",
+#           "macro":"ROUNDEDRECTD15","params":[],"shape":"Macro","usage":38},...}}
+#  ...,"name":"Drill","cam":{"tools":{
+#    "T1":{"dia":0.299974,"plated":true,"usage":64},...}}
+```
+
+Shapes: `Circle`/`Rect`/`Obround`/`Polygon`/`Macro`; `params` are mm; a
+macro's `desc` uses Altium's `G04:AMPARAMS|...` comment when present (the
+designer-level truth: RoundedRect sizes, corner radius, rotation), else
+`Macro <name> ~WxH`. `usage` counts painting OPERATIONS (a coalesced
+polyline still counts each stroke). A kit opened into a virgin document
+also DROPS the default layer "0" (pure CAM stack; the current layer becomes
+the first kit layer — that is why `query layers` shows no `"0"` above).
+
+**APERTURES [layer]** (alias `APER`; bare = every layer that has a table)
+prints the aligned table + the `{`-trailer (same contract as MINDIST):
+
+```sh
+$CLI open kitA.vkd --exec "APERTURES Top-Silk"
+#  messages: ["apertures on 'Top-Silk' (5 D-code(s), 5 used)  [role Silk]",
+#   "  D10  Circle d=0.200  uses 27",
+#   "  D11  Circle d=0.127  uses 24", ... ,
+#   "  D14  Circle d=0.160  uses 983",
+#   "{\"apertures\":{\"Top-Silk\":{\"D10\":{...,\"usage\":27},...}}}"]
+```
+
+**DRILLREPORT** (alias `DR`) is the hole table by diameter+plating over the
+LIVE drill circles (erase a hole, the count drops). Verified on S5M0PCBA —
+the totals ARE the kit's .DRR report (182 = 180 PTH + 2 NPTH), which the
+test suite compares tool by tool on both kits:
+
+```sh
+$CLI open kitA.vkd --exec "DRILLREPORT"
+#  ["drill report: 182 hole(s) — 180 plated, 2 NPTH, 9 diameter group(s)",
+#   "  d=0.300 mm  plated  64 hole(s)  T1 on Drill", ...,
+#   "  d=2.400 mm  NPTH    2 hole(s)   T9 on Drill-NPTH", ...,
+#   "{\"drillreport\":{\"npth\":2,\"plated\":180,\"rows\":[...],\"total\":182}}"]
+```
+
+**SELECT [id...]** (alias `SEL`; bare = clear) replaces the selection set
+headlessly — it feeds every pickfirst behavior (MINDIST's pre-selected
+pair, ERASE...) and, in the GUI, the Properties panel. Selected gerber
+entity -> the panel grows a read-only inspector section; `query ui` now
+returns the visible rows as `propRows`, so an agent can read the panel.
+Executed against the live GUI (pad #773 is a GBR-D15 flash):
+
+```sh
+$CLI connect exec "SELECT 773"     # ["1 entity(ies) selected"]
+$CLI connect query ui              # propRows (key/value), verbatim:
+#   type            | insert
+#   id              | 773
+#   gerber D-code   | D15
+#   gerber aperture | RoundedRect 0.600x0.900 r=0.054 rot 270deg
+#   gerber polarity | dark
+#   layer role      | Copper-Top (Top-Copper)
+#   block           | GBR-D15  (then pos / rotation / scale)
+```
+
+Drill hits show `drill tool` (`T3  d=0.700 mm`) and `drill plating`
+(`plated (PTH)` / `non-plated (NPTH)`) instead; LPC objects show
+`gerber polarity | clear (LPC, erases below)`. All three commands run
+through the single CommandProcessor: identical in `--exec`, `connect exec`
+and the GUI command line (both channels exercised by gui-smoke).

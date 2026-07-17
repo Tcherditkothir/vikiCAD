@@ -220,3 +220,35 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   (img_px_changed, 0 attendu pour « identique ») est le bon outil pour les
   petits deltas — les seuils bp/dhash restent pour les changements de
   masse.
+
+## 2026-07-17 — G2 inspection (dcode/tool, APERTURES, DRILLREPORT)
+
+- **Les métadonnées de fab vivent à DEUX niveaux, pas un.** Le fait
+  par-objet (quelle aperture M'a peint → `dcode` dans l'extra JSON de
+  l'entité) et le fait par-fichier (la table des apertures → `camMeta` du
+  calque). Tout mettre sur les entités duplique la table des centaines de
+  fois ; tout mettre au calque perd le lien objet→aperture qu'exigera
+  l'export G3. La séparation rend aussi DRILLREPORT honnête : les comptes
+  se font sur les entités VIVANTES, les diamètres déclarés restent au
+  calque.
+- **Le commentaire vaut parfois plus que la géométrie : AMPARAMS.** Les
+  primitives %AM d'un RoundedRect Altium (2 rects + 4 cercles) sont la
+  vérité de RENDU mais illisibles pour un humain. Altium émet à côté
+  `G04:AMPARAMS|XSize=...|CornerRadius=...|Shape=RoundedRectangle|` — la
+  vérité de CONCEPTION. Parser ce commentaire (sans jamais s'en servir
+  pour le rendu) donne l'inspecteur rêvé pour zéro risque géométrique.
+- **Une colonne SQLite de plus = un étage de repli de plus, pas un
+  remplacement.** Le SELECT à repli unique (G2) aurait envoyé les fichiers
+  « d'hier » (alpha/rank/role présents, cam_meta absent) dans la branche
+  legacy — pile de couches perdue en silence. Chaque génération de schéma
+  garde SON étage : essayer le plus récent, descendre d'un cran à la fois.
+- **Supprimer un défaut du constructeur oblige à traiter le CHARGEMENT.**
+  Document() crée la couche « 0 » ; la dropper à l'import kit ne suffit
+  pas — au load d'un .vkd sans ligne id 0, le défaut du constructeur
+  réapparaîtrait. Le loader doit constater « le fichier n'a pas de 0 » et
+  re-dropper le résidu (avec les mêmes gardes : rien ne la référence).
+- **Un SELECT headless rend le GUI testable gratuitement.** Le panneau
+  Propriétés ne s'inspectait qu'à la souris ; une commande SELECT de 40
+  lignes + `propRows` dans query ui, et gui-smoke lit le CONTENU RÉEL du
+  QTableWidget après sélection d'une pastille — l'inspecteur est verrouillé
+  par le harnais, pas par une capture d'écran illisible.
