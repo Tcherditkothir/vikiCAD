@@ -20,7 +20,11 @@ constexpr double kMeasureTol = 1e-4;
 // An entity's material is a soup of three primitive families:
 //   capsule = segment swept by a disk (wide trace piece; r=0 -> bare wire)
 //   disk    = filled circle (drill hit, round pad)
-//   polyset = filled polygon rings, even-odd (aperture footprint, pour)
+//   polyset = filled polygon rings, UNION (aperture footprint, pour). This
+//             matches the SOLID hatch renderer, which fills each ring
+//             individually: overlapping rings (Altium RoundedRect macros =
+//             2 rects + 4 corner disks) are material everywhere. Even-odd
+//             parity here would flip a doubly-covered point to "outside".
 
 struct Capsule {
     Vec2d a, b;
@@ -182,10 +186,13 @@ void appendRingCapsules(const PolySet& ps, std::vector<Capsule>& out)
     }
 }
 
-bool insideEvenOdd(const Vec2d& p, const PolySet& ps)
+// Union semantics: the point is material as soon as ANY ring contains it
+// (even-odd only WITHIN a ring, which is a plain polygon). Cross-ring parity
+// would misclassify points covered by 2 overlapping rings of a macro pad.
+bool insideUnion(const Vec2d& p, const PolySet& ps)
 {
-    bool inside = false;
     for (const auto& ring : ps.rings) {
+        bool inside = false;
         const size_t n = ring.size();
         for (size_t i = 0, j = n - 1; i < n; j = i++) {
             const Vec2d& a = ring[i];
@@ -194,13 +201,16 @@ bool insideEvenOdd(const Vec2d& p, const PolySet& ps)
                 p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
                 inside = !inside;
         }
+        if (inside)
+            return true;
     }
-    return inside;
+    return false;
 }
 
-// One representative point per primitive of `s` — enough for the "entirely
-// inside a polygon" containment test (partial overlaps are already caught by
-// negative boundary distances).
+// One representative point per primitive of `s` (per RING for polysets:
+// rings are unioned, any single ring may be the buried one) — enough for
+// the "entirely inside a polygon" containment test (partial overlaps are
+// already caught by negative boundary distances).
 void representativePoints(const MShape& s, std::vector<Vec2d>& out)
 {
     for (const Disk& d : s.disks)
@@ -208,8 +218,9 @@ void representativePoints(const MShape& s, std::vector<Vec2d>& out)
     for (const Capsule& c : s.capsules)
         out.push_back(c.a);
     for (const PolySet& ps : s.polys)
-        if (!ps.rings.empty() && !ps.rings.front().empty())
-            out.push_back(ps.rings.front().front());
+        for (const auto& ring : ps.rings)
+            if (!ring.empty())
+                out.push_back(ring.front());
 }
 
 bool containedInPolys(const MShape& host, const MShape& guest, Vec2d& where)
@@ -220,7 +231,7 @@ bool containedInPolys(const MShape& host, const MShape& guest, Vec2d& where)
     representativePoints(guest, reps);
     for (const PolySet& ps : host.polys)
         for (const Vec2d& p : reps)
-            if (insideEvenOdd(p, ps)) {
+            if (insideUnion(p, ps)) {
                 where = p;
                 return true;
             }

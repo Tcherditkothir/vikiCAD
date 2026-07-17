@@ -455,10 +455,15 @@ void CanvasWidget::paintEvent(QPaintEvent*)
     if (m_processor) {
         const PrimitiveList& ov = m_processor->ctx().overlay();
         if (!ov.strokes.empty()) {
-            QPen pen(kMeasure);
+            // Two passes: a dark solid halo underneath, then the bright
+            // dashes — a 1px dashed pink line is invisible at board scale
+            // on red copper; the halo keeps it readable without zooming.
+            QPen halo(QColor(20, 8, 16), 4.0);
+            halo.setCosmetic(true);
+            QPen pen(kMeasure, 1.8);
             pen.setCosmetic(true);
             pen.setStyle(Qt::DashLine);
-            p.setPen(pen);
+            std::vector<QPainterPath> paths;
             for (const StrokePrimitive& s : ov.strokes) {
                 if (s.points.size() < 2)
                     continue;
@@ -467,8 +472,14 @@ void CanvasWidget::paintEvent(QPaintEvent*)
                     path.lineTo(m_camera.worldToScreen(s.points[i]));
                 if (s.closed)
                     path.closeSubpath();
-                p.drawPath(path);
+                paths.push_back(std::move(path));
             }
+            p.setPen(halo);
+            for (const QPainterPath& path : paths)
+                p.drawPath(path);
+            p.setPen(pen);
+            for (const QPainterPath& path : paths)
+                p.drawPath(path);
         }
     }
 

@@ -183,6 +183,38 @@ TEST_CASE("MINDIST: drill fully inside its pad = overlap (containment)",
     REQUIRE(r.distance == 0.0);
 }
 
+TEST_CASE("MINDIST: entity inside a multi-ring UNION pad (RoundedRect macro) "
+          "= overlap",
+          "[mindist]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("setup"));
+    // Altium RoundedRect macros flash as SEVERAL overlapping rings with
+    // union semantics (2 rects + 4 corner disks). Minimal repro: a plus-sign
+    // pad made of two overlapping rects. The pad center is covered by BOTH
+    // rings — even-odd parity would call it "outside" and miss the overlap.
+    BlockDef* def = doc.createBlock(QStringLiteral("GBR-D15"), {0, 0});
+    auto hatch = std::make_unique<HatchEntity>();
+    hatch->rings.push_back({{-1.0, -0.5}, {1.0, -0.5}, {1.0, 0.5}, {-1.0, 0.5}});
+    hatch->rings.push_back({{-0.5, -1.0}, {0.5, -1.0}, {0.5, 1.0}, {-0.5, 1.0}});
+    hatch->pattern = QStringLiteral("SOLID");
+    def->entities.push_back(std::move(hatch));
+    auto ins = std::make_unique<InsertEntity>();
+    ins->blockName = QStringLiteral("GBR-D15");
+    ins->position = Vec2d{10, 20};
+    const EntityId p = doc.addEntity(std::move(ins));
+    // Tiny drill dead-center: 100% inside pad material, touches no ring edge.
+    const EntityId d =
+        doc.addEntity(std::make_unique<CircleEntity>(Vec2d{10, 20}, 0.1));
+    doc.commitTransaction();
+
+    const auto r = measure::minDistance(doc, p, d);
+    REQUIRE(r.ok);
+    REQUIRE(r.exact);
+    REQUIRE(r.overlap); // truth: fully buried in copper
+    REQUIRE(r.distance == 0.0);
+}
+
 TEST_CASE("MINDIST: text falls back to bbox and says so", "[mindist]")
 {
     Document doc;
