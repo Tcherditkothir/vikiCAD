@@ -5,20 +5,26 @@
 # For every Gerber/Excellon layer of the reference kits:
 #   1. gerbv exports the layer to PNG (CLI, white on black, fixed DPI);
 #   2. VikiCAD opens the SAME single file headless (IPC "open" routes a lone
-#      fab file through the kit importer) and takes a screenshot;
-#   3. both images are normalized (grayscale -> binarized ink mask -> crop
-#      to the ink bounding box -> common size) and compared with the same
-#      32x32 dhash used by gui-smoke.sh, plus an ink-density delta. The
-#      normalization removes the framing/color differences between the two
-#      renderers so only the GEOMETRY is compared.
+#      fab file through the kit importer) and takes a CLEAN screenshot
+#      (`screenshot PATH clean` = no grid/UCS icon/crosshair overlays — they
+#      used to pollute the ink bounding box and skew every comparison);
+#   3. both images are normalized (binarized ink mask -> crop to the ink
+#      bounding box -> common size) and compared with the same 32x32 dhash
+#      used by gui-smoke.sh, plus an ink-density delta. Ink on the gerbv
+#      side is "brighter than the black background"; on the VikiCAD side it
+#      is "different from the canvas background color" (sampled at a corner)
+#      so BLACK layers on the dark canvas (drills) count as ink too.
+#
+# Valid-but-EMPTY layers (Altium ships header-only GKO/GM1): both renderers
+# produce an empty image -> PASS "both empty". Empty on one side only is a
+# real geometry FAIL.
 #
 # Exit 0 with "SKIP" when gerbv is not installed (sudo needed -> Lex):
 #   sudo apt install gerbv
-# NOT part of gui-smoke.sh until gerbv is available on this machine.
+# NOT part of gui-smoke.sh (needs gerbv + the private kits).
 #
-# Thresholds: REF_HASH_MAX / INK_DELTA_MAX below are FIRST-RUN values,
-# deliberately generous (two different rasterizers, different stroke AA).
-# Calibrate them downward after the first real run with gerbv installed.
+# Thresholds: calibrated on the real 2026-07-17 run over the 32 layers of
+# S5M0PCBA + S5M0PCBB (values below each = observed maximum + ~30% margin).
 
 set -uo pipefail
 
@@ -35,8 +41,14 @@ TMP="$(mktemp -d /tmp/vikicad-refdiff.XXXXXX)"
 KITS=(/home/lex/computer/pcb-ref/S5M0PCBA /home/lex/computer/pcb-ref/S5M0PCBB)
 DPI=400
 
-REF_HASH_MAX=200 # dhash bits out of 1024 (first-run value, calibrate down)
-INK_DELTA_MAX=25 # |ink% A - ink% B| in percent points of the cropped area
+# Calibrated 2026-07-17 (32 layers, all PASS). Observed dhash: median ~25,
+# worst 132 (PCBB.GBL) — copper layers run high on pure edge-halo noise
+# (1-2 px AA/stroke rounding around a LOT of edge length), and .TXT drill
+# layers (58/104) because drills are RINGS in the CAD view vs FILLED dots
+# in gerbv (known display divergence, G2 candidate: filled drill display).
+# Observed ink-delta: 0-2 points. Thresholds = observed max + ~30%.
+REF_HASH_MAX=170 # dhash bits out of 1024 (observed max 132)
+INK_DELTA_MAX=3  # |ink% A - ink% B| in percent points (observed max 2)
 
 FAILS=0
 ROWS=()
@@ -76,18 +88,15 @@ rpc() { "$CLI" connect "$@" 2>/dev/null; }
 
 # Normalized geometry comparison (same dhash logic as gui-smoke.sh, applied
 # to binarized ink masks cropped to their ink bounding boxes).
-# Prints: "hash_dist ink_delta" or "ERR <reason>".
-ink_cmp() { # imageA imageB
+# Prints: "hash_dist ink_delta", "BOTHEMPTY -", or "ERR <reason>".
+ink_cmp() { # gerbv-image vikicad-image
     python3 - "$1" "$2" <<'PYEOF'
 import sys
 import warnings
 warnings.simplefilter("ignore")
 from PIL import Image
 
-def mask(path):
-    img = Image.open(path).convert("L")
-    # Ink = anything clearly brighter than the dark background.
-    m = img.point(lambda v: 255 if v > 48 else 0)
+def normalize(m):
     box = m.getbbox()
     if box is None:
         return None, 0.0
@@ -95,6 +104,29 @@ def mask(path):
     px = list(m.getdata())
     ink = sum(1 for v in px if v > 127) / len(px)
     return m, ink
+
+def refmask(path):
+    # gerbv export: black background, white ink.
+    img = Image.open(path).convert("L")
+    return normalize(img.point(lambda v: 255 if v > 48 else 0))
+
+def vikimask(path):
+    # Clean canvas capture: ink = any color that differs from the canvas
+    # background (corner pixel — zoom-extents always leaves a margin). A
+    # plain luminance threshold would DROP black layers (drills) drawn on
+    # the dark canvas.
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    p = img.load()
+    br, bg_, bb = p[0, 0]
+    m = Image.new("L", (w, h), 0)
+    mp = m.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b = p[x, y]
+            if abs(r - br) + abs(g - bg_) + abs(b - bb) > 30:
+                mp[x, y] = 255
+    return normalize(m)
 
 def dhash(img, size=32):
     small = img.resize((size + 1, size), Image.LANCZOS)
@@ -105,13 +137,16 @@ def dhash(img, size=32):
         bits.extend(1 if line[c] < line[c + 1] else 0 for c in range(size))
     return bits
 
-a, ia = mask(sys.argv[1])
-b, ib = mask(sys.argv[2])
-if a is None or b is None:
-    print("ERR empty-render")
-    sys.exit(0)
-ha, hb = dhash(a), dhash(b)
-print(sum(x != y for x, y in zip(ha, hb)), round(abs(ia - ib) * 100))
+a, ia = refmask(sys.argv[1])
+b, ib = vikimask(sys.argv[2])
+if a is None and b is None:
+    print("BOTHEMPTY -")  # valid empty layer on both sides
+elif a is None or b is None:
+    print("ERR", "gerbv-empty-but-vikicad-not" if a is None
+          else "vikicad-empty-but-gerbv-not")
+else:
+    ha, hb = dhash(a), dhash(b)
+    print(sum(x != y for x, y in zip(ha, hb)), round(abs(ia - ib) * 100))
 PYEOF
 }
 
@@ -161,14 +196,16 @@ for kit in "${KITS[@]}"; do
             record FAIL "$name" "vikicad open failed: $out"
             continue
         fi
-        out="$(rpc screenshot "$got")"
+        out="$(rpc screenshot "$got" clean)"
         if [[ "$(jget "$out" "d.get('ok')")" != "True" || ! -s "$got" ]]; then
             record FAIL "$name" "vikicad screenshot failed"
             continue
         fi
 
         read -r hdist inkdelta <<<"$(ink_cmp "$ref" "$got")"
-        if [[ "$hdist" == "ERR" ]]; then
+        if [[ "$hdist" == "BOTHEMPTY" ]]; then
+            record PASS "$name" "both empty (valid empty layer)"
+        elif [[ "$hdist" == "ERR" ]]; then
             record FAIL "$name" "comparison error: $inkdelta"
         elif [[ "$hdist" -le "$REF_HASH_MAX" && "$inkdelta" -le "$INK_DELTA_MAX" ]]; then
             record PASS "$name" "dhash=$hdist ink-delta=$inkdelta%"
