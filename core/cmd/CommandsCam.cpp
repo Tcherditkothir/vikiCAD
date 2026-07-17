@@ -172,6 +172,12 @@ public:
             QStringList layers;
         };
         // Group by (diameter rounded to 1e-6 mm, plated) — the .DRR shape.
+        // A circle counts as a hole when the Excellon importer tagged it
+        // (tool) OR when it lives on a Drill-role layer — a freshly DRAWN
+        // hole (LAYER Drill CURRENT + CIRCLE) must show up here exactly like
+        // the Excellon writer will export it. Plating follows the writer's
+        // rule: the tag when present, else the layer role (Drill-NPTH =>
+        // non-plated, anything else => plated).
         std::map<std::pair<int64_t, bool>, Row> rows;
         for (const EntityId id : ctx.doc().drawOrder()) {
             const auto* c = dynamic_cast<const CircleEntity*>(ctx.doc().entity(id));
@@ -179,15 +185,25 @@ public:
                 continue;
             const QJsonObject& extra = c->extra();
             const QString tool = extra.value(QLatin1String("tool")).toString();
-            if (tool.isEmpty())
+            const Layer* layer = ctx.doc().layer(c->layerId());
+            const bool drillLayer =
+                layer && (layer->gerberRole == QLatin1String("Drill") ||
+                          layer->gerberRole == QLatin1String("Drill-NPTH"));
+            if (tool.isEmpty() && !drillLayer)
                 continue; // not a drill hit
             const double dia = c->radius() * 2.0;
-            const bool plated = extra.value(QLatin1String("plated")).toBool();
+            const bool plated =
+                extra.contains(QLatin1String("plated"))
+                    ? extra.value(QLatin1String("plated")).toBool()
+                    : (layer &&
+                       layer->gerberRole != QLatin1String("Drill-NPTH"));
             Row& row = rows[{int64_t(std::llround(dia * 1e6)), plated}];
             row.dia = dia;
             row.plated = plated;
             row.count += 1;
-            row.tools[tool] += 1;
+            // Untagged = drawn in VikiCAD: the writer regenerates a tool for
+            // it at export — label it "new" rather than a bogus Tn.
+            row.tools[tool.isEmpty() ? QStringLiteral("new") : tool] += 1;
             if (const Layer* l = ctx.doc().layer(c->layerId());
                 l && !row.layers.contains(l->name))
                 row.layers << l->name;

@@ -324,3 +324,26 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   0.01181 in) fait alors le round-trip exact à 1e-6, au lieu de ressortir
   « 0.3 » arrondi. Les conversions 2:5 inch → mm tombent d'ailleurs
   TOUJOURS sur 6 décimales exactes (entier × 254 / 1e6).
+
+## 2026-07-17 — G3 boucle CAM (export kit, PANELIZE, pont DXF)
+
+- **Un rapport et un writer qui regardent le même objet doivent partager la
+  MÊME règle d'appartenance.** DRILLREPORT ne comptait que les cercles
+  tagués `tool` (importés) alors que l'écrivain Excellon exporte AUSSI les
+  cercles nus des calques à rôle Drill : un trou dessiné dans VikiCAD était
+  exporté mais invisible au rapport — l'incohérence est sortie en exécutant
+  l'exemple de doc, pas par un test. Règle : sélection ET platage par
+  défaut copiés du writer (tag sinon rôle), l'outil affiché « new ».
+- **Tester « la pastille a bougé » sur un kit réel = scoper par calque.**
+  Au même (x,y) qu'une pastille cuivre vivent ses flashes mask/paste ;
+  « plus rien à l'ancienne position » n'est vrai QUE sur le calque édité —
+  le test global échouait avec 2 inserts « restants » parfaitement
+  légitimes.
+- **Jamais d'arrondi-à-la-grille pour comparer deux multisets de
+  flottants.** `round(x*1e4)` fait basculer de seau une valeur posée SUR la
+  frontière pour un chouia de 1e-12 (vu sur les positions de flash après le
+  hop DXF) : trier puis comparer par paires avec tolérance.
+- **L'encre brute de gerbv est un excellent invariant d'échelle.** À DPI
+  fixe et sans crop, le COMPTE de pixels encrés d'un panel 2×2 vaut 4,007×
+  celui de la carte — vérité de panélisation en 6 lignes de PIL, aucune
+  géométrie à recalculer.

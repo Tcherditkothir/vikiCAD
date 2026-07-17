@@ -267,21 +267,66 @@
     (seuils < 30 / ≤ 1 pt). SKIP sans kits ; sans gerbv les checks
     sémantiques tournent quand même.
 
+  **Fait (2026-07-17) — la boucle CAM bouclée (export utilisateur +
+  panélisation + pont DXF)** :
+  - **export kit** (`core/io/GerberKitWriter.{h,cpp}`) : rôle CAM + côté
+    (préfixe Top-/Bottom-, la règle BOARDVIEW) → extension Altium/Protel
+    (GTL/GBL/GTS/GBS/GTO/GBO/GTP/GBP/GKO), tous les calques Drill dans UN
+    .TXT (sections PLATED/NON_PLATED) ; calques vides/non mappables listés
+    (`skippedLayers`), warnings des writers remontés ; `exportFabLayer`
+    route UN calque par rôle (drill → Excellon, sinon RS-274X). Câblé sur
+    les 3 canaux : CLI `export FILE.vkd OUTDIR` / `OUT.gts [--layer N]`,
+    IPC `connect export PATH [LAYER]`, GUI File > Export > « Gerber kit
+    (directory)... » + « Gerber/Excellon layer... » (warnings dans la barre
+    d'historique ET la réponse IPC). Kit A exporté = gerbv-identique à
+    l'original (dhash ≤ 1, encre ≤ 0.003 pt sur les 9 fichiers) ;
+  - **édition CAM** : `PLWIDTH w [ids]` (la retouche de trace),
+    `LAYER <n> CURRENT` (calque courant headless — dessiner un trou sur
+    Drill), DRILLREPORT compte désormais aussi les cercles NUS des calques
+    à rôle Drill (outil « new », platage par rôle — la même règle que
+    l'écrivain Excellon : un trou dessiné apparaît au rapport AVANT
+    l'export) ;
+  - **PANELIZE cols rows pitchX pitchY** : grille du contenu fab (calques à
+    rôle CAM, perçages inclus, tags dcode/gpol/tool/plated clonés), cellule
+    (0,0) = la carte, UNE transaction = un undo ; trailer JSON. Vérifié :
+    DRILLREPORT ×4 (728) et encre gerbv ×4.007 sur le cuivre exporté ;
+  - **LE scénario de bout en bout** (test_cam_export.cpp + gui-smoke
+    `camloop:`/`panel:`, 200 → 223 checks) : MOVE pastille 2 mm + PLWIDTH
+    0.42 + ERASE sérigraphie + trou neuf → export kit → ré-import → CHAQUE
+    édition relue depuis les fichiers (position, width, absence, d=1.1
+    plated, DRILLREPORT 183) ; gerbv rend l'export et son re-export
+    identiques (dhash < 30, encre ≤ 1 pt) et différents de l'original ;
+  - **pont DXF↔Gerber** : la width constante des polylignes passe la
+    frontière DXF dans les DEUX sens (LWPOLYLINE code 43, POLYLINE 40/41 en
+    R12) — kit A traverse export DXF → ré-import avec 926 widths, 182
+    rayons et 1171 positions de flash égaux ; sens inverse : polyligne 2D
+    fermée + `LAYER <n> ROLE Outline` → `.GKO` propre (contour de carte
+    depuis la méca). Les deux sens documentés avec exemples EXÉCUTÉS dans
+    AGENT.md §7d.
+
   **Dette G3-export assumée** :
   - la dette G2 « flashes ronds cuits en polygones inscrits (~2 µm) » reste :
     l'export re-génère les empreintes standard depuis camMeta (analytique,
     pas depuis les anneaux cuits), seul le fallback outline hérite de la
     tessellation inscrite — MINDIST garde son biais documenté ;
-  - pas encore de commande utilisateur (CLI/GUI) pour l'export : API C++
-    seulement (Gerber ET Excellon), l'intégration commande + panélisation
-    restent à faire dans la suite de G3 ;
   - entités sans image Gerber (texte, cotes, hatch non solide) → warning +
     skip ; cercles Excellon (`plated`) exportés en région disque si on
     exporte une couche de perçage en Gerber (l'écrivain Excellon est le
     vrai chemin, warning émis) ; réciproquement l'écrivain Excellon skippe
     (warning) toute entité non-cercle des calques demandés ;
   - G85 (slots) : toujours pas d'entité slot (dette G1) — rien à écrire
-    côté writer tant que l'import ne les convertit pas.
+    côté writer tant que l'import ne les convertit pas ;
+  - export kit : les calques sans mapping (Top-/Bottom-Pads sans rôle,
+    Mech-N, Keepout, un Mask sans côté dans le nom) sont LISTÉS mais non
+    écrits — export mono-calque pour eux ; deux calques sur la même
+    extension = premier au rang de peinture gagne, l'autre est listé ;
+  - PANELIZE v1 : pas de rails/mousebites/%SR, pas de garde anti-
+    chevauchement (pitch < carte = cellules superposées, à l'utilisateur
+    de choisir son pas) ; le contenu sans rôle CAM (notes, cotes) reste
+    hors panneau — voulu ;
+  - polyligne à width 0 exportée en Gerber = aperture `C,0` + warning
+    (honnête : pas d'inflation silencieuse) — passer PLWIDTH avant
+    l'export pour un contour « encré ».
 
 ## Stratégie de test (process obligatoire habituel)
 

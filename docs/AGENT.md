@@ -27,7 +27,7 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 | `new` | `$CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" --save-as part.vkd` |
 | `open` | `$CLI open part.vkd --exec "INSPECT 2 All"` — add `--save` / `--save-as out.vkd` to persist |
 | `query` | `$CLI query part.vkd --entities --bounds` (also `--layers --notes --blocks --layouts --describe`) |
-| `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`) |
+| `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`, fab extensions `.gtl`...`.gko`/`.gbr`/`.txt` for one layer — §7d; a DIRECTORY target exports the whole Gerber kit) |
 | `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg` and `.step`) |
 | script | `$CLI new --run script.vks --save-as out.vkd` — a `.vks` file, one input line per row (AutoCAD `.scr` semantics) |
 
@@ -54,7 +54,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
 | `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
 | `save` | `$CLI connect save out.vkd` | save the live document |
-| `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj` |
+| `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj`, fab extensions (one layer, optional layer-name arg), directory = Gerber kit (§7d) |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
 | `view3d` | `$CLI connect view3d on` | toggle the 3D view (`on`/`off`); returns `is3d` |
 | `viewdir` | `$CLI connect viewdir FRONT` | aim the 3D camera along `TOP BOTTOM FRONT BACK LEFT RIGHT ISO` and refit the scene (3D view only — §5a) |
@@ -638,3 +638,99 @@ Drill hits show `drill tool` (`T3  d=0.700 mm`) and `drill plating`
 `gerber polarity | clear (LPC, erases below)`. All three commands run
 through the single CommandProcessor: identical in `--exec`, `connect exec`
 and the GUI command line (both channels exercised by gui-smoke).
+
+### 7d. Editing + exporting fab files (G3): the whole CAM loop headless
+
+The point of the chantier: EDIT a fabrication kit and SHIP the files. Every
+line below ran verbatim; outputs are real (trimmed).
+
+**CAM editing commands** (same grammar laws as everything else — numeric
+parameters BEFORE the greedy entity set):
+
+```sh
+$CLI open kitA.vkd --exec "PLWIDTH 0.42 262"     # trace edit (alias PLW)
+#   ["width 0.42 mm set on 1 polyline(s)"]  <- the RS-274X writer will
+#   regenerate a C,0.42 aperture for it (an UNEDITED trace re-emits its
+#   ORIGINAL definition instead, rect apertures included)
+$CLI open kitA.vkd --exec "LAYER Drill CURRENT"  # headless LayerPanel click
+#   ["layer 'Drill' is now current (new entities land here)"]
+# ... then "CIRCLE 45,-10 0.55" = a NEW 1.1 mm plated hole on Drill.
+# DRILLREPORT counts it right away ("d=1.100 mm  plated  1 hole(s)  new on
+# Drill" — 'new' = drawn here, no source tool yet); plating defaults to the
+# layer role (Drill-NPTH => NPTH), exactly like the Excellon writer.
+```
+
+**Export — offline CLI.** A DIRECTORY target writes the whole kit
+(`<vkd-base>.<EXT>`, extension from each layer's CAM role + Top-/Bottom-
+side; every Drill-role layer grouped into ONE .TXT with PLATED/NON_PLATED
+sections); a fab extension writes one layer:
+
+```sh
+$CLI export kitA.vkd fab/          # kit -> fab/kitA.GTL .GBL .GTS .GBS
+#   .GTO .GBO .GTP .GBP .GKO .TXT; result lists per-file {path, layers,
+#   entities, drill}, plus skippedLayers (real output:
+#   "Top-Pads: no kit extension for role 'none'...", "Mech-15: ...") and
+#   the writers' warnings.
+$CLI export kitA.vkd top.GTS       # extension resolves the layer (unique)
+#   {"files":[{"drill":false,"entities":184,"layers":["Top-Mask"],...}],...}
+$CLI export kitA.vkd holes.TXT     # several drill layers -> ONE Excellon
+#   {"drill":true,"holes":182,"layers":["Drill","Drill-NPTH"],"tools":9,...}
+$CLI export kitA.vkd mech.GBR --layer Mech-15   # .gbr/.ger need --layer
+```
+
+**Export — live GUI over IPC** (File > Export > "Gerber kit (directory)..."
+/ "Gerber/Excellon layer..." drive the same code; writer warnings land in
+the history bar AND in the reply):
+
+```sh
+$CLI connect export "$PWD/live"              # directory = whole kit
+#   {"message":"Gerber kit: 10 file(s) → /tmp/.../live (board.GBL, ...)"}
+#   (base name = the document's file base, "board" for an unsaved kit)
+$CLI connect export "$PWD/live-top.GTS"      # layer resolved by extension
+$CLI connect export "$PWD/live-mech.GBR" Mech-15   # explicit layer name
+```
+
+**PANELIZE cols rows pitchX pitchY** (alias PNL) duplicates the fab content
+(every entity on a layer with a CAM role, drills included — clones keep
+their dcode/gpol/tool/plated tags) into a grid; cell (0,0) is the original
+board, ONE transaction = one undo. v1 is deliberately simple: no rails, no
+mousebites, no %SR (PCB_CAM debt); keep the pitch >= the board size or the
+cells overlap. Verified end to end — DRILLREPORT x4 and gerbv ink x4.007 on
+the exported panel copper:
+
+```sh
+$CLI open kitA.vkd --exec "PANELIZE 2 2 95 55" --exec "DRILLREPORT" \
+     --save-as panel.vkd
+#   ["panelized 2 x 2 at pitch 95 x 55 mm: 2301 fab entity(ies) -> 4
+#     copies (6903 new)",
+#    "{\"panelize\":{\"cols\":2,\"created\":6903,\"pitchx\":95,...}}",
+#    "drill report: 728 hole(s) — 720 plated, 8 NPTH, ..."]  <- 182 x 4
+```
+
+**The DXF<->Gerber bridge**, both directions (LA promesse méca-élec):
+
+```sh
+# elec -> meca: a kit crosses DXF with nothing lost — traces stay
+# LWPOLYLINEs with their CONSTANT width (code 43), pads stay INSERTs,
+# drill hits stay CIRCLEs. Verified: the 926 widths, 182 radii and 1171
+# flash positions of kit A re-import equal.
+$CLI export kitA.vkd kitA.dxf
+#   {"ok":true,"result":{"dxfVersion":"2013","exported":2572,"skipped":0,...}}
+$CLI import kitA.dxf --save-as back.vkd    # -> imported: 2572
+
+# meca -> elec: a closed 2D polyline on an Outline-role layer IS a board
+# contour — export it as a clean .GKO.
+$CLI new --exec "PLINE 0,0 80,0 80,50 0,50 C" --exec "PLWIDTH 0.15 1" \
+         --exec "LAYER 0 ROLE Outline" --save-as outline.vkd
+$CLI export outline.vkd board.GKO
+#   board.GKO = %FSLAX46Y46*% %MOMM*% %ADD10C,0.15*% + the 4 D01 strokes
+#   + M02 — parses back as one closed 4-vertex 0.15 mm contour.
+```
+
+The truth criterion behind all of this (locked by test_cam_export.cpp +
+the gui-smoke `camloop:`/`panel:` phases): export -> re-import brings every
+edit back (pad moved 2 mm, width 0.42, erased silk stays gone, new hole
+with the right diameter and plating), and gerbv renders the exported files
+— not our renderer — identically to their re-export (dhash < 30/1024, ink
+delta <= 1 pt) and identically to the ORIGINAL kit when nothing was edited
+(observed dhash <= 1, ink delta <= 0.003 pt on all 9 kit-A files).

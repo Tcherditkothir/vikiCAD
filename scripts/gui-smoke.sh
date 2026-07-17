@@ -23,7 +23,12 @@
 #        pad-center (stable clean capture, UNDO restores the render);
 #        G2 inspection: APERTURES (Altium AMPARAMS desc verbatim),
 #        DRILLREPORT (totals == the kit's .DRR), layer "0" dropped, and
-#        the PropertiesPanel gerber section via SELECT + query ui propRows.
+#        the PropertiesPanel gerber section via SELECT + query ui propRows;
+#        G3 CAM loop: MOVE a pad / PLWIDTH a trace / ERASE silk / new hole
+#        (LAYER Drill CURRENT + CIRCLE), kit exported over IPC into a
+#        directory, single-layer exports (.GTS by extension, .GBR by layer
+#        name), the EXPORTED kit re-opened and every edit read back
+#        (DRILLREPORT 183); PANELIZE 2x2 (DRILLREPORT x4, one undo).
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
