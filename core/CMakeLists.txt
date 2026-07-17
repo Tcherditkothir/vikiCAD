@@ -47,6 +47,7 @@ add_library(vikicore STATIC
     cmd/CommandsFeatEdit.cpp
     cmd/CommandsSubShapeOps.cpp
     edit/EditOps.cpp
+    edit/MinDist.cpp
     io/NativeStore.cpp
     io/QueryJson.cpp
     io/PdfPlotter.cpp

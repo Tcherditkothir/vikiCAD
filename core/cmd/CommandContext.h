@@ -72,10 +72,18 @@ public:
     const std::vector<QString>& messages() const { return m_messages; }
     void clearMessages() { m_messages.clear(); }
 
+    // Transient result overlay (world mm) — e.g. the MINDIST witness line.
+    // Drawn by the GUI canvas on top of the document until the next command
+    // starts (the processor clears it); ignored headless.
+    void setOverlay(PrimitiveList l) { m_overlay = std::move(l); }
+    const PrimitiveList& overlay() const { return m_overlay; }
+    void clearOverlay() { m_overlay = PrimitiveList{}; }
+
 private:
     Document& m_doc;
     SelectionSet& m_selection;
     ViewHook* m_view;
+    PrimitiveList m_overlay;
     Vec2d m_lastPoint;
     Vec2d m_pointerHint;
     bool m_hasPointerHint = false;

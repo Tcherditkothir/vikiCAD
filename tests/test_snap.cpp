@@ -3,6 +3,7 @@
 
 #include <cmath>
 
+#include "doc/Annotations.h"
 #include "doc/Block.h"
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
@@ -237,6 +238,60 @@ TEST_CASE("snap reaches nested block inserts", "[snap][block]")
     REQUIRE(center->kind == SnapKind::Center);
     REQUIRE(center->point.x == Approx(75.0));
     REQUIRE(center->point.y == Approx(50.0));
+}
+
+// --- Gerber measurement snaps (G2): pad centers and wide traces --------------
+
+TEST_CASE("pad insert offers its flash origin as a Center snap", "[snap][gerber]")
+{
+    Document doc;
+    // A GBR-style pad block: one SOLID hatch ring around the flash origin.
+    BlockDef* def = doc.createBlock(QStringLiteral("GBR-D10"), {0, 0});
+    {
+        auto pad = std::make_unique<HatchEntity>();
+        pad->rings.push_back({{-1, -0.5}, {1, -0.5}, {1, 0.5}, {-1, 0.5}});
+        pad->pattern = QStringLiteral("SOLID");
+        def->entities.push_back(std::move(pad));
+    }
+    doc.beginTransaction(QStringLiteral("setup"));
+    auto ins = std::make_unique<InsertEntity>();
+    ins->blockName = QStringLiteral("GBR-D10");
+    ins->position = {30, 40};
+    doc.addEntity(std::move(ins));
+    doc.commitTransaction();
+
+    // Endpoint snapping OFF: the pad center must still be reachable as a
+    // CENTER snap — a drafter dimensions pad-center to pad-center.
+    SnapSettings s;
+    s.endpoint = false;
+    const auto r = snapQuery(doc, {30.7, 40.7}, 2.0, s, std::nullopt);
+    REQUIRE(r);
+    REQUIRE(r->kind == SnapKind::Center);
+    REQUIRE(r->point.x == Approx(30.0));
+    REQUIRE(r->point.y == Approx(40.0));
+}
+
+TEST_CASE("wide gerber trace snaps at endpoints and midpoint", "[snap][gerber]")
+{
+    Document doc;
+    doc.beginTransaction(QStringLiteral("setup"));
+    auto trace = std::make_unique<PolylineEntity>(
+        std::vector<PolyVertex>{{{0, 0}, 0.0}, {{10, 0}, 0.0}}, false);
+    trace->setWidth(0.5); // Gerber round-aperture trace
+    doc.addEntity(std::move(trace));
+    doc.commitTransaction();
+
+    SnapSettings s;
+    const auto end = snapQuery(doc, {9.8, 0.3}, 1.0, s, std::nullopt);
+    REQUIRE(end);
+    REQUIRE(end->kind == SnapKind::Endpoint);
+    REQUIRE(end->point.x == Approx(10.0));
+    REQUIRE(end->point.y == Approx(0.0).margin(1e-9));
+
+    const auto mid = snapQuery(doc, {5.1, 0.2}, 1.0, s, std::nullopt);
+    REQUIRE(mid);
+    REQUIRE(mid->kind == SnapKind::Midpoint);
+    REQUIRE(mid->point.x == Approx(5.0));
 }
 
 // --- sketch-ref-snap: extra reference snap points fed by the front-end -------

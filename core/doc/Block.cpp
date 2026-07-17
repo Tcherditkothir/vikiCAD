@@ -100,6 +100,10 @@ void InsertEntity::buildPrimitives(const RenderContext& ctx, PrimitiveList& out)
 void InsertEntity::snapPoints(std::vector<SnapPoint>& out) const
 {
     out.push_back({position, SnapKind::Endpoint});
+    // The insertion point IS the flash origin of a Gerber pad (GBR-* blocks
+    // are built around 0,0): offer it as a Center too, so pad-center-to-
+    // pad-center measurement works with the Center osnap alone.
+    out.push_back({position, SnapKind::Center});
 }
 
 void InsertEntity::geomToJson(QJsonObject& obj) const

@@ -26,6 +26,8 @@ CommandProcessor::Result CommandProcessor::submit(const QString& line, bool stri
         const auto it = m_registry.find(name);
         if (it == m_registry.end())
             return {false, QStringLiteral("unknown command: %1").arg(name), false, {}};
+        // A fresh command replaces any transient result overlay (MINDIST...).
+        m_ctx.clearOverlay();
         m_active = it->second();
         m_pendingTokens = tokens;
         Result r = drive(m_active->start(m_ctx));

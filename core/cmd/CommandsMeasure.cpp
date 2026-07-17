@@ -1,18 +1,21 @@
 #include "CommandProcessor.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 
 #include <gp_Pln.hxx>
 
 #include "doc/Entities.h"
 #include "doc/EntitiesEx.h"
+#include "edit/MinDist.h"
 #include "geom/GeomUtil.h"
 #include "render/HitTest.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidMetrics.h"
 #include "solid/SolidOps.h"
 
-// Measurement / inquiry commands: DIST, ID, AREA, LIST.
+// Measurement / inquiry commands: DIST, ID, AREA, LIST, MINDIST.
 // Results go through ctx.info() — visible in the GUI history and in the
 // CLI "messages" array.
 
@@ -256,6 +259,116 @@ public:
     }
 };
 
+// MINDIST [idA idB] — the CAM clearance measurement: minimum EDGE-TO-EDGE
+// distance between two entities with material semantics (wide trace = its
+// round-capped footprint, circle/drill = a disk of its radius, flashed pad =
+// the real aperture footprint of its GBR-* block). Honors a pre-existing
+// two-entity selection. Output: a human line, the closest-points line, and
+// one machine-readable JSON line ({"mindist":{...}}, mm). A witness line
+// stays on the canvas until the next command starts.
+class MinDistCommand : public Command {
+public:
+    const char* name() const override { return "MINDIST"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        const auto sel = ctx.selection().ids();
+        if (sel.size() >= 2)
+            return report(ctx, sel[0], sel[1]);
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select two entities:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        switch (v.kind) {
+        case InputValue::Kind::EntitySet:
+            for (const EntityId id : v.entitySet)
+                m_ids.push_back(id);
+            break;
+        case InputValue::Kind::EntityRef:
+            m_ids.push_back(v.entityRef);
+            break;
+        case InputValue::Kind::Finish:
+            if (m_ids.size() >= 2)
+                break;
+            ctx.info(QStringLiteral("MINDIST needs two entities"));
+            return Step::done();
+        default:
+            return Step::cancelled();
+        }
+        if (m_ids.size() < 2)
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select the second entity:"));
+        return report(ctx, m_ids[0], m_ids[1]);
+    }
+
+private:
+    Step report(CommandContext& ctx, EntityId a, EntityId b)
+    {
+        const auto r = measure::minDistance(ctx.doc(), a, b);
+        if (!r.ok) {
+            ctx.info(r.error);
+            return Step::done();
+        }
+        const QString method = r.exact ? QStringLiteral("exact")
+                                       : QStringLiteral("bbox");
+        for (const QString& note : r.notes)
+            ctx.info(note);
+        if (r.overlap)
+            ctx.info(QStringLiteral("#%1 and #%2 touch or overlap — "
+                                    "edge-to-edge distance = 0 (%3)")
+                         .arg(a)
+                         .arg(b)
+                         .arg(method));
+        else
+            ctx.info(QStringLiteral("min edge-to-edge distance #%1 -> #%2 = %3 (%4)")
+                         .arg(a)
+                         .arg(b)
+                         .arg(fmtLen(ctx, r.distance, 4), method));
+        ctx.info(QStringLiteral("closest points: (%1, %2) -> (%3, %4) mm")
+                     .arg(r.pa.x, 0, 'f', 4)
+                     .arg(r.pa.y, 0, 'f', 4)
+                     .arg(r.pb.x, 0, 'f', 4)
+                     .arg(r.pb.y, 0, 'f', 4));
+        // Machine-readable trailer (mm, full precision) for agents/scripts.
+        const QJsonObject json{
+            {QStringLiteral("mindist"),
+             QJsonObject{{QStringLiteral("a"), qint64(a)},
+                         {QStringLiteral("b"), qint64(b)},
+                         {QStringLiteral("mm"), r.distance},
+                         {QStringLiteral("overlap"), r.overlap},
+                         {QStringLiteral("method"), method},
+                         {QStringLiteral("pa"), QJsonArray{r.pa.x, r.pa.y}},
+                         {QStringLiteral("pb"), QJsonArray{r.pb.x, r.pb.y}}}}};
+        ctx.info(QString::fromUtf8(
+            QJsonDocument(json).toJson(QJsonDocument::Compact)));
+
+        // Witness overlay: the clearance segment with a tick at each end
+        // (an X at the single contact point when overlapping).
+        PrimitiveList overlay;
+        const auto tick = [&](const Vec2d& at) {
+            const double t = 0.4; // mm
+            StrokePrimitive s1, s2;
+            s1.points = {at + Vec2d{-t, -t}, at + Vec2d{t, t}};
+            s2.points = {at + Vec2d{-t, t}, at + Vec2d{t, -t}};
+            overlay.strokes.push_back(std::move(s1));
+            overlay.strokes.push_back(std::move(s2));
+        };
+        tick(r.pa);
+        if (!r.overlap) {
+            tick(r.pb);
+            StrokePrimitive line;
+            line.points = {r.pa, r.pb};
+            overlay.strokes.push_back(std::move(line));
+        }
+        ctx.setOverlay(std::move(overlay));
+        return Step::done();
+    }
+
+    std::vector<EntityId> m_ids;
+};
+
 // INTERFERE [id id]: assembly clash check. With two solid ids, report the
 // overlap (interference) volume of that pair. With no ids, sweep every solid
 // pair in the document and report all that interpenetrate. The ids come as one
@@ -448,6 +561,7 @@ void registerMeasureCommands(CommandProcessor& p)
     p.registerCommand(&make<IdCommand>);
     p.registerCommand(&make<AreaCommand>, {QStringLiteral("AA")});
     p.registerCommand(&make<ListCommand>, {QStringLiteral("LI")});
+    p.registerCommand(&make<MinDistCommand>, {QStringLiteral("MD")});
     p.registerCommand(&make<InterfereCommand>, {QStringLiteral("CLASH")});
     p.registerCommand(&make<SectionCommand>, {QStringLiteral("SEC")});
 }

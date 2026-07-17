@@ -1,6 +1,7 @@
 #include "GeomUtil.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace viki {
 
@@ -33,6 +34,48 @@ double distanceToSegment(const Vec2d& p, const Vec2d& a, const Vec2d& b)
         return p.distanceTo(a);
     const double t = std::clamp((p - a).dot(ab) / lenSq, 0.0, 1.0);
     return p.distanceTo(a + ab * t);
+}
+
+Vec2d closestPointOnSegment(const Vec2d& p, const Vec2d& a, const Vec2d& b)
+{
+    const Vec2d ab = b - a;
+    const double lenSq = ab.lengthSq();
+    if (nearZero(lenSq))
+        return a;
+    const double t = std::clamp((p - a).dot(ab) / lenSq, 0.0, 1.0);
+    return a + ab * t;
+}
+
+double closestSegSeg(const Vec2d& a1, const Vec2d& a2, const Vec2d& b1, const Vec2d& b2,
+                     Vec2d& p, Vec2d& q)
+{
+    // Proper crossing = distance zero at the intersection point.
+    const Vec2d r = a2 - a1;
+    const Vec2d s = b2 - b1;
+    const double denom = r.cross(s);
+    if (!nearZero(denom, 1e-14)) {
+        const double t = (b1 - a1).cross(s) / denom;
+        const double u = (b1 - a1).cross(r) / denom;
+        if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0) {
+            p = q = a1 + r * t;
+            return 0.0;
+        }
+    }
+    // No crossing: the minimum is endpoint-to-segment; try the 4 candidates.
+    double best = std::numeric_limits<double>::max();
+    const auto consider = [&](const Vec2d& onA, const Vec2d& onB) {
+        const double d = onA.distanceTo(onB);
+        if (d < best) {
+            best = d;
+            p = onA;
+            q = onB;
+        }
+    };
+    consider(a1, closestPointOnSegment(a1, b1, b2));
+    consider(a2, closestPointOnSegment(a2, b1, b2));
+    consider(closestPointOnSegment(b1, a1, a2), b1);
+    consider(closestPointOnSegment(b2, a1, a2), b2);
+    return best;
 }
 
 double normalizeAngle(double radians)

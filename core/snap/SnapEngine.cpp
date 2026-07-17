@@ -93,7 +93,7 @@ void collectSnapPoints(const Document& doc, const Entity& e,
         e.snapPoints(out);
         return;
     }
-    out.push_back({ins->position, SnapKind::Endpoint});
+    ins->snapPoints(out); // insertion point: Endpoint + Center (pad center)
     const BlockDef* def = depth < 4 ? doc.blockByName(ins->blockName) : nullptr;
     if (!def)
         return;

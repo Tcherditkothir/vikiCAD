@@ -17,7 +17,10 @@
 #        empties the document, REDO restores it (screenshot diffs);
 #        G2 layer stack: BOARDVIEW TOP (bottom side dimmed) / BOTTOM
 #        (top side dimmed + X-mirrored view) / ALL (identical to the
-#        initial clean render), LAYER <name> ALPHA over IPC.
+#        initial clean render), LAYER <name> ALPHA over IPC;
+#        G2 measuring: MINDIST drill-to-drill (JSON trailer vs the by-hand
+#        formula, witness overlay on the canvas), DIMALIGNED pad-center to
+#        pad-center (stable clean capture, UNDO restores the render).
 #
 # Prints a PASS/FAIL table; exits non-zero on any FAIL. ALWAYS stops the
 # vikicad-gui unit at the end (trap), even on error/interrupt.
@@ -167,12 +170,15 @@ hash_dist = sum(x != y for x, y in zip(ha, hb))
 hist = ImageChops.difference(a, b).histogram()
 changed = sum(hist[17:])  # pixels that moved by > 16 gray levels
 total = a.size[0] * a.size[1]
-print(hash_dist, changed * 10000 // max(total, 1))
+print(hash_dist, changed * 10000 // max(total, 1), changed)
 PYEOF
 }
 
 img_hash_dist() { img_cmp "$1" "$2" | cut -d' ' -f1; }
 img_pixel_bp() { img_cmp "$1" "$2" | cut -d' ' -f2; }
+# Raw changed-pixel count — for SMALL deterministic 2D deltas (a dimension,
+# a witness line) that basis points would floor away.
+img_px_changed() { img_cmp "$1" "$2" | cut -d' ' -f3; }
 
 # ---- (1) build if needed --------------------------------------------------
 
@@ -625,6 +631,55 @@ if [[ -d "$KIT_DIR" ]]; then
     rpc screenshot "$TMP/bv_a100.png" clean >/dev/null
     assert_le "stack: alpha 100 back to initial" \
         "$(img_hash_dist "$TMP/bv_init.png" "$TMP/bv_a100.png")" "$SAME_HASH_MAX"
+
+    # --- G2 measuring: MINDIST clearance + a pad-to-pad dimension -------------
+    # Ids and the by-hand expectation come from the live document itself:
+    # first two drill circles (edge-to-edge = |c1-c2| - r1 - r2, computed
+    # here in python), first two pad inserts > 1 mm apart for the dimension.
+    ents_json="$(rpc query entities)"
+    read -r DID_A DID_B DEXP P0 P1 PMID <<<"$(printf '%s' "$ents_json" | python3 -c "
+import json, math, sys
+d = json.load(sys.stdin)
+es = d['result']['entities']
+cir = sorted((e for e in es if e['type'] == 'circle'), key=lambda e: e['id'])
+a, b = cir[0], cir[1]
+(ax, ay), ar = a['geom']['center'], a['geom']['radius']
+(bx, by), br = b['geom']['center'], b['geom']['radius']
+ins = sorted((e for e in es if e['type'] == 'insert'), key=lambda e: e['id'])
+p0 = ins[0]
+p1 = next(p for p in ins
+          if math.hypot(p['geom']['pos'][0] - p0['geom']['pos'][0],
+                        p['geom']['pos'][1] - p0['geom']['pos'][1]) > 1.0)
+x0, y0 = p0['geom']['pos']
+x1, y1 = p1['geom']['pos']
+print(a['id'], b['id'], round(math.hypot(bx - ax, by - ay) - ar - br, 6),
+      f'{x0:.6f},{y0:.6f}', f'{x1:.6f},{y1:.6f}',
+      f'{(x0 + x1) / 2 + 5:.6f},{(y0 + y1) / 2 + 5:.6f}')
+")"
+    shot "measure: canvas before MINDIST" "$TMP/mind_pre.png"
+    out="$(rpc exec "MINDIST $DID_A $DID_B")"
+    assert_eq "measure: MINDIST drills == by hand" "$DEXP" \
+        "$(jget "$out" "round(next(json.loads(m)['mindist']['mm'] for m in d['result']['messages'] if m.startswith('{')), 6)")"
+    assert_eq "measure: MINDIST method is exact" exact \
+        "$(jget "$out" "next(json.loads(m)['mindist']['method'] for m in d['result']['messages'] if m.startswith('{'))")"
+    shot "measure: canvas after MINDIST" "$TMP/mind_post.png"
+    assert_ge "measure: witness overlay visible" \
+        "$(img_px_changed "$TMP/mind_pre.png" "$TMP/mind_post.png")" 10
+
+    kit_n="$(count)"
+    gexec "measure: DIMALIGNED pad -> pad" "DIMALIGNED $P0 $P1 $PMID"
+    assert_eq "measure: dimension entity added" "$((kit_n + 1))" "$(count)"
+    rpc screenshot "$TMP/dim_a.png" clean >/dev/null
+    rpc screenshot "$TMP/dim_b.png" clean >/dev/null
+    assert_ge "measure: dimension visible (clean)" \
+        "$(img_px_changed "$TMP/bv_a100.png" "$TMP/dim_a.png")" 50
+    assert_eq "measure: dimensioned capture stable" \
+        0 "$(img_px_changed "$TMP/dim_a.png" "$TMP/dim_b.png")"
+    gexec "measure: UNDO the dimension" "UNDO"
+    assert_eq "measure: entity count restored" "$kit_n" "$(count)"
+    rpc screenshot "$TMP/dim_undo.png" clean >/dev/null
+    assert_eq "measure: undo restores the clean render" \
+        0 "$(img_px_changed "$TMP/bv_a100.png" "$TMP/dim_undo.png")"
 
     # A LONE fab file (not a directory) opens through the same kit path
     # thanks to the content sniff -- regression for the single-.GTL IPC open.

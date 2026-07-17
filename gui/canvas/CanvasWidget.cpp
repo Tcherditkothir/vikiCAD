@@ -25,6 +25,7 @@ const QColor kAxis(70, 76, 82);
 const QColor kCrosshair(140, 140, 140);
 const QColor kSelection(64, 200, 255);
 const QColor kPreview(255, 210, 90);
+const QColor kMeasure(255, 120, 200);
 const QColor kSnapGlyph(80, 255, 120);
 const QColor kGrip(60, 130, 246);
 const QColor kRubberWindow(90, 140, 255);
@@ -436,6 +437,29 @@ void CanvasWidget::paintEvent(QPaintEvent*)
             pen.setStyle(Qt::DashLine);
             p.setPen(pen);
             for (const StrokePrimitive& s : preview.strokes) {
+                if (s.points.size() < 2)
+                    continue;
+                QPainterPath path(m_camera.worldToScreen(s.points.front()));
+                for (size_t i = 1; i < s.points.size(); ++i)
+                    path.lineTo(m_camera.worldToScreen(s.points[i]));
+                if (s.closed)
+                    path.closeSubpath();
+                p.drawPath(path);
+            }
+        }
+    }
+
+    // Transient result overlay (MINDIST witness line/ticks): stays visible
+    // until the next command starts (the processor clears it). Never part
+    // of contentImage(), so clean captures stay geometry-only.
+    if (m_processor) {
+        const PrimitiveList& ov = m_processor->ctx().overlay();
+        if (!ov.strokes.empty()) {
+            QPen pen(kMeasure);
+            pen.setCosmetic(true);
+            pen.setStyle(Qt::DashLine);
+            p.setPen(pen);
+            for (const StrokePrimitive& s : ov.strokes) {
                 if (s.points.size() < 2)
                     continue;
                 QPainterPath path(m_camera.worldToScreen(s.points.front()));

@@ -43,6 +43,7 @@ add_executable(vikicad-tests
     test_excellon.cpp
     test_gerberkit.cpp
     test_layer_stack.cpp
+    test_mindist.cpp
 )
 
 # Committed golden files (synthetic Gerber fixtures, ...).

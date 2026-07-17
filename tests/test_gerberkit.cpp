@@ -8,16 +8,24 @@
 //    (private, machine-local): those tests SKIP when the directory is absent.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
+#include "cmd/CommandProcessor.h"
+#include "doc/Annotations.h"
+#include "doc/Block.h"
 #include "doc/Document.h"
 #include "doc/Entities.h"
 #include "io/GerberKit.h"
+#include "snap/SnapEngine.h"
 
 using namespace viki;
+using Catch::Approx;
 
 namespace {
 
@@ -542,4 +550,102 @@ TEST_CASE("GerberKit: real S5M0PCBB kit — GM1 carries the outline, GKO is a ke
         CHECK(layerNamed(doc, name) != nullptr);
     }
     CHECK(doc.entityCount() > 1000);
+}
+
+TEST_CASE("GerberKit: measuring on the real kit — pad snaps, MINDIST, DIM",
+          "[gerberkit][kits][mindist]")
+{
+    if (!kitsPresent())
+        SKIP("real Gerber kits not present on this machine");
+
+    Document doc;
+    SelectionSet sel;
+    CommandContext ctx{doc, sel};
+    CommandProcessor processor{ctx};
+    registerBuiltinCommands(processor);
+
+    const GerberKitResult r =
+        importGerberKit(doc, QLatin1String(kKitRoot) + QLatin1String("/S5M0PCBA"));
+    REQUIRE(r.ok);
+
+    // Two flashed pads (inserts) at distinct positions.
+    std::vector<const InsertEntity*> pads;
+    for (const EntityId id : doc.drawOrder())
+        if (const auto* ins = dynamic_cast<const InsertEntity*>(doc.entity(id)))
+            pads.push_back(ins);
+    REQUIRE(pads.size() >= 2);
+    const InsertEntity* p0 = pads.front();
+    const InsertEntity* p1 = nullptr;
+    for (const InsertEntity* p : pads)
+        if (p != p0 && p->position.distanceTo(p0->position) > 1.0) {
+            p1 = p;
+            break;
+        }
+    REQUIRE(p1 != nullptr);
+
+    // 1. The pad center is reachable with the CENTER osnap alone (cursor
+    //    slightly off, endpoint snapping irrelevant) — pad-to-pad dimensioning.
+    SnapSettings snaps;
+    snaps.endpoint = snaps.node = snaps.midpoint = snaps.quadrant = false;
+    snaps.intersection = snaps.perpendicular = snaps.tangent = snaps.nearest = false;
+    snaps.center = true;
+    const auto snap =
+        snapQuery(doc, p0->position + Vec2d{0.05, 0.05}, 0.3, snaps, std::nullopt);
+    REQUIRE(snap);
+    CHECK(snap->kind == SnapKind::Center);
+    CHECK(snap->point.x == Approx(p0->position.x).margin(1e-9));
+    CHECK(snap->point.y == Approx(p0->position.y).margin(1e-9));
+
+    // 2. MINDIST between two real drill hits, checked against the by-hand
+    //    formula |c1-c2| - r1 - r2 from the drills' own geometry.
+    const Layer* drill = layerNamed(doc, "Drill");
+    REQUIRE(drill != nullptr);
+    std::vector<const CircleEntity*> drills;
+    for (const EntityId id : doc.drawOrder())
+        if (const auto* c = dynamic_cast<const CircleEntity*>(doc.entity(id));
+            c && c->layerId() == drill->id)
+            drills.push_back(c);
+    REQUIRE(drills.size() >= 2);
+    const CircleEntity* d0 = drills[0];
+    const CircleEntity* d1 = drills[1];
+    const double expected =
+        d0->center().distanceTo(d1->center()) - d0->radius() - d1->radius();
+
+    ctx.clearMessages();
+    REQUIRE(processor
+                .submit(QStringLiteral("MINDIST %1 %2").arg(d0->id()).arg(d1->id()),
+                        /*strict=*/true)
+                .ok);
+    QJsonObject json;
+    for (const QString& m : ctx.messages()) {
+        const auto parsed = QJsonDocument::fromJson(m.toUtf8());
+        if (parsed.isObject() && parsed.object().contains(QStringLiteral("mindist")))
+            json = parsed.object()[QStringLiteral("mindist")].toObject();
+    }
+    REQUIRE_FALSE(json.isEmpty());
+    CHECK(json[QStringLiteral("mm")].toDouble() == Approx(expected).epsilon(1e-9));
+    CHECK(json[QStringLiteral("method")].toString() == QStringLiteral("exact"));
+
+    // 3. An aligned dimension from pad center to pad center (the points the
+    //    Center osnap would deliver) lands as a dimension entity carrying
+    //    exactly those definition points.
+    const auto pt = [](const Vec2d& p) {
+        return QStringLiteral("%1,%2").arg(p.x, 0, 'f', 6).arg(p.y, 0, 'f', 6);
+    };
+    const Vec2d mid = (p0->position + p1->position) * 0.5 + Vec2d{5, 5};
+    const auto before = doc.entityCount();
+    REQUIRE(processor
+                .submit(QStringLiteral("DIMALIGNED %1 %2 %3")
+                            .arg(pt(p0->position), pt(p1->position), pt(mid)),
+                        /*strict=*/true)
+                .ok);
+    REQUIRE(doc.entityCount() == before + 1);
+    const auto* dim =
+        dynamic_cast<const DimensionEntity*>(doc.entity(doc.drawOrder().back()));
+    REQUIRE(dim != nullptr);
+    CHECK(dim->kind == DimensionEntity::Kind::Aligned);
+    CHECK(dim->a.x == Approx(p0->position.x).margin(1e-5));
+    CHECK(dim->a.y == Approx(p0->position.y).margin(1e-5));
+    CHECK(dim->b.x == Approx(p1->position.x).margin(1e-5));
+    CHECK(dim->b.y == Approx(p1->position.y).margin(1e-5));
 }
