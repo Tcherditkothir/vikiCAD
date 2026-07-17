@@ -641,7 +641,26 @@ for pr in $lpc_probes; do
     else record FAIL "lpc: $name" "$pr (paint order broken?)"; fi
 done
 
-# ---- (5) report -------------------------------------------------------------
+# ---- (5) OPTIONAL final stage: pixel diff vs gerbv on the real kits ---------
+# gerber-ref-diff.sh renders the 32 layers of the two reference kits with
+# both VikiCAD and gerbv and compares them (dhash + ink delta). ~12 s on
+# this machine, so it rides along in every smoke run. It restarts the
+# vikicad-gui unit for its own captures — keep it LAST, after every IPC
+# check above. Silently skipped (counts as success) when gerbv or the
+# kits are absent, mirroring the script's own guards.
+if command -v gerbv >/dev/null 2>&1 && [[ -d /home/lex/computer/pcb-ref/S5M0PCBA ]]; then
+    if "$ROOT/scripts/gerber-ref-diff.sh" >"$TMP/refdiff.log" 2>&1; then
+        record PASS "refdiff: layers vs gerbv" \
+            "$(grep -c '^PASS' "$TMP/refdiff.log") PASS rows"
+    else
+        record FAIL "refdiff: layers vs gerbv" \
+            "$(grep -c '^FAIL' "$TMP/refdiff.log") FAIL rows — see $TMP/refdiff.log"
+    fi
+else
+    record SKIP "refdiff: layers vs gerbv" "gerbv or pcb-ref kits absent"
+fi
+
+# ---- (6) report -------------------------------------------------------------
 
 print_table
 [[ "$FAILS" -eq 0 ]]
