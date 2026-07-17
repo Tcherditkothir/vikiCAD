@@ -533,13 +533,21 @@ overlapping material reports `mm: 0, overlap: true`), `method`
 Parse that, not the human lines. Verified against the by-hand value
 `|c1-c2| - r1 - r2 = 7.510364123916017` from the same drills' `query
 entities` data; pads work too (`MINDIST 376 377` → `14.8007 mm (exact)`
-between two GBR-D67 flashes). In the GUI the result also draws a dashed
-witness line + end ticks on the canvas until the next command starts.
+between two GBR-D67 flashes). Multi-ring macro footprints (Altium
+RoundedRect = overlapping rects + corner disks) are measured as the
+UNION of their rings — an entity fully buried inside such a pad reports
+`overlap:true, mm:0`, not a distance to an internal seam. Known bias
+(PCB_CAM.md debt): round flashes are baked as polygons INSCRIBED in the
+circle, so pad-to-pad clearances in oblique directions read up to
+~0.002 mm LARGER than physical truth. In the GUI the result also draws a
+dashed witness line + end ticks (dark halo under the dashes, readable at
+board scale) on the canvas until the next command starts.
 
 Dimensioning pad-to-pad: every insert's flash origin is BOTH an Endpoint
 and a **Center** snap (so the Center osnap alone reaches pad centers in
-the GUI); headless you pass the centers straight from `query entities`
-(`geom.pos` of the inserts). Verified on the real kit:
+the GUI — note this applies to EVERY block insert, not just `GBR-*`
+pads: deliberate, see LESSONS 2026-07-17); headless you pass the centers
+straight from `query entities` (`geom.pos` of the inserts). Verified on the real kit:
 
 ```sh
 $CLI open kitA.vkd \

@@ -252,3 +252,31 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   lignes + `propRows` dans query ui, et gui-smoke lit le CONTENU RÉEL du
   QTableWidget après sélection d'une pastille — l'inspecteur est verrouillé
   par le harnais, pas par une capture d'écran illisible.
+
+## 2026-07-17 — Clôture G2 (revue adversariale)
+
+- **Even-odd n'est PAS la sémantique des anneaux Gerber : c'est l'UNION.**
+  Une pastille macro Altium (RoundedRect) flashe des anneaux qui se
+  RECOUVRENT (2 rects + 4 disques de coin) ; le renderer SOLID remplit
+  chaque anneau individuellement (= union à l'écran), mais le containment
+  de MINDIST appliquait la parité even-odd À TRAVERS les anneaux : un
+  point couvert par 2 anneaux comptait « dehors » et un perçage enterré
+  dans la pastille sortait avec une clearance positive étiquetée
+  « exact ». Règle : even-odd DANS un anneau (polygone simple), union
+  ENTRE anneaux — et tout test géométrique doit suivre la sémantique du
+  RENDERER, pas celle qui arrange l'algorithme. Attrapé uniquement parce
+  que la revue a recalculé à la main depuis les fichiers bruts ; les cas
+  mono-anneau passaient tous.
+- **Une revue adversariale qui recalcule TOUT à la main paie.** Les 3
+  rapports G2 étaient « verts partout » ; le recoupement indépendant
+  (DRR/REP/coordonnées brutes du Gerber) a quand même sorti un bug majeur
+  + un biais de ~2 µm (polygones inscrits, dette PCB_CAM). Les valeurs
+  vérifiées à 1e-9 par un chemin INDÉPENDANT valent plus que dix tests
+  qui reproduisent le calcul du code.
+- **Assumé : le snap Center au point d'insertion vaut pour TOUT insert**,
+  pas seulement les pastilles GBR-* (InsertEntity::snapPoints est
+  générique). Dans un dessin 2D legacy, Center près d'un bloc peut donc
+  accrocher son point d'insertion en plus des vrais centres de
+  cercles/arcs internes. Comportement voulu (symétrie Endpoint/Center,
+  utile aussi pour les blocs mécaniques) — si un jour ça gêne, restreindre
+  au préfixe de nom de bloc, pas au SnapEngine.

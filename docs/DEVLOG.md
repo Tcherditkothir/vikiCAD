@@ -759,3 +759,42 @@ régénérera ses tables depuis ces métadonnées.
 **État des tests : 4380 assertions / 307 cas ctest verts (8 nouveaux cas
 test_cam_inspect dont 2 goldens kits) ; gui-smoke 200 checks verts (15
 nouveaux `inspect:`), refdiff 32/32 inchangé.**
+
+## 2026-07-17 — Clôture G2 ✅ : revue adversariale + fix MINDIST union
+
+Passe de revue adversariale sur les 6 commits G2 (deux reviewers
+indépendants, kits réels décodés à la main comme vérité) : DRILLREPORT ==
+.DRR ligne à ligne, APERTURES == .REP couche par couche sur les DEUX kits,
+MINDIST recoupé à 1e-9 sur perçages/pastilles/traces (rotations d'insert
+vérifiées : 0.900176 pour le D15 rot 270, pas 0.600202),
+alpha/rank/role persistants, .vkd pré-G2 rétro-compatibles. Deux défauts
+réels trouvés dans core/edit/MinDist.cpp, le majeur corrigé aujourd'hui :
+
+- **[majeur, corrigé] La parité even-odd inter-anneaux mentait sur les
+  pastilles macro multi-anneaux.** Un RoundedRect Altium flashe 6 anneaux
+  qui se RECOUVRENT (2 rects + 4 disques de coin) — sémantique d'UNION. Le
+  test de containment de MINDIST appliquait la parité even-odd à travers
+  TOUS les anneaux : un point couvert par 2 anneaux comptait « dehors »,
+  et un objet 100 % enterré dans la pastille sortait « 0.196 mm (exact),
+  overlap:false » (distance vers une couture INTERNE de l'union). Repro
+  kit réel : cercle au centre du flash D15 #773 → maintenant
+  `overlap:true, mm:0`. Fix : `insideUnion` (even-odd DANS un anneau,
+  union ENTRE anneaux — exactement ce que peint le renderer SOLID qui
+  remplit chaque anneau individuellement) + un point représentatif par
+  ANNEAU côté invité. Test unitaire d'abord (pastille « plus » en 2 rects
+  qui se croisent, rouge avant fix), les recouvrements partiels passaient
+  déjà par les distances de frontière négatives.
+- **[mineur, dette] Pastilles rondes = polygones inscrits** → clearance
+  sur-estimée jusqu'à ~2 µm en oblique (non-conservateur). Documenté en
+  dette PCB_CAM.md, à régler avec les empreintes exactes de l'export G3.
+- **[mineur, corrigé] Overlay MINDIST illisible à l'échelle carte** : le
+  pointillé rose cosmétique 1 px se noyait dans le cuivre. Halo sombre
+  4 px sous les pointillés 1.8 px — lisible sans zoomer, toujours hors
+  captures clean.
+- **[mineur, acté] Snap Center sur le point d'insertion de TOUT insert**
+  (pas seulement GBR-*) : changement de comportement assumé pour les
+  dessins 2D à blocs, documenté (LESSONS + dette PCB_CAM).
+
+**État des tests : 4384 assertions / 308 cas ctest verts (+1 cas union
+multi-anneaux) ; gui-smoke 200 checks verts, refdiff 32/32 inchangé. G2
+CLÔTURÉ — prochaine étape G3 (édition + export RS-274X/Excellon).**

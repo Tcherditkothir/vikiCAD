@@ -1,9 +1,38 @@
-# REPRISE — état au 2026-07-17 ; PCB CAM : G1 FAIT + ref-diff CALIBRÉ, G2 ENSUITE
+# REPRISE — état au 2026-07-17 ; PCB CAM : G1+G2 FAITS, G3 ENSUITE
 
 Document de reprise. À lire AVANT toute action, avec DEVLOG.md (historique
 complet), LESSONS.md (pièges connus) et docs/AGENT.md (pilotage headless).
 
-## 🎯 CHANTIER PCB CAM (brainstorm avec Lex le 2026-07-16) — G1 CLÔTURÉ
+## 🎯 CHANTIER PCB CAM (brainstorm avec Lex le 2026-07-16) — G1+G2 CLÔTURÉS
+
+- **G2 (ergonomie CAM) : FAIT le 2026-07-17, revue adversariale passée** —
+  pile de couches (alpha/rang/rôle persistés, `LAYER`, `BOARDVIEW
+  TOP|BOTTOM|ALL` avec vraie vue miroir côté soudure), mesures CAM
+  (`MINDIST` bord-à-bord sémantique matière + overlay témoin, snaps
+  centre-de-pastille, DIMALIGNED sur kit réel), inspection (`APERTURES` ==
+  .REP, `DRILLREPORT` == .DRR sur les DEUX kits, panneau Propriétés
+  gerber, `SELECT` headless). Revue adversariale : tout recalculé à la
+  main depuis les fichiers bruts → 1 bug majeur MINDIST corrigé (union
+  vs even-odd sur pastilles macro multi-anneaux, test d'abord) + dette
+  ~2 µm actée (PCB_CAM.md). État : **4384 assertions / 308 cas ctest,
+  gui-smoke 200 checks, refdiff 32/32 — tous verts.**
+- **Prochaine étape : G3 — édition + export** RS-274X/Excellon (round-trip
+  golden), panélisation, pont DXF↔Gerber (voir PCB_CAM.md).
+- **À valider À LA SOURIS par Lex (G2)** :
+  - LayerPanel : colonne Alpha éditable, boutons ▲▼ (ordre de peinture),
+    clic droit → « Set Gerber role » sur un calque (recolorie + re-range) ;
+  - menu View > Board view : TOP (bottom atténué), BOTTOM (miroir X — la
+    sérigraphie bottom se lit à l'endroit, le picking marche), ALL ;
+  - MINDIST à la souris sur un kit : sélectionner 2 objets puis taper
+    `MINDIST` (ou `MD`) — ligne témoin pointillée rose à halo sombre,
+    VISIBLE à l'échelle carte entière, effacée à la commande suivante ;
+  - cliquer une pastille : le panneau Propriétés raconte D-code, aperture
+    (ex. « RoundedRect 0.600x0.900 r=0.054 rot 270deg »), polarité ; un
+    perçage : outil + platage ;
+  - `APERTURES` et `DRILLREPORT` dans la barre de commande : tables
+    lisibles ;
+  - snap Center : il accroche AUSSI le point d'insertion de tout bloc
+    (pas seulement les pastilles) — dire si ça gêne sur tes dessins 2D.
 
 **PCB CAM — lire/éditer/réexporter Gerber RS-274X + Excellon** sans passer
 par un gros EDA. Plan, périmètre, phases et dette : **`docs/PCB_CAM.md`**.
@@ -22,8 +51,6 @@ schémas = chantier SUIVANT.
   s'ouvre avec warning) + perçages rendus en disques pleins. **32/32
   couches vertes, seuils calibrés**, et le diff tourne en stage final de
   gui-smoke (SKIP sans gerbv/kits). Récit : DEVLOG 2026-07-17.
-- **Prochaine étape : G2 — ergonomie CAM** (pile de couches, visibilité/
-  transparence, mesures sur gerbers, inspecteur d'apertures ; PCB_CAM.md).
 - **À valider À LA SOURIS par Lex (G1)** : File > Open d'un .GTL/.TXT seul ;
   File > Open Gerber kit sur pcb-ref/S5M0PCBA et B ; sur PCBB la zone
   antenne = violet discret (keepout sous le cuivre, plus de pavé magenta

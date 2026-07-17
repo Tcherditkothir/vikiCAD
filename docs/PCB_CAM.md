@@ -82,9 +82,10 @@
     kit) ; le `.vkd` sauvé sans ligne « 0 » ne la ressuscite pas au
     chargement. Les flux DXF/2D ne changent pas (toute entité ou référence
     de bloc sur « 0 » la conserve).
-- **G2 — Ergonomie CAM** (en cours) : gestion de pile (board multi-fichiers,
-  presets de couleurs/visibilité, transparence), mesures et cotes SUR les
-  gerbers, inspecteur d'apertures, rapport (compte de perçages par diamètre…).
+- [x] **G2 — Ergonomie CAM** — **FAIT (clôturé le 2026-07-17, revue
+  adversariale passée, voir DEVLOG)** : gestion de pile (presets de
+  couleurs/visibilité, transparence), mesures et cotes SUR les gerbers,
+  inspecteur d'apertures, rapports (apertures, perçages par diamètre).
 
   **Fait (2026-07-17) — la pile de couches façon CAM** :
   - transparence par calque (`Layer.alpha` 0-100, défaut opaque), persistée
@@ -167,6 +168,33 @@
     bloc `inspect:` (APERTURES verbatim AMPARAMS, DRILLREPORT == .DRR,
     couche « 0 » absente, panneau via SELECT + query ui) — 200 checks
     verts, refdiff toujours 32/32.
+
+  **Clôture (2026-07-17) — revue adversariale numérique passée** : DRILLREPORT
+  == .DRR et APERTURES == .REP sur les deux kits, MINDIST recoupé à la main
+  à 1e-9 depuis les fichiers bruts (rotations d'insert comprises),
+  alpha/rank/role survivent save-as + reopen, .vkd pré-G2 s'ouvrent avec les
+  défauts. Deux défauts MinDist trouvés : le **majeur corrigé** (parité
+  even-odd inter-anneaux → un objet 100 % DANS une pastille macro
+  multi-anneaux, ex. RoundedRect Altium = 2 rects + 4 disques qui se
+  RECOUVRENT, sortait « 0.196 mm exact, overlap:false » ; la matière est
+  maintenant l'UNION des anneaux, comme au rendu — test unitaire + repro
+  kit réel verts), le mineur acté en dette ci-dessous. Overlay MINDIST
+  rendu lisible à l'échelle carte (halo sombre sous les pointillés).
+
+  **Dette G2 assumée (à réévaluer en G3)** :
+  - les flashes RONDS sont cuits en polygones INSCRITS dans le cercle
+    (sagitta ~1e-3 mm, ex. 32-gone pour la pastille D67 de 0.4064 mm) →
+    MINDIST sur-estime la clearance pastille-pastille jusqu'à ~0.002 mm
+    dans les directions obliques (D67-D67 réel : 5.184919 rendu vs
+    5.183816 vrai). Non-conservateur pour du contrôle de clearance, et
+    au-delà de la précision promise par le commentaire kMeasureTol de
+    MinDist.cpp. À corriger en G3 (l'export doit régénérer les empreintes
+    exactes de toute façon : disques analytiques ou compensation
+    mid-ordinate) ;
+  - le snap Center sur le point d'insertion vaut pour TOUT insert, pas
+    seulement les blocs GBR-* (assumé — voir LESSONS 2026-07-17) ;
+  - MINDIST reste O(nA×nB) par paire de primitives — suffisant pour deux
+    entités, à revisiter si un jour on mesure calque contre calque.
 - **G3 — Édition + export** : édition avec tout l'outillage 2D existant,
   export RS-274X + Excellon (round-trip golden : import→export→réimport =
   géométrie identique), panélisation (réseaux existants → SR ou dépliage),
