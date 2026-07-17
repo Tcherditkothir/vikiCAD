@@ -451,3 +451,53 @@ objects and `plated:true/false` on drill hits; independent ground truths for
 assertions live next to the kits (.DRR = hole counts per tool, .REP = used
 D-codes). Reference render diff: `scripts/gerber-ref-diff.sh` (SKIPs until
 gerbv is installed).
+
+### 7a. The layer stack (G2): LAYER + BOARDVIEW
+
+Every layer carries three CAM properties, persisted in `.vkd` and visible
+in `query layers` (`alpha`, `rank`, `gerberRole`) and in the GUI LayerPanel
+(Alpha / Rank / Role columns, ▲▼ buttons, right-click "Set Gerber role"):
+
+- **alpha** — compositing opacity 0..100 (100 = opaque default). Applied to
+  the layer's composite as a whole, so a faded plane fades evenly.
+- **rank** — paint order, LOWER paints first. Ties keep document draw
+  order, so an all-rank-0 document renders exactly as before. The kit
+  importer stamps its paint ranks here (copper 10/20 ... outline 90,
+  drills 95/96).
+- **gerberRole** — reassignable CAM role (`Copper-Top`, `Copper-Bottom`,
+  `Mask`, `Silk`, `Paste`, `Outline`, `Drill`, `Mech`; empty = none).
+  Assigning a role RECOLORS the layer to the role palette and moves it to
+  the role rank — the escape hatch when the outline election guessed wrong.
+
+Both channels, verified verbatim (offline `--exec` and live `connect exec`):
+
+```sh
+$CLI connect exec "LAYER Top-Copper ALPHA 30"   # 0..100, Enter = 100
+$CLI connect exec "LAYER Mech-15 ROLE Outline"
+#   messages: ["layer 'Mech-15' role = Outline (color #ff00ff, rank 90)"]
+$CLI connect exec "LAYER Bottom-Copper UP"      # one slot later in the stack
+#   messages: ["layer 'Bottom-Copper' moved up (painted later, on top)"]
+$CLI connect exec "LAYER Bottom-Copper RANK 12" # absolute rank, if you prefer
+$CLI connect exec "LAYER Nope ALPHA 10"
+#   ok:true BUT messages: ["no layer named 'NOPE'"] — check messages!
+```
+
+`BOARDVIEW TOP|BOTTOM|ALL` (alias `BV`, GUI: View > Board view) is the CAM
+stack preset: TOP dims the bottom-side layers to 25 %, BOTTOM dims the top
+side AND mirrors the view left-right (the classic solder-side view — done
+at camera level, so picking/snapping still work and bottom-silk text reads
+normally), ALL restores everything (verified: the ALL clean capture is
+byte-identical to the pre-BOARDVIEW one). Side classification: gerberRole
+first (Copper-Top/Copper-Bottom; Outline + Drill never dim), layer-name
+prefix (Top-/Bottom-) for sideless roles. The alphas it sets are ordinary
+layer alphas (persisted if you save); the mirror is view state only and is
+reset when another document is opened. Headless (no view) the mirror step
+reports "no view attached" but the alphas still apply.
+
+```sh
+$CLI connect exec "BOARDVIEW TOP"
+#   ["board view TOP: 5 bottom-side layer(s) dimmed to 25%"]
+$CLI connect exec "BOARDVIEW BOTTOM"
+#   [...,"view mirrored left-right (solder side)"]
+$CLI connect exec "BOARDVIEW"        # bare = ALL (the default)
+```

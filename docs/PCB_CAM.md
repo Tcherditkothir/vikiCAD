@@ -71,13 +71,40 @@
   - ~~perçages rendus en ANNEAUX vs disques pleins chez gerbv~~ → **FAIT
     (2026-07-17)** : les hits Excellon (tag `plated` présent) se rendent
     en disques PLEINS (dhash .TXT : 58/104 → 11/40) ;
-  - l'élection de contour est une heuristique : un kit dont le contour vit
-    ailleurs que GKO/GM1/GM13 (ou X2 Profile) n'aura pas d'Outline ; G2
-    devrait offrir un « réassigner le rôle d'un calque » à la souris ;
+  - ~~l'élection de contour est une heuristique sans échappatoire~~ →
+    **échappatoire livrée (2026-07-17, G2)** : rôle Gerber réassignable
+    (`LAYER <calque> ROLE Outline`, ou clic droit dans le LayerPanel →
+    « Set Gerber role ») — recolorie à la palette du rôle et déplace au
+    rang de peinture du rôle. L'heuristique d'élection reste inchangée ;
   - couche « 0 » vide toujours présente après import kit (défaut Document).
-- **G2 — Ergonomie CAM** : gestion de pile (board multi-fichiers, presets de
-  couleurs/visibilité, transparence), mesures et cotes SUR les gerbers,
-  inspecteur d'apertures, rapport (compte de perçages par diamètre…).
+- **G2 — Ergonomie CAM** (en cours) : gestion de pile (board multi-fichiers,
+  presets de couleurs/visibilité, transparence), mesures et cotes SUR les
+  gerbers, inspecteur d'apertures, rapport (compte de perçages par diamètre…).
+
+  **Fait (2026-07-17) — la pile de couches façon CAM** :
+  - transparence par calque (`Layer.alpha` 0-100, défaut opaque), persistée
+    .vkd + JSON, éditable LayerPanel (colonne Alpha) et `LAYER <n> ALPHA x` ;
+    rendu : le calque translucide passe par le même composite ARGB que les
+    calques LPC, opacité appliquée au blit (le calque fond d'un bloc, les
+    recouvrements internes ne s'assombrissent pas) ;
+  - ordre de dessin générique par rang de calque (`Layer.rank`, plus petit
+    = peint d'abord ; égalité = ordre du document, donc les documents
+    pré-G2 rendent à l'identique), stable-sort au rendu ; l'importeur de
+    kit pose désormais ses rangs SUR les calques (la mécanique
+    perçage/contour-au-dessus est devenue générique) ; `LAYER <n> UP|DOWN|
+    RANK x` + boutons ▲▼ du LayerPanel ;
+  - rôle Gerber réassignable (`Layer.gerberRole` : Copper-Top/Copper-Bottom/
+    Mask/Silk/Paste/Outline/Drill/Mech/None), posé par l'importeur, édité
+    par `LAYER <n> ROLE r` et le menu contextuel du LayerPanel — assigner
+    un rôle recolore à la palette et re-range au rang du rôle ;
+  - presets `BOARDVIEW TOP|BOTTOM|ALL` (+ menu View > Board view) : TOP =
+    côté bottom atténué à 25 %, BOTTOM = côté top atténué ET **vue miroir X
+    au niveau caméra** (vraie vue côté soudure : picking/snaps intacts, la
+    sérigraphie bottom se lit à l'endroit), ALL = tout opaque, miroir off,
+    rendu identique à l'initial (vérifié à l'octet près en gui-smoke).
+  - garde-fous : suite ctest (test_layer_stack + test_gerberkit étendu),
+    gui-smoke bloc `stack:` sur S5M0PCBA (16 checks), gerber-ref-diff
+    toujours 32/32 (les rendus par défaut n'ont pas bougé).
 - **G3 — Édition + export** : édition avec tout l'outillage 2D existant,
   export RS-274X + Excellon (round-trip golden : import→export→réimport =
   géométrie identique), panélisation (réseaux existants → SR ou dépliage),

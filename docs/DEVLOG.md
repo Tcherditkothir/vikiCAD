@@ -625,3 +625,41 @@ La parité visuelle avec gerbv est sous harnais permanent.
 
 **État des tests : 3833 assertions / 275 cas ctest verts ; gui-smoke
 157 checks verts (dont le stage refdiff).**
+
+## 2026-07-17 — G2 : la pile de couches façon CAM (alpha, rang, rôle, BOARDVIEW) ✅
+
+Quatre briques, toutes servies par le CommandProcessor unique (parité
+CLI/IPC/GUI vérifiée dans les deux canaux) :
+
+- **Alpha par calque** (`Layer.alpha` 0-100, défaut opaque) : le calque
+  translucide passe par le composite ARGB déjà utilisé pour le LPC,
+  opacité appliquée AU BLIT — le calque fond comme UNE surface, les
+  recouvrements internes (piste sur piste) ne s'assombrissent pas.
+  `LAYER <nom> ALPHA n`, colonne Alpha du LayerPanel, persisté .vkd
+  (colonnes ajoutées par ALTER TABLE toléré + SELECT à repli pour les
+  fichiers pré-G2) et exposé dans `query layers`.
+- **Ordre de dessin générique** (`Layer.rank`, plus petit = peint d'abord) :
+  stable-sort des entités par rang de calque au rendu — égalité de rang =
+  ordre du document, donc TOUT document pré-G2 (rangs 0 partout) rend
+  bit-identique (verrouillé par les hashes gui-smoke et refdiff 32/32).
+  L'importeur de kit grave désormais ses rangs sur les calques ; UP/DOWN
+  matérialise les rangs 0..n-1 puis échange (▲▼ dans le panneau).
+- **Rôle Gerber réassignable** (`Layer.gerberRole`) : posé par l'importeur,
+  réassignable par `LAYER <nom> ROLE <r>` / menu contextuel — recolore à la
+  palette du rôle et re-range (Outline magenta rang 90 : l'échappatoire de
+  l'élection de contour, dette G1 soldée).
+- **`BOARDVIEW TOP|BOTTOM|ALL`** (+ View > Board view) : TOP atténue le côté
+  bottom à 25 % (perçage/contour toujours pleins), BOTTOM symétrique ET vue
+  miroir X **au niveau Camera2d** (worldToScreen/screenToWorld/panPixels) —
+  picking, snaps et zoom marchent tels quels, la sérigraphie bottom se lit
+  à l'endroit, exactement la « vue côté soudure » CAM. Le miroir est un
+  état de vue (jamais persisté, remis à zéro à l'ouverture d'un document).
+  ALL restaure tout — capture clean identique À L'OCTET à l'initiale.
+
+Leçon de mesure au passage : le comparateur d'encre en NIVEAUX DE GRIS de
+gui-smoke est quasi aveugle au swap cuivre rouge↔bleu (luminances 108 vs
+121 — sous le seuil de 16) : l'inversion de pile a été validée par sonde
+RGB (pixel du plan : (229,57,53) → (61,126,255)), pas par le bp gris.
+
+**État des tests : 3961 assertions / 285 cas ctest verts ; gui-smoke
+173 checks verts (16 nouveaux `stack:`, refdiff 32/32 inchangé).**

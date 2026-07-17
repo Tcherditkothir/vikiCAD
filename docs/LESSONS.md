@@ -177,3 +177,23 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
 - **gerber-ref-diff est maintenant un stage de gui-smoke** (~12 s, SKIP
   silencieux sans gerbv/kits) : la parité visuelle avec gerbv ne peut plus
   régresser sans casser le harnais.
+
+## 2026-07-17 — G2 pile de couches (alpha/rang/rôle, BOARDVIEW)
+
+- **Le comparateur d'encre en niveaux de gris est aveugle au rouge↔bleu** :
+  les cuivres top (0xE53935) et bottom (0x3D7EFF) ont des luminances quasi
+  égales (108 vs 121, sous le seuil de 16 niveaux du bp gui-smoke) — un swap
+  d'ordre de pile peut rendre « 0 pixel changé » en gris alors que le plan a
+  visiblement changé de couleur. Valider les inversions de pile par sonde
+  RGB (pixel du plan : (229,57,53) → (61,126,255)), pas par le diff gris.
+- **Égalité de rang = ordre du document** : le tri stable par rang de calque
+  ne change RIEN quand tous les rangs sont à 0 — c'est ce qui garantit que
+  les documents pré-G2 (et les hashes gui-smoke/refdiff existants) rendent
+  bit-identique. Toute future clé de tri au rendu doit garder cette
+  propriété « défaut = comportement historique ».
+- **Miroir X au niveau caméra = gratuit partout** : en le posant dans les
+  DEUX fonctions de mapping de Camera2d (worldToScreen/screenToWorld) +
+  panPixels, picking, snaps, zoomAt et rubber band marchent sans une ligne
+  de plus — et la sérigraphie bottom (stockée en miroir dans le Gerber) se
+  lit à l'endroit, comme dans un vrai viewer CAM. Seul drawGrid a demandé
+  une normalisation min/max de la fenêtre monde.
