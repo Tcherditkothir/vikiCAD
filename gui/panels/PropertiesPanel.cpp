@@ -16,6 +16,7 @@
 
 #include "doc/Annotations.h"
 #include "doc/Entities.h"
+#include "doc/RectProfile.h"
 #include "solid/SolidEntity.h"
 
 namespace viki {
@@ -118,6 +119,7 @@ void PropertiesPanel::rebuildGeometryTable()
     m_featureParams.clear();
     m_featureRowStart = -1;
     m_originRowStart = -1;
+    m_rectRowStart = -1;
     if (m_selection && m_selection->size() == 1 && m_doc) {
         const Entity* e = m_doc->entity(m_selection->ids().front());
         if (e) {
@@ -199,6 +201,21 @@ void PropertiesPanel::rebuildGeometryTable()
                                .arg(layer->gerberRole, layer->name),
                            false);
             }
+            // Rectangle inspector (usage fix 2026-07-23): a closed 4-vertex
+            // square-cornered polyline (any orientation) edits as Length x
+            // Height — the natural dimensions instead of raw vertex arrays.
+            // Anchor/axis conventions: core/doc/RectProfile.h.
+            if (const auto* pl = dynamic_cast<const PolylineEntity*>(e)) {
+                if (const auto rect = rectProfileOf(*pl)) {
+                    m_rectRowStart = row;
+                    addRow(QStringLiteral("rectangle length"),
+                           QString::number(rect->length(), 'f', 4), true);
+                    addRow(QStringLiteral("rectangle height"),
+                           QString::number(rect->height(), 'f', 4), true);
+                    addRow(QStringLiteral("rectangle area"),
+                           QString::number(rect->area(), 'f', 4), false);
+                }
+            }
             for (auto it = geom.begin(); it != geom.end(); ++it) {
                 if (it.key() == QLatin1String("brep"))
                     continue; // huge base64 BREP blob — not human-editable
@@ -271,6 +288,11 @@ void PropertiesPanel::geometryCellChanged(int row, int column)
     if (m_originRowStart >= 0 && row >= m_originRowStart &&
         row < m_originRowStart + 3) {
         applyOriginEdit(row - m_originRowStart);
+        return;
+    }
+    if (m_rectRowStart >= 0 && row >= m_rectRowStart &&
+        row < m_rectRowStart + 2) { // length/height only; area is read-only
+        applyRectEdit(row - m_rectRowStart);
         return;
     }
     const EntityId id = m_selection->ids().front();
@@ -482,6 +504,64 @@ void PropertiesPanel::applyOriginEdit(int axis)
         return;
     }
     emit propertiesApplied();
+    rebuildGeometryTable();
+}
+
+// One rectangle-dimension edit: rebuild the polyline's vertices for the new
+// Length x Height (anchor + own axes preserved — a rotated rectangle stays
+// rotated) inside a journaled transaction. Undo restores the old vertices.
+void PropertiesPanel::applyRectEdit(int which)
+{
+    if (which < 0 || which > 1 || m_rectRowStart < 0)
+        return;
+    const QString label = which == 0 ? QStringLiteral("rectangle length")
+                                     : QStringLiteral("rectangle height");
+    const int row = m_rectRowStart + which;
+    const QString text = m_geomTable->item(row, 1)->text().trimmed();
+    bool numOk = false;
+    const double value = text.toDouble(&numOk);
+    if (!numOk || value <= 1e-9) {
+        emit feedback(QStringLiteral(
+                          "%1: \"%2\" is not a positive length — edit reverted")
+                          .arg(label, text));
+        rebuildGeometryTable(); // revert display
+        return;
+    }
+    const EntityId id = m_selection->ids().front();
+    const auto* probe = dynamic_cast<const PolylineEntity*>(m_doc->entity(id));
+    const auto rect = probe ? rectProfileOf(*probe) : std::nullopt;
+    if (!rect) {
+        emit feedback(QStringLiteral(
+            "rectangle edit ignored: the entity is no longer a rectangle"));
+        rebuildGeometryTable();
+        return;
+    }
+    const double newLength = which == 0 ? value : rect->length();
+    const double newHeight = which == 1 ? value : rect->height();
+
+    TransactionScope scope(*m_doc, QStringLiteral("RECT EDIT"));
+    bool applied = false;
+    QString error = QStringLiteral("edit rejected");
+    try {
+        if (Entity* e = m_doc->beginModify(id)) {
+            if (auto* pl = dynamic_cast<PolylineEntity*>(e))
+                applied = applyRectDims(*pl, newLength, newHeight);
+            m_doc->endModify(id);
+        }
+        if (applied)
+            scope.commit();
+        else
+            scope.rollback();
+    } catch (const std::exception& ex) {
+        scope.rollback();
+        applied = false;
+        error = QString::fromUtf8(ex.what());
+    }
+    if (applied)
+        emit propertiesApplied();
+    else
+        emit feedback(
+            QStringLiteral("%1 = %2: %3").arg(label).arg(value).arg(error));
     rebuildGeometryTable();
 }
 

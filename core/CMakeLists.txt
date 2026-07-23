@@ -14,6 +14,7 @@ add_library(vikicore STATIC
     doc/Document.cpp
     doc/GerberRole.cpp
     doc/EntitiesEx.cpp
+    doc/RectProfile.cpp
     doc/Annotations.cpp
     doc/Block.cpp
     doc/ArrayEntity.cpp

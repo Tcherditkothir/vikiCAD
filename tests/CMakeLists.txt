@@ -14,6 +14,7 @@ add_executable(vikicad-tests
     test_gear.cpp
     test_m2_commands.cpp
     test_cmd_ergonomics.cpp
+    test_rect_profile.cpp
     test_snap.cpp
     test_editops.cpp
     test_annotations.cpp

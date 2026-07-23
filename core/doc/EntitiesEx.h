@@ -30,6 +30,10 @@ public:
     void moveGrip(int index, const Vec2d& to) override;
 
     const std::vector<PolyVertex>& vertices() const { return m_vertices; }
+    // Wholesale vertex replacement (rectangle Length/Height editing). Must
+    // run inside a Document beginModify/endModify pair so the spatial index
+    // and the undo journal see the change.
+    void setVertices(std::vector<PolyVertex> vertices) { m_vertices = std::move(vertices); }
     bool isClosed() const { return m_closed; }
     // Stroke width in mm (0 = thin/cosmetic, the historic behaviour). Wide
     // polylines render with round caps/joins — Gerber round-aperture traces.

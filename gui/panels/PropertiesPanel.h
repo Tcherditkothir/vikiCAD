@@ -45,6 +45,7 @@ private:
     void geometryCellChanged(int row, int column);
     void applyFeatureEdit(int paramIndex);
     void applyOriginEdit(int axis); // 0=x 1=y 2=z — translates the solid
+    void applyRectEdit(int which);  // 0=length 1=height — resizes the rectangle
 
 public:
     // Scroll to and highlight the parameter rows of one feature node (the
@@ -69,6 +70,9 @@ private:
     // "origin x/y/z" rows for a solid (its bounding-box corner). Editing one
     // TRANSLATES the solid so the corner lands on the typed coordinate.
     int m_originRowStart = -1;
+    // "rectangle length/height" rows for a closed 4-vertex square-cornered
+    // polyline (see core/doc/RectProfile.h). -1 = no rectangle rows.
+    int m_rectRowStart = -1;
 };
 
 } // namespace viki
