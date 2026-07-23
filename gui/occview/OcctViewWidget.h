@@ -195,6 +195,9 @@ private:
     // syncHighlight must not replace it with a whole-solid highlight (that
     // was why "clicking the hole selected the solid").
     bool m_keepPickHighlight = false;
+    // Last height typed in the right-click "Extrude…" dialog (mm) — the
+    // dialog's default next time, AutoCAD-style sticky value.
+    double m_lastExtrudeHeight = 10.0;
 
     // Transient ghost of the active command's pending result.
     Handle(AIS_InteractiveObject) m_ghost;

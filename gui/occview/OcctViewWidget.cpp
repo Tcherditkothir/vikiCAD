@@ -1223,6 +1223,22 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         fe = edgeMenu->addAction(QStringLiteral("Fillet…"));
         ce = edgeMenu->addAction(QStringLiteral("Chamfer…"));
     }
+    // A closed extrudable profile under the cursor (sketch curve, circle,
+    // closed polyline — the SAME criterion the EXTRUDE command applies:
+    // wiresFromEntities on the entity's sketch plane) offers Extrude right
+    // here, BEFORE Move (Lex 2026-07-23: "le menu n'offre pas Extrude").
+    QAction* extrudeAct = nullptr;
+    if (m_doc && m_pickedSolid != kInvalidEntityId) {
+        const Entity* profileEnt = m_doc->entity(m_pickedSolid);
+        if (profileEnt && !dynamic_cast<const SolidEntity*>(profileEnt)) {
+            WorkPlane plane = documentWorkplane(*m_doc);
+            if (const int64_t sk = m_doc->entitySketch(m_pickedSolid))
+                if (const SketchInfo* info = m_doc->sketchById(sk))
+                    plane = info->plane;
+            if (solidops::wiresFromEntities(*m_doc, {m_pickedSolid}, plane).ok)
+                extrudeAct = menu.addAction(QStringLiteral("Extrude…"));
+        }
+    }
     QMenu* moveMenu = menu.addMenu(QStringLiteral("Move ▸"));
     QAction* mvNum = moveMenu->addAction(QStringLiteral("Move solid… (dx, dy, dz)"));
     QAction* mvPts = moveMenu->addAction(QStringLiteral("Move by two points"));
@@ -1262,6 +1278,30 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         return;
     }
     bool ok = false;
+    if (extrudeAct && chosen == extrudeAct) {
+        const double h = QInputDialog::getDouble(
+            this, QStringLiteral("Extrude"),
+            QStringLiteral("Height (mm, + along the plane normal):"),
+            m_lastExtrudeHeight, -1.0e6, 1.0e6, 3, &ok);
+        if (!ok)
+            return; // user cancelled
+        if (std::fabs(h) < 1e-9) {
+            emit feedback(QStringLiteral("extrude: height 0 — nothing to do"));
+            return;
+        }
+        m_lastExtrudeHeight = h;
+        // Put the profile in the selection and let the ONE CommandProcessor
+        // do the rest: EXTRUDE consumes it (pickfirst) and waits at its
+        // Mode [New/Join/Cut/Symmetric] <New> prompt — the blue/red ghost
+        // previews the prism there; Enter (or right-click → the options
+        // menu) commits, default New.
+        if (m_selection) {
+            m_selection->clear();
+            m_selection->add(m_pickedSolid);
+        }
+        emit commandRequested(QStringLiteral("EXTRUDE %1").arg(h));
+        return;
+    }
     if (holeNode >= 0 && chosen == mvHole && tree) {
         const Vec2d cur = tree->nodeAt(holeNode).holeCenter;
         const QString text = QInputDialog::getText(
