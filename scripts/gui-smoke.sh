@@ -614,6 +614,48 @@ assert_eq "newproj: no solids left" 0 "$(wc -w <<<"$(solid_ids)")"
 gexec "newproj: UNDO rect" "UNDO"
 assert_eq "newproj: document empty again" 0 "$(count)"
 
+# --- sketch-on-face phase: pick a solid face -> FaceSketch -> extrude --------
+# The right-click "sketch on this face" flow (beginSketchOnFace) had NO
+# automated coverage (verifier finding): drive it through its IPC twins
+# pick3d + sketchface. Box RECT 0,0 40,30 + EXTRUDE 10 -> top face at Z=10;
+# viewdir TOP FitAlls, so the view-centre pick lands on that face. The face
+# frame maps sketch (u,v) to world (X,Y) at Z=10, so CIRCLE 20,15 r5 +
+# EXTRUDE 5 must build the cylinder at bbox (15,10,10)-(25,20,15), volume
+# pi*5^2*5 = 392.699 mm3 — all derived by hand.
+gexec "face: WORKPLANE XY" "WORKPLANE XY"
+gexec "face: RECT base profile" "RECT 0,0 40,30"
+face_rect_id="$(max_id)"
+gexec "face: EXTRUDE 10 base box" "EXTRUDE 10 $face_rect_id"
+assert_eq "face: one solid (the box)" 1 "$(wc -w <<<"$(solid_ids)")"
+
+out="$(rpc view3d on)"
+assert_eq "face: 3D view on" True "$(jget "$out" "d['result'].get('is3d')")"
+rpc viewdir TOP >/dev/null
+out="$(rpc pick3d)"
+assert_eq "face: centre pick lands on a face" True \
+    "$(jget "$out" "'face' in d['result'].get('picked','')")"
+out="$(rpc sketchface)"
+assert_eq "face: sketchface accepted" True "$(jget "$out" "d['result'].get('ok')")"
+out="$(rpc exec "SKETCH LIST")"
+assert_eq "face: a FaceSketch is open" True \
+    "$(jget "$out" "any('FaceSketch' in m for m in d['result'].get('messages',[]))")"
+
+count_before_fcircle="$(count)"
+gexec "face: CIRCLE on the face" "CIRCLE 20,15 5"
+face_circle_id="$(max_id)"
+assert_eq "face: circle added in the sketch" \
+    "$((count_before_fcircle + 1))" "$(count)"
+gexec "face: SKETCH CLOSE (= Finish)" "SKETCH CLOSE"
+gexec "face: EXTRUDE 5 the profile" "EXTRUDE 5 $face_circle_id"
+assert_eq "face: two solids now" 2 "$(wc -w <<<"$(solid_ids)")"
+desc_json="$(rpc query describe)"
+# The cylinder is the only small solid (box = 12000 mm3, cylinder ~392.7).
+cyl_pick="[s for s in d['result']['describe']['solids'] if s['volume'] < 1000]"
+assert_eq "face: cylinder volume pi*125" True "$(jget "$desc_json" \
+    "(lambda ss: len(ss) == 1 and abs(ss[0]['volume'] - 392.6990816987) < 1e-4)($cyl_pick)")"
+assert_eq "face: cylinder bbox (15,10,10)-(25,20,15)" True "$(jget "$desc_json" \
+    "(lambda b: all(abs(b['min'][i]-lo) < 1e-6 and abs(b['max'][i]-hi) < 1e-6 for i,lo,hi in ((0,15,25),(1,10,20),(2,10,15))))($cyl_pick[0]['bbox'])")"
+
 # --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
 # Opens the fab-output directory headless through the IPC "open" verb (one
 # layer per file, ONE transaction), checks the layer list, proves the render
