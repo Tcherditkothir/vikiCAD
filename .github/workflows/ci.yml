@@ -8,18 +8,27 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # VikiCAD targets the OCCT/Qt shipped by Ubuntu 26.04 (OCCT 7.9, Qt 6.10)
+    # — the development machine's release. GitHub's hosted runners are stuck
+    # on 24.04 whose OCCT 7.6 predates APIs we use (AIS_SelectionScheme,
+    # SelectRectangle...), so the job runs inside a 26.04 container to build
+    # against the same archive as the real target.
+    container: ubuntu:26.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build \
+          apt-get update
+          apt-get install -y git build-essential cmake ninja-build \
             qt6-base-dev \
             libocct-foundation-dev libocct-modeling-algorithms-dev \
             libocct-modeling-data-dev libocct-data-exchange-dev \
             libocct-visualization-dev libocct-ocaf-dev \
-            catch2 libzstd-dev libsqlite3-dev
+            catch2 libzstd-dev libsqlite3-dev \
+            fontconfig fonts-dejavu-core
+
+      - uses: actions/checkout@v5
 
       - name: Configure
         run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -28,4 +37,8 @@ jobs:
         run: cmake --build build/ci -j"$(nproc)"
 
       - name: Run tests
-        run: ./build/ci/tests/vikicad-tests
+        env:
+          # No display server in the container; Qt font metrics still work
+          # through fontconfig + the DejaVu fonts installed above.
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build/ci --output-on-failure
