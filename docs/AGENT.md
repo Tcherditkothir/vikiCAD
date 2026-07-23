@@ -115,8 +115,21 @@ Commands are state machines fed by whitespace-separated tokens. The rules:
    line was swallowed as the terminating keyword and the REST of that line
    silently dropped — an empty document with ok:true.)
 
+7. **Unique prefixes resolve; ambiguous ones refuse.** Typed text that is a
+   unique prefix of exactly one command runs it (`REC 0,0 10,10` = RECT —
+   verified through `--exec`, `connect exec` and the GUI bar alike). An
+   ambiguous prefix (`R ...`) runs NOTHING and the error lists the
+   candidates (`ambiguous command R — matches RECT, REDO, REVOLVE, ROTATE,
+   ROTATE3D`). Exact names and registered aliases always win over prefix
+   matching (`EXT` is EXTRUDE's alias even though EXTEND also starts EX).
+8. **RECT has a Dimensions mode** (AutoCAD RECTANG semantics): `D` (or
+   `DIMENSIONS`) at either corner prompt asks `Length:` then `Height:`
+   (signed — negative grows to the other side), then `First corner:` when
+   none was given yet. All equivalent (verified):
+   `RECT D 30 20 5,5`, `RECT 5,5 D 30 20`, and `RECT 5,5 35,25`.
+
 Useful command vocabulary (aliases in parentheses): 2D drawing
-`LINE (L) CIRCLE (C) ARC (A) RECT PLINE (PL) ELLIPSE (EL) SPLINE (SPL)`,
+`LINE (L) CIRCLE (C) ARC (A) RECT (REC) PLINE (PL) ELLIPSE (EL) SPLINE (SPL)`,
 editing `MOVE (M) COPY (CO) ROTATE (RO) MIRROR (MI) SCALE (SC) ERASE (E)
 TRIM (TR) OFFSET (O) FILLET (F) UNDO (U) REDO`, 3D
 `WORKPLANE (WP) EXTRUDE (EXT) REVOLVE (REV) UNION SUBTRACT (SUB)

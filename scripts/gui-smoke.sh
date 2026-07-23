@@ -16,6 +16,10 @@
 #        renders VERTICAL (RIGHT face-on vs TOP edge-on hashes differ,
 #        RIGHT re-render stable) -> EXTRUDE 25 (volume/bbox exact) -> full
 #        UNDO back to an empty document.
+#   Sketch ergonomics: REC prefix alias -> RECT; ambiguous R refused with
+#        candidates; RECT Dimensions mode (vertices by hand); SELECT ->
+#        Properties rectangle Length/Height rows via query ui; profile +
+#        EXTRUDE 10 -> exact volume; full UNDO.
 #   Gerber kit (real S5M0PCBA, SKIPs when absent): IPC open of the fab
 #        directory -> layer list, stable non-empty render, one UNDO
 #        empties the document, REDO restores it (screenshot diffs);
@@ -655,6 +659,61 @@ assert_eq "face: cylinder volume pi*125" True "$(jget "$desc_json" \
     "(lambda ss: len(ss) == 1 and abs(ss[0]['volume'] - 392.6990816987) < 1e-4)($cyl_pick)")"
 assert_eq "face: cylinder bbox (15,10,10)-(25,20,15)" True "$(jget "$desc_json" \
     "(lambda b: all(abs(b['min'][i]-lo) < 1e-6 and abs(b['max'][i]-hi) < 1e-6 for i,lo,hi in ((0,15,25),(1,10,20),(2,10,15))))($cyl_pick[0]['bbox'])")"
+
+# --- Sketch-ergonomics phase (usage fixes 2026-07-23) ------------------------
+# (1) 'REC' runs RECT through the CommandProcessor's unique-prefix/alias
+#     resolution (the same path as the GUI command bar and the CLI); a bare
+#     ambiguous 'R ...' is REFUSED, names the candidates, and touches nothing.
+# (2) RECT Dimensions mode headless: RECT D 25 15 400,40 -> vertices by hand.
+# (3) SELECT + query ui: the Properties panel exposes editable rectangle
+#     Length/Height rows (the edit itself is a QTableWidget cell edit — no
+#     command channel — covered by test_rect_profile.cpp unit tests).
+# (4) Closed profile + EXTRUDE 10 -> exact volume/bbox: the very line the 3D
+#     right-click "Extrude…" submits through commandRequested.
+ergo_count0="$(count)"
+ergo_solids0="$(wc -w <<<"$(solid_ids)")"
+# The face phase left the FACE work plane active (Z=10): pin XY so the
+# extrusion bbox below is the hand-derived one.
+gexec "ergo: WORKPLANE XY" "WORKPLANE XY"
+gexec "ergo: REC prefix runs RECT" "REC 400,0 430,20"
+assert_eq "ergo: REC created one entity" "$((ergo_count0 + 1))" "$(count)"
+ergo_rec_id="$(max_id)"
+
+out="$(rpc exec "R 400,0 430,20")"
+assert_eq "ergo: ambiguous R refused" False "$(jget "$out" "d.get('ok')")"
+assert_eq "ergo: refusal names the candidates" True "$(jget "$out" \
+    "'ambiguous' in d['error']['message'] and 'RECT' in d['error']['message'] and 'ROTATE' in d['error']['message']")"
+assert_eq "ergo: refusal launched nothing" "$((ergo_count0 + 1))" "$(count)"
+
+gexec "ergo: RECT Dimensions headless" "RECT D 25 15 400,40"
+ergo_drect_id="$(max_id)"
+assert_eq "ergo: D-rect vertices by hand" True "$(jget "$(rpc query entities)" \
+    "(lambda e: e['geom']['closed'] and e['geom']['vertices'] == [[400,40],[425,40],[425,55],[400,55]])([x for x in d['result']['entities'] if x['id']==$ergo_drect_id][0])")"
+
+gexec "ergo: SELECT the D-rect" "SELECT $ergo_drect_id"
+ui_json="$(rpc query ui)"
+assert_eq "ergo: panel row rectangle length 25" True \
+    "$(jget "$ui_json" "['rectangle length', '25.0000'] in d['result']['propRows']")"
+assert_eq "ergo: panel row rectangle height 15" True \
+    "$(jget "$ui_json" "['rectangle height', '15.0000'] in d['result']['propRows']")"
+assert_eq "ergo: panel row rectangle area 375" True \
+    "$(jget "$ui_json" "['rectangle area', '375.0000'] in d['result']['propRows']")"
+gexec "ergo: clear selection (pickfirst!)" "SELECT"
+
+gexec "ergo: EXTRUDE 10 the REC profile" "EXTRUDE 10 $ergo_rec_id"
+desc_json="$(rpc query describe)"
+ergo_pick="[s for s in d['result']['describe']['solids'] if abs(s['volume'] - 6000.0) < 1e-6]"
+assert_eq "ergo: prism volume 30*20*10 = 6000" True "$(jget "$desc_json" \
+    "len($ergo_pick) == 1")"
+assert_eq "ergo: prism bbox (400,0,0)-(430,20,10)" True "$(jget "$desc_json" \
+    "(lambda b: all(abs(b['min'][i]-lo) < 1e-6 and abs(b['max'][i]-hi) < 1e-6 for i,lo,hi in ((0,400,430),(1,0,20),(2,0,10))))($ergo_pick[0]['bbox'])")"
+
+gexec "ergo: UNDO extrude" "UNDO"
+gexec "ergo: UNDO D-rect" "UNDO"
+gexec "ergo: UNDO REC rect" "UNDO"
+assert_eq "ergo: back to the pre-phase count" "$ergo_count0" "$(count)"
+assert_eq "ergo: back to the pre-phase solids" "$ergo_solids0" \
+    "$(wc -w <<<"$(solid_ids)")"
 
 # --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
 # Opens the fab-output directory headless through the IPC "open" verb (one
