@@ -129,7 +129,7 @@ TEST_CASE("rectangle edit: anchor away from vertex 0 (negative quadrant)",
           "[rectprofile]")
 {
     // Closest vertex to the origin is index 2 = (-10,-5): |.|^2 = 125 vs
-    // 1300 / 500 / 724 for the others.
+    // 1300 / 500 / 925 for the others.
     auto pl = makePoly({{-30, -20}, {-10, -20}, {-10, -5}, {-30, -5}});
     const auto r = rectProfileOf(pl);
     REQUIRE(r.has_value());
