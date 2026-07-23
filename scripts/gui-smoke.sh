@@ -12,6 +12,10 @@
 #        bbox/features) ; viewdir ISO/TOP -> renders differ (camera moved) ;
 #        SPLIT XY -> 2 solids ; COMBINE -> 1 ;
 #        export STL -> non-empty + header/size check.
+#   New project: blank doc -> WORKPLANE YZ -> SKETCH -> RECT -> the sketch
+#        renders VERTICAL (RIGHT face-on vs TOP edge-on hashes differ,
+#        RIGHT re-render stable) -> EXTRUDE 25 (volume/bbox exact) -> full
+#        UNDO back to an empty document.
 #   Gerber kit (real S5M0PCBA, SKIPs when absent): IPC open of the fab
 #        directory -> layer list, stable non-empty render, one UNDO
 #        empties the document, REDO restores it (screenshot diffs);
@@ -562,6 +566,53 @@ if grep -q "ENTITIES" "$TMP/smoke.dxf" 2>/dev/null; then
 else
   record FAIL "export: DXF has ENTITIES" "no"
 fi
+
+# --- new-project phase: blank doc -> WORKPLANE YZ -> sketch -> extrude --------
+# "The starting point of every new project": a FRESH document, a world
+# vertical plane (YZ — the RIGHT view reads it upright), a rectangle sketched
+# on it, EXTRUDE along the +X normal. The rectangle must be VERTICAL: the
+# RIGHT and TOP renders of the same sketch differ (face-on vs edge-on) while
+# re-rendering RIGHT is hash-stable. Volume/bbox by hand: RECT 0,0 40,30 on
+# YZ maps u->Y 0..40, v->Z 0..30; EXTRUDE 25 along +X -> X 0..25,
+# volume = 40*30*25 = 30000 mm3.
+"$CLI" new --save-as "$TMP/blank.vkd" >/dev/null 2>&1
+out="$(rpc open "$TMP/blank.vkd")"
+assert_eq "newproj: open blank document" True "$(jget "$out" "d['result'].get('ok')")"
+assert_eq "newproj: document empty" 0 "$(count)"
+
+gexec "newproj: WORKPLANE YZ" "WORKPLANE YZ"
+gexec "newproj: SKETCH NEW Start-1" "SKETCH NEW Start-1"
+gexec "newproj: RECT on the YZ plane" "RECT 0,0 40,30"
+np_rect_id="$(max_id)"
+gexec "newproj: SKETCH CLOSE" "SKETCH CLOSE"
+
+out="$(rpc view3d on)"
+assert_eq "newproj: 3D view on" True "$(jget "$out" "d['result'].get('is3d')")"
+rpc viewdir RIGHT >/dev/null
+shot "newproj: screenshot RIGHT (face-on)" "$TMP/np_right.png"
+rpc viewdir TOP >/dev/null
+shot "newproj: screenshot TOP (edge-on)" "$TMP/np_top.png"
+assert_ge "newproj: rectangle is vertical (RIGHT != TOP)" \
+    "$(img_hash_dist "$TMP/np_right.png" "$TMP/np_top.png")" "$((SAME_HASH_MAX + 1))"
+rpc viewdir RIGHT >/dev/null
+shot "newproj: screenshot RIGHT again" "$TMP/np_right2.png"
+assert_le "newproj: RIGHT render stable" \
+    "$(img_hash_dist "$TMP/np_right.png" "$TMP/np_right2.png")" "$SAME_HASH_MAX"
+
+gexec "newproj: EXTRUDE 25 along +X" "EXTRUDE 25 $np_rect_id"
+assert_eq "newproj: one solid" 1 "$(wc -w <<<"$(solid_ids)")"
+desc_json="$(rpc query describe)"
+assert_eq "newproj: volume exactly 30000" True "$(jget "$desc_json" \
+    "abs(d['result']['describe']['solids'][0]['volume'] - 30000.0) < 1e-6")"
+assert_eq "newproj: bbox (0,0,0)-(25,40,30)" True "$(jget "$desc_json" \
+    "(lambda b: all(abs(b['min'][i]-lo) < 1e-6 and abs(b['max'][i]-hi) < 1e-6 for i,lo,hi in ((0,0,25),(1,0,40),(2,0,30))))(d['result']['describe']['solids'][0]['bbox'])")"
+
+# Full unwind: UNDO extrude (profile survives, tagged) then UNDO the rect.
+gexec "newproj: UNDO extrude" "UNDO"
+assert_eq "newproj: solid gone, profile kept" 1 "$(count)"
+assert_eq "newproj: no solids left" 0 "$(wc -w <<<"$(solid_ids)")"
+gexec "newproj: UNDO rect" "UNDO"
+assert_eq "newproj: document empty again" 0 "$(count)"
 
 # --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
 # Opens the fab-output directory headless through the IPC "open" verb (one

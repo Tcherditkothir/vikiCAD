@@ -116,6 +116,57 @@ INTERSECT (INT) HOLE (HO) SHELL (SH) SPLIT COMBINE SWEEP (SW) LOFT (LO)
 FILLET3D (F3D) CHAMFER3D (CH3D) MOVE3D (M3) ROTATE3D (RO3)`, and the
 index-addressed set in §3.
 
+### 2a. Starting a blank 3D project: WORKPLANE plane → SKETCH → draw → EXTRUDE
+
+`WORKPLANE XY|XZ|YZ [OFFSET d]` sets a **world-aligned** sketch plane — the
+entry point of every from-scratch part. The frames are deterministic and
+match the standard views (§5a): a sketch on XY reads upright in the TOP
+view, XZ in FRONT, YZ in RIGHT. `OFFSET d` shifts the plane `d` mm along
+its normal. Mapping of a sketch point `(a,b)` to world coordinates:
+
+| plane | u axis | v axis | normal | `(a,b)` + OFFSET d → world |
+|-------|--------|--------|--------|-----------------------------|
+| `XY`  | +X     | +Y     | +Z     | `(a, b, d)`                 |
+| `XZ`  | +X     | +Z     | −Y     | `(a, −d, b)`                |
+| `YZ`  | +Y     | +Z     | +X     | `(d, a, b)`                 |
+
+Back-compat: bare `WORKPLANE` = XY at Z=0; `WORKPLANE OFFSET d` = XY at
+Z=d. EXTRUDE height runs along the plane **normal** (XZ grows toward −Y,
+the FRONT viewer).
+
+A 40×30 face profile on the front plane, extruded 25 mm (executed):
+
+```sh
+$CLI new --exec "WORKPLANE XZ" --exec "SKETCH NEW Front-1" \
+         --exec "RECT 0,0 40,30" --exec "SKETCH CLOSE" \
+         --exec "EXTRUDE 25 1" --exec "DESCRIBE" --save-as bracket.vkd
+#   messages: ["work plane: XZ (front) at Y=0",
+#     "sketch 'Front-1' opened (id 1) — ...",
+#     "sketch 'Front-1' closed (work plane kept)",
+#     "solid 2 created (height 25)",
+#     "solid 2: volume=30000.0 mm3 area=5900.0 mm2
+#      bbox=(0.0,-25.0,0.0)-(40.0,0.0,30.0) centroid=(20.0,-12.5,15.0)", ...]
+# RECT u=0..40 -> X 0..40, v=0..30 -> Z 0..30, EXTRUDE 25 along -Y -> Y -25..0.
+```
+
+A d=20 disc on the right plane offset to X=40 (executed):
+
+```sh
+$CLI new --exec "WORKPLANE YZ OFFSET 40" --exec "SKETCH NEW Rib-1" \
+         --exec "CIRCLE 20,15 10" --exec "SKETCH CLOSE" \
+         --exec "EXTRUDE 5 1" --exec "DESCRIBE" --save-as rib.vkd
+#   messages: ["work plane: YZ (right) at X=40", ...,
+#     "solid 2: volume=1570.8 mm3 area=942.5 mm2
+#      bbox=(40.0,10.0,5.0)-(45.0,30.0,25.0) centroid=(42.5,20.0,15.0)",
+#     "sketch 1 'Rib-1': origin=(40.0,0.0,0.0) normal=(1.0,0.0,0.0) entities=1"]
+# CIRCLE (20,15) r=10 -> centre Y=20 Z=15; EXTRUDE 5 along +X -> X 40..45.
+```
+
+Sketch names must be **one token** (the tokenizer splits on spaces). In the
+GUI the same flow is Solids → New sketch → Top/Front/Right (or right-click
+empty space in the 3D view); it auto-creates `PlaneSketch-N` through the
+same commands.
+
 ---
 
 ## 3. Sub-shape addressing: INSPECT indices + the parity commands

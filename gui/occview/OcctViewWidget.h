@@ -85,6 +85,9 @@ signals:
     void pushPullFace(EntityId solid, double distance);
     // Right-click "Sketch on this face": set the work plane to the picked face.
     void sketchOnFace();
+    // Right-click "New sketch ▸ Top/Front/Right": start a sketch on a world
+    // plane ("XY", "XZ" or "YZ") — the entry point of a blank document.
+    void sketchOnPlane(const QString& plane);
     // Right-click actions on the Ctrl-accumulated sub-shape selection (the
     // shapes are read back via pickedEdges()/pickedFaces()).
     void filletSelectedEdges(EntityId solid, double radius);

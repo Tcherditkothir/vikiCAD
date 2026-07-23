@@ -259,6 +259,34 @@ MainWindow::MainWindow()
         onCommandEntered(command);
     };
     buildToolMenus(this, runCommand);
+    // "New sketch": THE entry point of a blank 3D project — pick a world
+    // plane (Top/Front/Right, named after the standard view that reads the
+    // sketch upright), draw the profile on the 2D canvas, ✓ Finish, EXTRUDE.
+    // Lives at the top of the Solids menu (the home of the 3D tools); the 3D
+    // right-click menu offers the same planes on empty space.
+    for (QAction* menuAct : menuBar()->actions()) {
+        QMenu* solidsMenu = menuAct->menu();
+        if (!solidsMenu ||
+            solidsMenu->title() != QLatin1String("Solids"))
+            continue;
+        auto* sketchMenu = new QMenu(QStringLiteral("New sketch"), solidsMenu);
+        sketchMenu->addAction(QStringLiteral("Top (XY)"), this, [this] {
+            beginSketchOnPlane(QStringLiteral("XY"));
+        });
+        sketchMenu->addAction(QStringLiteral("Front (XZ)"), this, [this] {
+            beginSketchOnPlane(QStringLiteral("XZ"));
+        });
+        sketchMenu->addAction(QStringLiteral("Right (YZ)"), this, [this] {
+            beginSketchOnPlane(QStringLiteral("YZ"));
+        });
+        sketchMenu->addSeparator();
+        sketchMenu->addAction(QStringLiteral("Offset plane..."), this,
+                              &MainWindow::newSketchOffsetDialog);
+        QAction* first = solidsMenu->actions().value(0, nullptr);
+        solidsMenu->insertMenu(first, sketchMenu);
+        solidsMenu->insertSeparator(first);
+        break;
+    }
     m_toolTabs = buildToolTabs(this, runCommand);
     // Pin an EXPLICIT arrow cursor on the button areas: cursor inheritance
     // near the native GL view occasionally left the pointer invisible over
@@ -575,6 +603,8 @@ void MainWindow::toggle3D(bool on)
                     });
             connect(m_occtView, &OcctViewWidget::sketchOnFace, this,
                     &MainWindow::beginSketchOnFace);
+            connect(m_occtView, &OcctViewWidget::sketchOnPlane, this,
+                    [this](const QString& plane) { beginSketchOnPlane(plane); });
             // Refused context-menu actions explain themselves in the history.
             connect(m_occtView, &OcctViewWidget::feedback, this,
                     [this](const QString& msg) {
@@ -1335,8 +1365,11 @@ void MainWindow::updateSketchStatus()
              : QString());
     if (m_finishSketchBtn)
         m_finishSketchBtn->setVisible(info != nullptr);
-    if (!info)
+    if (!info) {
         m_sketchFrom3d = false; // closed some other way — drop the flag
+        if (m_canvas)
+            m_canvas->setSketchIsolation(false); // show the whole document again
+    }
 }
 
 void MainWindow::updateWindowTitle()
@@ -1590,39 +1623,116 @@ void MainWindow::beginSketchOnFace()
     // Face sketches are always captured as first-class sketches: auto-create
     // one on the plane just set, with a generated unique name, through the
     // shared processor (so CLI/IPC see the exact same state).
-    {
-        if (m_processor->hasActiveCommand())
-            m_processor->cancelActive(); // the line below must start SKETCH
-        // ONE token only: a multi-word name was split by the tokenizer, so
-        // every face sketch ended up named "Sketch" and the SECOND one failed
-        // silently — no active sketch, no isolation, untagged entities (the
-        // "misalignment that would not die").
-        QString name = QStringLiteral("FaceSketch-%1")
-                           .arg(qlonglong(m_occtView->pickedSolid()));
-        for (int n = 2; m_doc->sketchByName(name); ++n)
-            name = QStringLiteral("FaceSketch-%1-%2")
-                       .arg(qlonglong(m_occtView->pickedSolid()))
-                       .arg(n);
-        const auto r = m_processor->submit(
-            QStringLiteral("SKETCH NEW %1").arg(name), /*strict=*/false);
-        if (!r.ok)
-            m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
-        refreshPromptAndMessages();
-        if (m_doc->activeSketch() == 0) {
-            // Never enter a half-broken sketch mode: bail out visibly.
-            m_canvas->clearSketchReference();
-            m_doc->clearExtraSnapPoints();
-            m_sketchFrom3d = false;
-            m_commandBar->appendHistory(QStringLiteral(
-                "! sketch on face ABORTED (could not open a sketch — see "
-                "the message above)"));
-            setView3D(true);
-            return;
-        }
+    if (!openAutoSketch(QStringLiteral("FaceSketch-%1")
+                            .arg(qlonglong(m_occtView->pickedSolid())))) {
+        // Never enter a half-broken sketch mode: bail out visibly.
+        m_canvas->clearSketchReference();
+        m_doc->clearExtraSnapPoints();
+        m_sketchFrom3d = false;
+        m_commandBar->appendHistory(QStringLiteral(
+            "! sketch on face ABORTED (could not open a sketch — see "
+            "the message above)"));
+        setView3D(true);
+        return;
     }
     m_commandBar->appendHistory(QStringLiteral(
         "Sketching on the face (blue dashed outline). Draw a closed profile, "
         "then EXTRUDE. SKETCH Close to finish; WORKPLANE XY resets."));
+}
+
+bool MainWindow::openAutoSketch(const QString& base)
+{
+    if (m_processor->hasActiveCommand())
+        m_processor->cancelActive(); // the line below must start SKETCH
+    // ONE token only: a multi-word name was split by the tokenizer, so every
+    // face sketch ended up named "Sketch" and the SECOND one failed silently
+    // — no active sketch, no isolation, untagged entities (the "misalignment
+    // that would not die").
+    QString name = base;
+    for (int n = 2; m_doc->sketchByName(name); ++n)
+        name = QStringLiteral("%1-%2").arg(base).arg(n);
+    const auto r = m_processor->submit(QStringLiteral("SKETCH NEW %1").arg(name),
+                                       /*strict=*/false);
+    if (!r.ok)
+        m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+    refreshPromptAndMessages();
+    return m_doc->activeSketch() != 0;
+}
+
+void MainWindow::beginSketchOnPlane(const QString& plane, double offset,
+                                    bool hasOffset)
+{
+    if (!m_doc)
+        return;
+    // ✓ Finish returns to 3D when the user started FROM the 3D view (the
+    // face-sketch convention); starting from the 2D canvas stays 2D (the
+    // hasSolids fallback on the Finish button still catches an extruded doc).
+    m_sketchFrom3d = m_occtView && m_viewStack &&
+                     m_viewStack->currentWidget() == m_occtView;
+    if (m_processor->hasActiveCommand())
+        m_processor->cancelActive(); // WORKPLANE below must start fresh
+    // Everything through the ONE processor (CLI/IPC parity — no duplicated
+    // plane math here). strict=true: WORKPLANE's optional [OFFSET] stage must
+    // terminate now, not linger as a pending GUI prompt.
+    const QString line =
+        hasOffset
+            ? QStringLiteral("WORKPLANE %1 OFFSET %2").arg(plane).arg(offset)
+            : QStringLiteral("WORKPLANE %1").arg(plane);
+    const auto r = m_processor->submit(line, /*strict=*/true);
+    refreshPromptAndMessages();
+    if (!r.ok) {
+        m_sketchFrom3d = false;
+        m_commandBar->appendHistory(QStringLiteral("! %1").arg(r.error));
+        return;
+    }
+    // A world plane has no face outline: drop any stale one; the isolation
+    // flag below keeps the canvas showing ONLY this sketch (same Fusion
+    // behaviour as sketch-on-face).
+    m_canvas->clearSketchReference();
+    setView3D(false); // draw the profile on the 2D canvas
+    QString name;
+    for (int n = 1;; ++n) {
+        name = QStringLiteral("PlaneSketch-%1").arg(n);
+        if (!m_doc->sketchByName(name))
+            break;
+    }
+    if (!openAutoSketch(name)) {
+        const bool backTo3d = m_sketchFrom3d;
+        m_sketchFrom3d = false;
+        m_commandBar->appendHistory(QStringLiteral(
+            "! new sketch ABORTED (could not open a sketch — see the "
+            "message above)"));
+        if (backTo3d)
+            setView3D(true);
+        return;
+    }
+    m_canvas->setSketchIsolation(true);
+    m_commandBar->appendHistory(QStringLiteral(
+        "Sketching on the %1 plane. Draw a closed profile, then EXTRUDE. "
+        "✓ Finish (or SKETCH Close) when done.")
+                                    .arg(plane));
+}
+
+void MainWindow::newSketchOffsetDialog()
+{
+    bool ok = false;
+    const QStringList planes{QStringLiteral("Top (XY)"),
+                             QStringLiteral("Front (XZ)"),
+                             QStringLiteral("Right (YZ)")};
+    const QString choice = QInputDialog::getItem(
+        this, QStringLiteral("New sketch on offset plane"),
+        QStringLiteral("Base plane:"), planes, 0, /*editable=*/false, &ok);
+    if (!ok)
+        return;
+    const double d = QInputDialog::getDouble(
+        this, QStringLiteral("New sketch on offset plane"),
+        QStringLiteral("Offset along the plane normal (mm):"), 0.0, -1.0e6,
+        1.0e6, 3, &ok);
+    if (!ok)
+        return;
+    // "Top (XY)" -> "XY"
+    const QString plane = choice.mid(choice.indexOf(QLatin1Char('(')) + 1, 2);
+    beginSketchOnPlane(plane, d, /*hasOffset=*/true);
 }
 
 void MainWindow::insertStepComponent()

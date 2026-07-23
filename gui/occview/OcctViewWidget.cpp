@@ -1162,8 +1162,24 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         const QPoint p = devicePos(mapFromGlobal(globalPos));
         pickAtPhysical(p.x(), p.y());
     }
-    if (m_pickedSolid == kInvalidEntityId)
+    // Empty space (fresh document, or a click past the model): the menu
+    // still offers the "start here" entry — a new sketch on a world plane
+    // (Top/Front/Right, named after the standard view that reads it upright).
+    if (m_pickedSolid == kInvalidEntityId) {
+        QMenu menu(this);
+        QMenu* planes = menu.addMenu(QStringLiteral("New sketch ▸"));
+        QAction* top = planes->addAction(QStringLiteral("Top (XY)"));
+        QAction* front = planes->addAction(QStringLiteral("Front (XZ)"));
+        QAction* right = planes->addAction(QStringLiteral("Right (YZ)"));
+        QAction* chosen = menu.exec(globalPos);
+        if (chosen == top)
+            emit sketchOnPlane(QStringLiteral("XY"));
+        else if (chosen == front)
+            emit sketchOnPlane(QStringLiteral("XZ"));
+        else if (chosen == right)
+            emit sketchOnPlane(QStringLiteral("YZ"));
         return;
+    }
     QMenu menu(this);
     // The picked face is a bore wall? Offer to edit THAT hole first — moving
     // the hole, not the solid, is what a click on a hole means.
@@ -1223,6 +1239,14 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         // Hovering a row lights up that exact sub-shape in the view.
         wireCandidatePreview(selMenu, candidates, candidateActs);
     }
+    // "New sketch ▸" on a world plane — the same entry as the empty-space
+    // menu, appended AFTER the contextual actions so existing habits keep
+    // their positions.
+    menu.addSeparator();
+    QMenu* planeMenu = menu.addMenu(QStringLiteral("New sketch ▸"));
+    QAction* planeTop = planeMenu->addAction(QStringLiteral("Top (XY)"));
+    QAction* planeFront = planeMenu->addAction(QStringLiteral("Front (XZ)"));
+    QAction* planeRight = planeMenu->addAction(QStringLiteral("Right (YZ)"));
     QAction* chosen = menu.exec(globalPos);
     for (size_t i = 0; i < candidateActs.size(); ++i)
         if (chosen == candidateActs[i]) {
@@ -1230,6 +1254,13 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
             return;
         }
     clearPreview(); // any other outcome: restore the committed highlight
+    if (chosen == planeTop || chosen == planeFront || chosen == planeRight) {
+        emit sketchOnPlane(chosen == planeTop
+                               ? QStringLiteral("XY")
+                               : chosen == planeFront ? QStringLiteral("XZ")
+                                                      : QStringLiteral("YZ"));
+        return;
+    }
     bool ok = false;
     if (holeNode >= 0 && chosen == mvHole && tree) {
         const Vec2d cur = tree->nodeAt(holeNode).holeCenter;

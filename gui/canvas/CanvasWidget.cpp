@@ -95,6 +95,14 @@ void CanvasWidget::setSketchReference(std::vector<std::vector<Vec2d>> loops)
     update();
 }
 
+void CanvasWidget::setSketchIsolation(bool on)
+{
+    if (m_sketchIsolate == on)
+        return;
+    m_sketchIsolate = on;
+    markDocumentDirty(); // the isolation filter lives in paintDocument
+}
+
 void CanvasWidget::drawGrid(QPainter& painter) const
 {
     const double pxPerMinor = m_gridSpacing * m_camera.scale();
@@ -226,12 +234,13 @@ void CanvasWidget::paintDocument(QPainter& painter)
         const Layer* layer = m_doc->layer(e->layerId());
         if (layer && !layer->visible)
             continue;
-        // While sketching on a face, ISOLATE the sketch context (Fusion
-        // behaviour): the canvas shows the face-plane coordinates (u,v), so
-        // model-space 2D entities live in a DIFFERENT plane — overlaying them
-        // looked like "the sketch is misaligned/rotated". Show only the blue
-        // face outline and the entities of the ACTIVE sketch.
-        if (!m_sketchRef.empty()) {
+        // While sketching on a face OR on a bare world plane, ISOLATE the
+        // sketch context (Fusion behaviour): the canvas shows the sketch
+        // plane's coordinates (u,v), so model-space 2D entities live in a
+        // DIFFERENT plane — overlaying them looked like "the sketch is
+        // misaligned/rotated". Show only the (optional) blue face outline and
+        // the entities of the ACTIVE sketch.
+        if (!m_sketchRef.empty() || m_sketchIsolate) {
             if (QLatin1String(e->typeName()) == QLatin1String("solid"))
                 continue;
             const int64_t active = m_doc->activeSketch();

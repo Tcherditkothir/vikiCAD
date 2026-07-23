@@ -79,6 +79,16 @@ private:
     void exportAs(const QString& kind); // "step" | "dxf" | "stl" | "obj"
     QString docBaseName() const; // file base name of the document, or "board"
     void beginSketchOnFace(); // set the work plane to the picked 3D face
+    // "New sketch" on a world-aligned plane (the start of a blank 3D
+    // project): runs WORKPLANE <XY|XZ|YZ> [OFFSET d] through the shared
+    // processor, switches to the 2D canvas and opens an auto-named sketch
+    // ("PlaneSketch-N"). Same isolation / ✓ Finish flow as face sketches.
+    void beginSketchOnPlane(const QString& plane, double offset = 0.0,
+                            bool hasOffset = false);
+    void newSketchOffsetDialog(); // small plane+distance dialog -> the above
+    // Shared tail of both sketch entries: SKETCH NEW <name> through the
+    // processor + the "never enter a half-broken sketch mode" bail-out.
+    bool openAutoSketch(const QString& name);
     void editEntity(EntityId id); // double-click editor (text)
     void adoptDocument(std::unique_ptr<Document> doc);
     void refreshPromptAndMessages();

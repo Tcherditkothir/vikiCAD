@@ -33,6 +33,10 @@ public:
     // Sketch-on-face reference outline (world 2D, in the sketch plane frame).
     void setSketchReference(std::vector<std::vector<Vec2d>> loops);
     void clearSketchReference() { m_sketchRef.clear(); update(); }
+    // Sketch isolation WITHOUT a face outline (sketch on a bare world plane):
+    // the canvas shows only the active sketch's entities, exactly like the
+    // face-sketch isolation. Dropped by MainWindow when the sketch closes.
+    void setSketchIsolation(bool on);
 
     // Overlay-free render of the committed document (no grid, no UCS icon,
     // no crosshair/snap/selection decorations): what the IPC screenshot verb
@@ -113,6 +117,7 @@ private:
     std::optional<SnapResult> m_activeSnap;
     Vec2d m_effectiveCursor;
     std::vector<std::vector<Vec2d>> m_sketchRef; // face outline while sketching
+    bool m_sketchIsolate = false; // plane sketch: isolate without an outline
 
     // Grip editing (selection, no active command).
     struct GripDrag {
