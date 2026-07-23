@@ -43,6 +43,19 @@ public:
     // All registered command names and aliases, sorted — for autocompletion.
     QStringList commandNames() const;
 
+    // Autocompletion rows: canonical names as-is, aliases as "REC → RECT"
+    // (the arrow teaches what the alias runs). Sorted.
+    QStringList completionEntries() const;
+
+    // Resolve typed text to a registered command key: exact name/alias
+    // first, then UNIQUE-prefix resolution over the whole registry (REC →
+    // RECT). Aliases of the SAME command don't make a prefix ambiguous
+    // (REC matches RECT and RECTANGLE — one command). Returns the canonical
+    // (uppercase) name, or an empty string with `errorOut` filled when the
+    // text is unknown or ambiguous (the candidates are listed so the user
+    // can type more letters — nothing is ever run on an ambiguous prefix).
+    QString resolveName(const QString& typed, QString* errorOut = nullptr) const;
+
     CommandContext& ctx() { return m_ctx; }
 
 private:
@@ -54,6 +67,7 @@ private:
 
     CommandContext& m_ctx;
     std::map<QString, CommandFactory> m_registry; // key: uppercase name/alias
+    std::map<QString, QString> m_canonical;       // key -> canonical name
     std::unique_ptr<Command> m_active;
     InputRequest m_currentRequest;
     QStringList m_pendingTokens;

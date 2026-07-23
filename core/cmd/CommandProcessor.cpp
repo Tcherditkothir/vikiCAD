@@ -10,9 +10,43 @@ CommandProcessor::CommandProcessor(CommandContext& ctx)
 void CommandProcessor::registerCommand(CommandFactory factory, const QStringList& aliases)
 {
     const auto probe = factory();
-    m_registry[QString::fromLatin1(probe->name()).toUpper()] = factory;
-    for (const QString& alias : aliases)
+    const QString canonical = QString::fromLatin1(probe->name()).toUpper();
+    m_registry[canonical] = factory;
+    m_canonical[canonical] = canonical;
+    for (const QString& alias : aliases) {
         m_registry[alias.toUpper()] = factory;
+        m_canonical[alias.toUpper()] = canonical;
+    }
+}
+
+QString CommandProcessor::resolveName(const QString& typed, QString* errorOut) const
+{
+    const QString name = typed.toUpper();
+    if (m_registry.count(name))
+        return m_canonical.at(name);
+    // Unique-prefix resolution: gather every key the text prefixes, deduped
+    // by CANONICAL name (RECT + RECTANGLE + REC are one command, so "RE C T"
+    // prefixes of any of them never conflict with each other).
+    QStringList candidates;
+    for (const auto& [key, canonical] : m_canonical) {
+        if (!key.startsWith(name))
+            continue;
+        if (!candidates.contains(canonical))
+            candidates.push_back(canonical);
+    }
+    if (candidates.size() == 1)
+        return candidates.front();
+    if (errorOut) {
+        if (candidates.isEmpty()) {
+            *errorOut = QStringLiteral("unknown command: %1").arg(name);
+        } else {
+            candidates.sort();
+            *errorOut = QStringLiteral(
+                            "ambiguous command %1 — matches %2 (type more letters)")
+                            .arg(name, candidates.join(QStringLiteral(", ")));
+        }
+    }
+    return {};
 }
 
 CommandProcessor::Result CommandProcessor::submit(const QString& line, bool strict)
@@ -23,10 +57,11 @@ CommandProcessor::Result CommandProcessor::submit(const QString& line, bool stri
     if (!m_active) {
         if (tokens.isEmpty())
             return {};
-        const QString name = tokens.takeFirst().toUpper();
+        QString resolveError;
+        const QString name = resolveName(tokens.takeFirst(), &resolveError);
+        if (name.isEmpty())
+            return {false, resolveError, false, {}};
         const auto it = m_registry.find(name);
-        if (it == m_registry.end())
-            return {false, QStringLiteral("unknown command: %1").arg(name), false, {}};
         // A fresh command replaces any transient result overlay (MINDIST...).
         m_ctx.clearOverlay();
         m_active = it->second();
@@ -218,6 +253,18 @@ QStringList CommandProcessor::commandNames() const
     }
     names.sort();
     return names;
+}
+
+QStringList CommandProcessor::completionEntries() const
+{
+    QStringList entries;
+    entries.reserve(int(m_canonical.size()));
+    for (const auto& [key, canonical] : m_canonical)
+        entries.push_back(key == canonical
+                              ? key
+                              : QStringLiteral("%1 → %2").arg(key, canonical));
+    entries.sort();
+    return entries;
 }
 
 void CommandProcessor::finishCommand(bool cancelled)

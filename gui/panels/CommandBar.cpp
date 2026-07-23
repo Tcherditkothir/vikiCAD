@@ -90,7 +90,13 @@ void CommandBar::setCompletions(const QStringList& names)
 void CommandBar::submitLine()
 {
     m_popupAnchored = false; // the typing session is over
-    const QString line = m_input->text().trimmed();
+    QString line = m_input->text().trimmed();
+    // An alias completion row reads "REC → RECT"; accepting it must run the
+    // TARGET command, not the literal arrow text. Typed text is untouched
+    // (no arrow), so this never rewrites what the user actually keyed in.
+    const int arrow = line.indexOf(QStringLiteral(" → "));
+    if (arrow >= 0)
+        line = line.mid(arrow + 3).trimmed();
     if (!line.isEmpty())
         appendHistory(QStringLiteral("> %1").arg(line));
     m_input->clear();

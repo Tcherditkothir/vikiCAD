@@ -1247,7 +1247,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_ctx = std::make_unique<CommandContext>(*m_doc, m_selection, m_canvas);
     m_processor = std::make_unique<CommandProcessor>(*m_ctx);
     registerBuiltinCommands(*m_processor);
-    m_commandBar->setCompletions(m_processor->commandNames());
+    m_commandBar->setCompletions(m_processor->completionEntries());
     m_canvas->attach(m_doc.get(), m_processor.get(), &m_selection);
     if (m_occtView)
         m_occtView->attach(m_doc.get(), m_processor.get(), &m_selection);

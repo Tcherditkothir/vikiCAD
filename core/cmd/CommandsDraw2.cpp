@@ -8,30 +8,145 @@
 namespace viki {
 namespace {
 
+// RECT: two corners, or AutoCAD-style Dimensions mode. D/DIMENSIONS at
+// either corner prompt asks "Length:" then "Height:", then (when no corner
+// was given yet) "First corner:". The rectangle sits axes-aligned from the
+// first corner toward +L,+H; NEGATIVE values grow to the other side, exactly
+// like AutoCAD's RECTANG Dimensions. No stage here is optional (every prompt
+// waits for a specific value), so no doneRepush is needed — a foreign
+// keyword just re-prompts.
 class RectCommand : public Command {
 public:
     const char* name() const override { return "RECT"; }
 
     Step start(CommandContext&) override
     {
-        return Step::cont(InputKind::Point, QStringLiteral("Specify first corner:"));
+        return Step::cont(InputKind::Point,
+                          QStringLiteral("First corner or [Dimensions]:"));
     }
 
     Step onInput(CommandContext& ctx, const InputValue& v) override
     {
         if (v.kind == InputValue::Kind::Cancel || v.kind == InputValue::Kind::Finish)
             return Step::cancelled();
-        if (v.kind != InputValue::Kind::Point)
-            return Step::cont(InputKind::Point, QStringLiteral("Specify corner:"));
 
-        if (!m_hasFirst) {
+        switch (m_st) {
+        case St::First:
+            if (isDimensions(v)) {
+                m_st = St::Length;
+                return Step::cont(InputKind::Distance, QStringLiteral("Length:"));
+            }
+            if (v.kind != InputValue::Kind::Point)
+                return Step::cont(InputKind::Point,
+                                  QStringLiteral("First corner or [Dimensions]:"));
             m_first = v.point;
             m_hasFirst = true;
             ctx.setLastPoint(v.point);
-            return Step::cont(InputKind::Point, QStringLiteral("Specify opposite corner:"));
+            m_st = St::Opposite;
+            return oppositePrompt();
+        case St::Opposite:
+            if (isDimensions(v)) {
+                m_st = St::Length;
+                return Step::cont(InputKind::Distance, QStringLiteral("Length:"));
+            }
+            if (v.kind != InputValue::Kind::Point)
+                return oppositePrompt();
+            return commit(ctx, m_first, v.point);
+        case St::Length: {
+            const auto len = signedLength(ctx, v);
+            if (!len || std::fabs(*len) <= kGeomTol) {
+                if (len)
+                    ctx.info(QStringLiteral("length must be non-zero"));
+                return Step::cont(InputKind::Distance, QStringLiteral("Length:"));
+            }
+            m_length = *len;
+            m_st = St::Height;
+            return Step::cont(InputKind::Distance, QStringLiteral("Height:"));
         }
-        const Vec2d a = m_first;
-        const Vec2d b = v.point;
+        case St::Height: {
+            const auto h = signedLength(ctx, v);
+            if (!h || std::fabs(*h) <= kGeomTol) {
+                if (h)
+                    ctx.info(QStringLiteral("height must be non-zero"));
+                return Step::cont(InputKind::Distance, QStringLiteral("Height:"));
+            }
+            m_height = *h;
+            if (m_hasFirst)
+                return commit(ctx, m_first,
+                              m_first + Vec2d{m_length, m_height});
+            m_st = St::Origin;
+            return Step::cont(InputKind::Point, QStringLiteral("First corner:"));
+        }
+        case St::Origin:
+            if (v.kind != InputValue::Kind::Point)
+                return Step::cont(InputKind::Point, QStringLiteral("First corner:"));
+            ctx.setLastPoint(v.point);
+            return commit(ctx, v.point, v.point + Vec2d{m_length, m_height});
+        }
+        return Step::cancelled();
+    }
+
+    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
+    {
+        Vec2d a, b;
+        switch (m_st) {
+        case St::First:
+            return;
+        case St::Opposite:
+        case St::Length: // rubber rect while typing/clicking the length
+            if (!m_hasFirst)
+                return;
+            a = m_first;
+            b = cursor;
+            break;
+        case St::Height: // length fixed, height follows the cursor
+            if (!m_hasFirst)
+                return;
+            a = m_first;
+            b = {m_first.x + m_length, cursor.y};
+            break;
+        case St::Origin: // full-size rectangle riding on the cursor
+            a = cursor;
+            b = cursor + Vec2d{m_length, m_height};
+            break;
+        }
+        StrokePrimitive s;
+        s.closed = true;
+        s.points = {a, {b.x, a.y}, b, {a.x, b.y}};
+        out.strokes.push_back(std::move(s));
+    }
+
+private:
+    enum class St { First, Opposite, Length, Height, Origin };
+
+    static bool isDimensions(const InputValue& v)
+    {
+        return v.kind == InputValue::Kind::Keyword &&
+               (v.text == QLatin1String("D") ||
+                v.text == QLatin1String("DIMENSIONS"));
+    }
+
+    static Step oppositePrompt()
+    {
+        return Step::cont(
+            InputKind::Point,
+            QStringLiteral("Opposite corner (@dx,dy relative) or [Dimensions]:"));
+    }
+
+    // A typed number keeps its SIGN (that is what puts the rectangle on the
+    // other side); a clicked point is direct-distance entry from the first
+    // corner (or the last point when no corner is placed yet).
+    std::optional<double> signedLength(CommandContext& ctx, const InputValue& v) const
+    {
+        if (v.kind == InputValue::Kind::Number)
+            return v.number;
+        if (v.kind == InputValue::Kind::Point)
+            return v.point.distanceTo(m_hasFirst ? m_first : ctx.lastPoint());
+        return std::nullopt;
+    }
+
+    Step commit(CommandContext& ctx, const Vec2d& a, const Vec2d& b)
+    {
         if (nearEqual(a, b)) {
             ctx.info(QStringLiteral("degenerate rectangle"));
             return Step::cancelled();
@@ -45,19 +160,11 @@ public:
         return Step::done();
     }
 
-    void previewAt(CommandContext&, const Vec2d& cursor, PrimitiveList& out) override
-    {
-        if (!m_hasFirst)
-            return;
-        StrokePrimitive s;
-        s.closed = true;
-        s.points = {m_first, {cursor.x, m_first.y}, cursor, {m_first.x, cursor.y}};
-        out.strokes.push_back(std::move(s));
-    }
-
-private:
+    St m_st = St::First;
     Vec2d m_first;
     bool m_hasFirst = false;
+    double m_length = 0.0;
+    double m_height = 0.0;
 };
 
 // Straight-segment polyline (arc segments arrive with a later milestone).
@@ -336,7 +443,8 @@ std::unique_ptr<Command> make()
 
 void registerDrawCommands2(CommandProcessor& p)
 {
-    p.registerCommand(&make<RectCommand>, {QStringLiteral("RECTANGLE")});
+    p.registerCommand(&make<RectCommand>,
+                      {QStringLiteral("RECTANGLE"), QStringLiteral("REC")});
     p.registerCommand(&make<PlineCommand>, {QStringLiteral("PL")});
     p.registerCommand(&make<EllipseCommand>, {QStringLiteral("EL")});
     p.registerCommand(&make<PointCommand>, {QStringLiteral("PO")});
