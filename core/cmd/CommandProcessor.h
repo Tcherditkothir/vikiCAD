@@ -57,6 +57,12 @@ private:
     std::unique_ptr<Command> m_active;
     InputRequest m_currentRequest;
     QStringList m_pendingTokens;
+    // Set by drive() when a command finished with Step::repush: the token
+    // that triggered the finish was NOT consumed and must start a new
+    // command line (only meaningful under feedPendingTokens, where the raw
+    // token text is known). Reset on every drive().
+    bool m_repushPending = false;
+    bool m_strict = false; // strictness of the submit() currently running
 };
 
 // Registers every built-in command (drawing, editing, view).

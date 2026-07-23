@@ -53,6 +53,13 @@ struct Step {
     enum class State { Continue, Done, Cancelled };
     State state = State::Done;
     InputRequest request; // valid when Continue
+    // Done WITHOUT consuming the input that triggered it: an optional stage
+    // ended on a token that is not one of its keywords. The processor hands
+    // the raw token (and the rest of the line) back as a NEW command line —
+    // AutoCAD .scr semantics. Without this, 'WORKPLANE XZ' followed by
+    // 'RECT ...' silently swallowed the whole RECT line (empty document,
+    // ok:true — the .vks trap).
+    bool repush = false;
 
     static Step cont(InputKind kind, const QString& prompt)
     {
@@ -62,6 +69,12 @@ struct Step {
         return s;
     }
     static Step done() { return {}; }
+    static Step doneRepush()
+    {
+        Step s;
+        s.repush = true;
+        return s;
+    }
     static Step cancelled()
     {
         Step s;

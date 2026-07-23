@@ -78,17 +78,23 @@ public:
                         InputKind::Keyword,
                         QStringLiteral("Offset along the normal [OFFSET] <0>:"));
                 }
+                // A foreign token (the next command of a .vks line/script):
+                // apply the historic XY default and hand it back unconsumed.
+                return applyRepush(ctx);
             }
-            // Finish or an unknown keyword: world XY (the historic default).
+            // Finish: world XY (the historic default).
             return apply(ctx, 0.0);
         case 1: // optional OFFSET after an explicit plane keyword
-            if (v.kind == InputValue::Kind::Keyword &&
-                v.text.toUpper() == QLatin1String("OFFSET")) {
-                m_stage = 2;
-                return Step::cont(InputKind::Distance,
-                                  QStringLiteral("Offset distance:"));
+            if (v.kind == InputValue::Kind::Keyword) {
+                if (v.text.toUpper() == QLatin1String("OFFSET")) {
+                    m_stage = 2;
+                    return Step::cont(InputKind::Distance,
+                                      QStringLiteral("Offset distance:"));
+                }
+                // Foreign token = the next command: no offset, repush it.
+                return applyRepush(ctx);
             }
-            return apply(ctx, 0.0); // Finish (or anything else): no offset
+            return apply(ctx, 0.0); // Finish (or a click): no offset
         case 2: // offset value
             if (v.kind != InputValue::Kind::Number)
                 return Step::cancelled();
@@ -98,6 +104,15 @@ public:
     }
 
 private:
+    // Apply with no offset AND flag the terminating token as unconsumed so
+    // the processor re-dispatches it as the next command (.vks/.scr flow).
+    Step applyRepush(CommandContext& ctx)
+    {
+        Step s = apply(ctx, 0.0);
+        s.repush = true;
+        return s;
+    }
+
     Step apply(CommandContext& ctx, double offset)
     {
         // Hand-built axes (see the table above) — NOT derived from OCCT.

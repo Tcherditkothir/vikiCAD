@@ -8,7 +8,9 @@ namespace viki {
 
 // Executes a .vks script: one command line per line, '#' comments, blank
 // lines feed a Finish to a pending command (like pressing Enter).
-// Runs in strict mode; stops at the first error.
+// Runs NON-strict (AutoCAD .scr semantics: a command may keep prompting
+// across lines, and an optional stage hands a foreign token back to start
+// the next command); stops at the first error.
 struct ScriptResult {
     bool ok = true;
     int lineNumber = 0; // line of the failure when !ok

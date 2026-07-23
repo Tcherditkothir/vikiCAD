@@ -8,6 +8,7 @@
 
 #include "cmd/CommandProcessor.h"
 #include "doc/Entities.h"
+#include "script/ScriptRunner.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -208,4 +209,76 @@ TEST_CASE("EXTRUDE of an XZ profile builds the solid where FRONT expects",
 
     // The tagged profile survived the EXTRUDE (sketch semantics unchanged).
     CHECK(rig.doc.entity(1) != nullptr);
+}
+
+TEST_CASE("WORKPLANE's optional stages hand unknown tokens back to the "
+          "processor instead of swallowing the next command",
+          "[workplane][script]")
+{
+    // The verifier's .vks trap: 'WORKPLANE XZ' left its optional-OFFSET
+    // stage pending, the next line's first token (RECT) terminated it as an
+    // unrecognized keyword and finishCommand dropped the REST of that line —
+    // an EMPTY document with ok:true. The fix is Step repush: the finished
+    // command declares the token unconsumed and the processor re-dispatches
+    // it (plus everything after it) as a fresh command line, the AutoCAD
+    // .scr behavior.
+
+    SECTION(".vks script: WORKPLANE XZ directly followed by RECT + EXTRUDE")
+    {
+        Rig rig;
+        const auto r = runScript(
+            rig.processor,
+            QStringLiteral("WORKPLANE XZ\nRECT 0,0 10,10\nEXTRUDE 3 1\n"));
+        REQUIRE(r.ok);
+        checkDir(documentWorkplane(rig.doc).normal, 0, -1, 0); // XZ stuck
+        const SolidEntity* solid = firstSolid(rig.doc);
+        REQUIRE(solid); // the trap produced ZERO entities here
+        // By hand on XZ: u=0..10 -> X, v=0..10 -> Z, EXTRUDE 3 along -Y.
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(solid->shape(), props);
+        CHECK(props.Mass() == Approx(300.0).epsilon(1e-6));
+        Bnd_Box bb;
+        BRepBndLib::Add(solid->shape(), bb);
+        double xmn, ymn, zmn, xmx, ymx, zmx;
+        bb.Get(xmn, ymn, zmn, xmx, ymx, zmx);
+        CHECK(xmn == Approx(0.0).margin(1e-6));
+        CHECK(xmx == Approx(10.0).margin(1e-6));
+        CHECK(ymn == Approx(-3.0).margin(1e-6));
+        CHECK(ymx == Approx(0.0).margin(1e-6));
+        CHECK(zmn == Approx(0.0).margin(1e-6));
+        CHECK(zmx == Approx(10.0).margin(1e-6));
+    }
+
+    SECTION(".vks script: bare WORKPLANE directly followed by CIRCLE")
+    {
+        // Same trap one stage earlier (the plane-keyword prompt itself).
+        Rig rig;
+        const auto r = runScript(rig.processor,
+                                 QStringLiteral("WORKPLANE\nCIRCLE 5,5 2\n"));
+        REQUIRE(r.ok);
+        checkDir(documentWorkplane(rig.doc).normal, 0, 0, 1); // XY default
+        CHECK(rig.doc.drawOrder().size() == 1);
+    }
+
+    SECTION("command bar: RECT typed while WORKPLANE XZ waits for its offset")
+    {
+        Rig rig;
+        const auto r1 = rig.processor.submit(QStringLiteral("WORKPLANE XZ"));
+        REQUIRE(r1.ok);
+        REQUIRE(r1.pending); // waiting at 'Offset [OFFSET] <0>:'
+        const auto r2 =
+            rig.processor.submit(QStringLiteral("RECT 0,0 10,10"));
+        REQUIRE(r2.ok);
+        CHECK_FALSE(rig.processor.hasActiveCommand());
+        CHECK(rig.doc.drawOrder().size() == 1);
+        checkDir(documentWorkplane(rig.doc).normal, 0, -1, 0);
+    }
+
+    SECTION("one strict line chains: WORKPLANE XZ RECT 0,0 10,10")
+    {
+        Rig rig;
+        REQUIRE(rig.run(QStringLiteral("WORKPLANE XZ RECT 0,0 10,10")));
+        CHECK(rig.doc.drawOrder().size() == 1);
+        checkDir(documentWorkplane(rig.doc).normal, 0, -1, 0);
+    }
 }

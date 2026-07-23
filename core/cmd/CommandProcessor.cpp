@@ -17,6 +17,7 @@ void CommandProcessor::registerCommand(CommandFactory factory, const QStringList
 
 CommandProcessor::Result CommandProcessor::submit(const QString& line, bool strict)
 {
+    m_strict = strict;
     QStringList tokens = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
 
     if (!m_active) {
@@ -64,8 +65,10 @@ CommandProcessor::Result CommandProcessor::provideInput(const InputValue& value)
 
 CommandProcessor::Result CommandProcessor::drive(Step step)
 {
+    m_repushPending = false;
     switch (step.state) {
     case Step::State::Done:
+        m_repushPending = step.repush;
         finishCommand(false);
         return {};
     case Step::State::Cancelled:
@@ -112,7 +115,20 @@ CommandProcessor::Result CommandProcessor::feedPendingTokens()
             cancelActive();
             return {false, error, false, {}};
         }
+        // Snapshot BEFORE feeding: finishCommand clears m_pendingTokens.
+        const QStringList rest = m_pendingTokens;
         r = provideInput(*value);
+        if (m_repushPending) {
+            // The command finished WITHOUT consuming `token` (an optional
+            // stage ended on a foreign keyword): the token plus everything
+            // after it form a new command line — .scr semantics. This is
+            // what makes 'WORKPLANE XZ' + 'RECT ...' run the RECT instead
+            // of silently dropping it.
+            m_repushPending = false;
+            QStringList line;
+            line << token << rest;
+            return submit(line.join(QLatin1Char(' ')), m_strict);
+        }
         if (!r.ok || !r.pending)
             break;
     }
