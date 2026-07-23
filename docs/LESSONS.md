@@ -406,3 +406,28 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   scripts/gui-smoke.sh`. Couverture ajoutée : phase « face: » (pick3d
   centre → sketchface → CIRCLE → SKETCH CLOSE → EXTRUDE, volume/bbox
   du cylindre prédits à la main).
+
+## 2026-07-23 — Clôture « ergonomie sketch » (revue adversariale)
+
+- **PIÈGE IPC préexistant (documenté, non corrigé — hors périmètre) : une
+  commande laissée EN ATTENTE d'un prompt avale les `exec` suivants.**
+  En session `connect`, un `exec "SELECT 0,0 40,20"` qui échoue au parsing
+  des ids (« expected entity ids ») laisse la commande ACTIVE ; les lignes
+  exec suivantes (`RO 1 0,0 30`, `SELECT 1`…) sont consommées par le
+  prompt EntitySet pendant, silencieusement. Déblocage : `connect exec ""`
+  (Enter vide = Finish). Règle de pilotage IPC : après un exec qui peut
+  laisser un prompt ouvert, vérifier le message retourné et envoyer un
+  `exec ""` avant la ligne suivante. (Le chemin submit() strict/non-strict
+  est antérieur au lot ergonomie ; à corriger un jour côté processeur —
+  un exec strict ne devrait jamais laisser une commande suspendue.)
+- **La liste d'un refus ambigu parle en noms CANONIQUES** : `D` liste
+  ERASE (atteint via son alias DEL) et TEXTEDIT (via DDEDIT). C'est le
+  design voulu (les préfixes matchent aussi les alias, dédupliqués par
+  commande canonique) et rien n'est lancé, mais si un utilisateur s'en
+  étonne, la réponse est là. Corollaire vérifié : `G` lance GEAR et `W`
+  lance WORKPLANE — préfixes uniques légitimes.
+- **Un commentaire de test avec des chiffres « à la main » se recalcule
+  comme le test lui-même.** La revue a attrapé un `|v3|² = 724` qui vaut
+  925 dans test_rect_profile.cpp — les assertions étaient justes, le
+  commentaire non. Un chiffre faux en commentaire coûte une heure au
+  prochain lecteur qui refait le calcul.

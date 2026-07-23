@@ -952,3 +952,62 @@ deux traités aujourd'hui)** :
 **Chiffres** : ctest 5142/334 → **5287 assertions / 340 cas** ;
 gui-smoke 224 → **260 checks**, ALL GREEN. Reste : validation souris de
 Lex (liste en tête de REPRISE.md).
+
+## 2026-07-23 — Ergonomie sketch : préfixes/alias, RECT D, Propriétés rectangle, Extrude au clic droit ✅
+
+**Les 3 manques rapportés souris par Lex (2026-07-23)** :
+1. « r/re/rec » ne font rien, seul RECT marche ; il veut entrer les
+   dimensions naturellement (« d ») avant ou après le premier clic.
+2. Les propriétés d'un rectangle n'exposent pas ses dimensions.
+3. Clic droit sur un profil de sketch fermé en 3D : Move ▸ / New
+   sketch ▸ seulement — pas d'Extrude.
+
+**La solution (commits `316c433`, `3c852ce`, `3e436ef`, `9698336`
++ clôture)** :
+
+- **Résolution de préfixe unique dans le CommandProcessor** (`resolveName`,
+  parité CLI/IPC/GUI gratuite) : exact d'abord (nom OU alias), puis
+  préfixe unique dédupliqué par commande CANONIQUE (`REC` matche
+  RECT+RECTANGLE = une seule commande → RECT). Ambigu = REFUS listant
+  les candidats (`ambiguous command R — matches RECT, REDO, REVOLVE,
+  ROTATE, ROTATE3D`) — rien n'est jamais lancé au hasard. La liste parle
+  en noms canoniques (`D` liste ERASE via DEL — voulu, cf. LESSONS).
+- **Décision alias** : sur dump du registre réel, TOUTE la table AutoCAD
+  visée existait déjà (L, C, A, PL, M, CO/CP, RO, MI, SC, TR, O, F, CHA,
+  E, X, Z, U, EX→EXTEND, EXT→EXTRUDE…) ; seul **REC→RECT** manquait,
+  ajouté. Aucun alias refusé/retiré ; `EX` RESTE l'alias exact d'EXTEND
+  (l'exact bat le préfixe), verrouillé par test. L'autocomplétion rend
+  les alias en `REC → RECT` ; la barre mappe la ligne vers le canonique
+  SANS toucher au traitement d'Enter/popup (leçon historique respectée).
+- **RECT Dimensions** (sémantique RECTANG) : `First corner or
+  [Dimensions]:` → point OU D ; `Length:`/`Height:` SIGNÉS (négatif =
+  l'autre côté), `First corner:` ensuite si absent ; D accepté aussi au
+  prompt du 2e coin ; preview live partout. Pas d'étape optionnelle ⇒
+  pas de doneRepush nécessaire (documenté dans le code).
+- **Propriétés rectangle** (`core/doc/RectProfile.{h,cpp}`) : détection
+  = polyligne fermée 4 sommets sans bulge, angles droits (|cos| ≤ 1e-6),
+  orientation quelconque. Ancre = sommet le plus proche de l'origine
+  monde (égalité → indice le plus bas), Length = grand côté ; l'édition
+  étire le long des directions ORIGINALES, ancre fixe. Lignes
+  Length/Height éditables dans PropertiesPanel (pattern featureparams),
+  TransactionScope, refus des valeurs ≤ 0.
+- **Extrude… au clic droit 3D** : sur un profil fermé extrudable (même
+  critère `wiresFromEntities` que la commande), item avant Move ▸ ;
+  dialogue hauteur mm (retient la dernière), puis `EXTRUDE <h>` via le
+  CommandProcessor partagé — tient au prompt Mode <New> avec le ghost,
+  Enter commite. AGENT.md §2a documente la parité headless.
+
+**Clôture de la revue adversariale (verdict CONFIRMÉ, 0 critical/major,
+3 minors)** : (1) commentaire de test 724→925 corrigé
+(test_rect_profile.cpp — assertions déjà justes) ; (2) liste ambiguë en
+noms canoniques = design assumé, consigné dans LESSONS ; (3) piège IPC
+PRÉEXISTANT (exec laissant un prompt ouvert avale les exec suivants,
+déblocage `exec ""`) documenté dans LESSONS, correctif processeur remis
+à un lot futur.
+
+**Chiffres** : ctest 5287/340 → **5848 assertions / 348 cas** ;
+gui-smoke 260 → **281 checks** (nouvelle phase « ergo: » : REC en IPC,
+refus de R, RECT D sommets prédits à la main, lignes Propriétés lues via
+query ui, extrusion 6000 mm³ = la ligne même du clic droit, UNDO total).
+TOUS VERTS. Reste : validation souris de Lex (liste en tête de
+REPRISE.md).

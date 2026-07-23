@@ -188,6 +188,15 @@ GUI the same flow is Solids → New sketch → Top/Front/Right (or right-click
 empty space in the 3D view); it auto-creates `PlaneSketch-N` through the
 same commands.
 
+In the GUI, right-clicking a **closed extrudable profile** in the 3D view
+(sketch curve, circle, closed polyline — the same `wiresFromEntities`
+criterion the EXTRUDE command applies) offers **Extrude…** before Move: a
+height dialog in mm (remembers the last value), then the widget selects
+the entity and submits `EXTRUDE <h>` through the shared CommandProcessor,
+holding at the `Mode [New/Join/Cut/Symmetric] <New>` prompt with the live
+ghost — Enter commits New. The headless parity line is plain
+`EXTRUDE <h> <id>`; there is no GUI-only path.
+
 ---
 
 ## 3. Sub-shape addressing: INSPECT indices + the parity commands
