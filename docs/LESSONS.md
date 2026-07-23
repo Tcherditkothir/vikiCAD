@@ -384,3 +384,25 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   format », le CLI écrivait un DXF nommé « gerbers » avec ok:true — le
   fallback « tout le reste est du DXF » datait d'avant les cibles
   répertoire. Chaque canal doit refuser les mêmes entrées.
+
+## 2026-07-23 — Clôture « point de départ 3D » (revue adversariale)
+
+- **Piège .scr/.vks des étapes optionnelles (corrigé)** : une commande en
+  attente à une étape « mot-clé optionnel » (`WORKPLANE XZ` à son prompt
+  `[OFFSET]`) consommait le premier token de la LIGNE SUIVANTE comme
+  terminaison, puis `finishCommand` jetait le reste de la ligne —
+  `WORKPLANE XZ` + `RECT ...` produisait un document VIDE avec ok:true.
+  Correctif générique : `Step::doneRepush()` — la commande déclare le
+  token non consommé et le CommandProcessor re-soumet ce token + la
+  suite comme NOUVELLE ligne de commande (la vraie sémantique AutoCAD).
+  Règle : toute étape optionnelle à mot-clé doit repousser les tokens
+  étrangers, jamais les avaler. Reproduit par test AVANT le fix
+  (test_workplane_planes.cpp, 4 sections : .vks, barre de commande,
+  chaînage sur une ligne stricte).
+- **« Vérifié par gui-smoke » doit se grep-er dans gui-smoke.** Le flux
+  sketch-sur-face (beginSketchOnFace) était déclaré couvert par le
+  harnais alors qu'aucune ligne ne l'exerçait (le harnais ne testait que
+  SKETCH NEW/CLOSE). Avant d'écrire « le harnais couvre X » : `grep X
+  scripts/gui-smoke.sh`. Couverture ajoutée : phase « face: » (pick3d
+  centre → sketchface → CIRCLE → SKETCH CLOSE → EXTRUDE, volume/bbox
+  du cylindre prédits à la main).

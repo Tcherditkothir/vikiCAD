@@ -912,3 +912,43 @@ Rien de bloquant pour l'usage réel ; à réévaluer quand Lex s'en sert.
 **Prochains chantiers en réserve** (REPRISE.md) : gizmo de drag direct,
 EXTRUDE/REVOLVE dans FeatureTree, contraintes de sketch, release GPLv3,
 et le chantier schémas pré-réfléchi au brainstorm.
+
+## 2026-07-23 — Point de départ 3D : sketch sur les plans d'origine ✅
+
+**Le trou UX (rapporté souris par Lex le 17)** : un document 3D VIDE
+n'offrait aucun chemin vers un premier sketch — `WORKPLANE` ne
+connaissait que XY/OFFSET, aucun menu Sketch, et le clic droit « sketch
+sur face » suppose une face existante. « Le point de départ de tout
+nouveau projet » était introuvable.
+
+**La solution (commits `f8afa8c` + `be4a69c`)** :
+- `WORKPLANE XY|XZ|YZ [OFFSET d]` — repères calculés À LA MAIN (jamais
+  via OCCT, cf. le bug des 90° en LESSONS), chacun choisi pour que sa vue
+  standard lise le sketch à l'endroit : XY (u=+X, v=+Y, n=+Z, vue TOP),
+  XZ (u=+X, v=+Z, n=−Y, face à FRONT), YZ (u=+Y, v=+Z, n=+X, face à
+  RIGHT). OFFSET toujours le long de la normale. Rétro-compat stricte
+  (`WORKPLANE` nu = XY Z=0, `WORKPLANE OFFSET d` = XY Z=d).
+- GUI : menu **Solids ▸ New sketch ▸ Top/Front/Right/Offset plane…** et
+  clic droit 3D (sur le VIDE : seul item ; doc plein : après les actions
+  existantes) → `beginSketchOnPlane` : WORKPLANE + `SKETCH NEW
+  PlaneSketch-N` via le CommandProcessor unique, isolation canvas, ✓
+  Finish et retour 3D — le même flux que le sketch-sur-face.
+
+**Clôture de la revue adversariale (verdict CONFORME, 2 minors — les
+deux traités aujourd'hui)** :
+1. **Piège .vks corrigé** (le vrai bug de la revue) : `WORKPLANE XZ`
+   suivi d'une commande sur la ligne suivante avalait son premier token
+   (terminaison de l'étape OFFSET optionnelle) puis jetait le reste de
+   la ligne — document vide, ok:true. Fix générique `Step::doneRepush()`
+   dans le CommandProcessor : le token étranger est re-soumis comme
+   nouvelle ligne de commande (sémantique AutoCAD .scr). Reproduit par
+   test AVANT le fix ; bonus : le chaînage `WORKPLANE XZ RECT 0,0 10,10`
+   sur UNE ligne marche désormais, en script comme dans la barre.
+2. **gui-smoke couvre enfin le sketch-sur-face** : phase « face: »
+   (box 40x30x10 → viewdir TOP → pick3d centre → sketchface → CIRCLE
+   20,15 r5 → SKETCH CLOSE → EXTRUDE 5), cylindre vérifié au 1e-6 :
+   bbox (15,10,10)-(25,20,15), volume π·125 = 392.699 mm³.
+
+**Chiffres** : ctest 5142/334 → **5287 assertions / 340 cas** ;
+gui-smoke 224 → **260 checks**, ALL GREEN. Reste : validation souris de
+Lex (liste en tête de REPRISE.md).

@@ -106,6 +106,14 @@ Commands are state machines fed by whitespace-separated tokens. The rules:
    $CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" \
             --exec "CIRCLE 30,15 4" --run cut.vks --save-as cut.vkd
    ```
+6. **Optional stages hand foreign tokens back.** A command waiting at an
+   optional keyword stage (`WORKPLANE XZ` at its `[OFFSET]` prompt)
+   finishes on its default when the next token is not one of its keywords,
+   and that token starts the NEXT command — `WORKPLANE XZ` on one `.vks`
+   line directly followed by `RECT 0,0 10,10` runs both, no blank line
+   needed. (Historic trap, fixed 2026-07-23: the first token of the next
+   line was swallowed as the terminating keyword and the REST of that line
+   silently dropped — an empty document with ok:true.)
 
 Useful command vocabulary (aliases in parentheses): 2D drawing
 `LINE (L) CIRCLE (C) ARC (A) RECT PLINE (PL) ELLIPSE (EL) SPLINE (SPL)`,
