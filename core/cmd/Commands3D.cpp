@@ -21,7 +21,32 @@
 namespace viki {
 namespace {
 
-// WORKPLANE XY | OFFSET z   (the sketch-on-face plane is set from the 3D view)
+// WORKPLANE [XY|XZ|YZ] [OFFSET d]   (the sketch-on-face plane is set from the
+// 3D view). World-aligned sketch planes — the starting point of a blank 3D
+// project.
+//
+// The three frames are DETERMINISTIC and computed BY HAND (never via
+// gp_Pln::XAxis(), whose in-plane axes are arbitrary — the 90°-rotated
+// face-sketch bug, see docs/LESSONS.md). Each frame is chosen so its matching
+// standard view (views::standardViewDir, StandardViews.cpp) reads the sketch
+// right side up: screen-right = camera dir × up must equal the sketch u axis,
+// and screen-up must equal v ( = n × u, the WorkPlane convention).
+//
+//   XY (top)  : u=+X, v=+Y, n=+Z.  TOP looks along -Z, up +Y
+//               → right = (−Z)×(+Y) = +X = u, up = +Y = v.
+//               Sketch (a,b), OFFSET d → world (a, b, d).
+//   XZ (front): u=+X, v=+Z, n=−Y.  FRONT looks along +Y, up +Z
+//               → right = (+Y)×(+Z) = +X = u, up = +Z = v; the normal −Y
+//               faces the FRONT camera, so EXTRUDE grows toward the viewer.
+//               Sketch (a,b), OFFSET d → world (a, −d, b).
+//   YZ (right): u=+Y, v=+Z, n=+X.  RIGHT looks along -X, up +Z
+//               → right = (−X)×(+Z) = +Y = u, up = +Z = v; the normal +X
+//               faces the RIGHT camera.
+//               Sketch (a,b), OFFSET d → world (d, a, b).
+//
+// OFFSET d always shifts the plane ALONG ITS NORMAL: origin = d·n.
+// Back-compat is strict: bare WORKPLANE → XY at Z=0, WORKPLANE OFFSET d → XY
+// at Z=d (the legacy grammar, where OFFSET implies the XY plane).
 class WorkplaneCommand : public Command {
 public:
     const char* name() const override { return "WORKPLANE"; }
@@ -29,34 +54,75 @@ public:
     Step start(CommandContext&) override
     {
         return Step::cont(InputKind::Keyword,
-                          QStringLiteral("Work plane [XY / OFFSET] <XY>:"));
+                          QStringLiteral("Work plane [XY/XZ/YZ/OFFSET] <XY>:"));
     }
 
     Step onInput(CommandContext& ctx, const InputValue& v) override
     {
         if (v.kind == InputValue::Kind::Cancel)
             return Step::cancelled();
-        if (m_awaitOffset) {
+        switch (m_stage) {
+        case 0: // plane keyword (or legacy OFFSET = XY plane, offset follows)
+            if (v.kind == InputValue::Kind::Keyword) {
+                const QString k = v.text.toUpper();
+                if (k == QLatin1String("OFFSET")) {
+                    m_stage = 2;
+                    return Step::cont(InputKind::Distance,
+                                      QStringLiteral("Z offset:"));
+                }
+                if (k == QLatin1String("XY") || k == QLatin1String("XZ") ||
+                    k == QLatin1String("YZ")) {
+                    m_plane = k;
+                    m_stage = 1;
+                    return Step::cont(
+                        InputKind::Keyword,
+                        QStringLiteral("Offset along the normal [OFFSET] <0>:"));
+                }
+            }
+            // Finish or an unknown keyword: world XY (the historic default).
+            return apply(ctx, 0.0);
+        case 1: // optional OFFSET after an explicit plane keyword
+            if (v.kind == InputValue::Kind::Keyword &&
+                v.text.toUpper() == QLatin1String("OFFSET")) {
+                m_stage = 2;
+                return Step::cont(InputKind::Distance,
+                                  QStringLiteral("Offset distance:"));
+            }
+            return apply(ctx, 0.0); // Finish (or anything else): no offset
+        case 2: // offset value
             if (v.kind != InputValue::Kind::Number)
                 return Step::cancelled();
-            documentWorkplane(ctx.doc()) = WorkPlane{gp_Pnt(0, 0, v.number),
-                                                     gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)};
-            ctx.doc().clearExtraSnapPoints(); // drop any sketch-on-face reference snaps
-            ctx.info(QStringLiteral("work plane: XY at Z=%1").arg(v.number));
-            return Step::done();
+            return apply(ctx, v.number);
         }
-        if (v.kind == InputValue::Kind::Keyword && v.text == QLatin1String("OFFSET")) {
-            m_awaitOffset = true;
-            return Step::cont(InputKind::Distance, QStringLiteral("Z offset:"));
-        }
-        documentWorkplane(ctx.doc()) = WorkPlane{}; // world XY
-        ctx.doc().clearExtraSnapPoints(); // drop any sketch-on-face reference snaps
-        ctx.info(QStringLiteral("work plane: XY at Z=0"));
-        return Step::done();
+        return Step::cancelled();
     }
 
 private:
-    bool m_awaitOffset = false;
+    Step apply(CommandContext& ctx, double offset)
+    {
+        // Hand-built axes (see the table above) — NOT derived from OCCT.
+        gp_Dir u(1, 0, 0), n(0, 0, 1); // XY
+        if (m_plane == QLatin1String("XZ")) {
+            u = gp_Dir(1, 0, 0);
+            n = gp_Dir(0, -1, 0);
+        } else if (m_plane == QLatin1String("YZ")) {
+            u = gp_Dir(0, 1, 0);
+            n = gp_Dir(1, 0, 0);
+        }
+        const gp_Pnt origin(offset * n.X(), offset * n.Y(), offset * n.Z());
+        documentWorkplane(ctx.doc()) = WorkPlane{origin, n, u};
+        ctx.doc().clearExtraSnapPoints(); // drop any sketch-on-face reference snaps
+        if (m_plane == QLatin1String("XZ"))
+            ctx.info(QStringLiteral("work plane: XZ (front) at Y=%1").arg(-offset));
+        else if (m_plane == QLatin1String("YZ"))
+            ctx.info(QStringLiteral("work plane: YZ (right) at X=%1").arg(offset));
+        else
+            ctx.info(QStringLiteral("work plane: XY at Z=%1").arg(offset));
+        return Step::done();
+    }
+
+    QString m_plane = QStringLiteral("XY");
+    int m_stage = 0;
 };
 
 // EXTRUDE height [New/Join/Cut/Symmetric] (target) ids
