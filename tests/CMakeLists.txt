@@ -29,6 +29,8 @@ add_executable(vikicad-tests
     test_move3d_points.cpp
     test_sweep_loft.cpp
     test_stl_export.cpp
+    test_stl_import.cpp
+    test_step_color.cpp
     test_obj_export.cpp
     test_params.cpp
     test_sketch.cpp

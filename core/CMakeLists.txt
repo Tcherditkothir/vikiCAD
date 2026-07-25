@@ -61,6 +61,7 @@ add_library(vikicore STATIC
     solid/FeatureTree.cpp
     solid/FeatureParams.cpp
     solid/SubShape.cpp
+    io/OcctMessages.cpp
     io/StepIo.cpp
     io/StlIo.cpp
     io/ObjIo.cpp

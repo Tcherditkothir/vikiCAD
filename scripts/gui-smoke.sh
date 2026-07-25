@@ -715,6 +715,47 @@ assert_eq "ergo: back to the pre-phase count" "$ergo_count0" "$(count)"
 assert_eq "ergo: back to the pre-phase solids" "$ergo_solids0" \
     "$(wc -w <<<"$(solid_ids)")"
 
+# --- STL IMPORT phase: a mesh opens, renders, and converts on demand ---------
+# (the "stl:" phase above covers EXPORT; this one is the import side)
+# Self-contained: builds a 10mm box, exports it to a BINARY .stl, then reopens
+# THAT file through the GUI's own File>Open dispatch (IPC "open"). Proves the
+# mesh path end to end — the mesh has no surface, so anything that assumed real
+# geometry would break here — then MESH2SOLID turns it into a solid whose volume
+# must be exactly 1000 mm3, and one UNDO puts the mesh back.
+"$CLI" new --exec "WORKPLANE XY" --exec "RECT 0,0 10,10" --exec "EXTRUDE 10 1" \
+    --save-as "$TMP/stlbox.vkd" >/dev/null 2>&1
+"$CLI" export "$TMP/stlbox.vkd" "$TMP/stlbox.stl" >/dev/null 2>&1
+if [[ -s "$TMP/stlbox.stl" ]]; then
+    # 84-byte header + 50 bytes per facet: a 10mm box tessellates to 12.
+    stl_bytes="$(stat -c%s "$TMP/stlbox.stl")"
+    assert_eq "meshimp: binary STL is 84+50*12 bytes" "$((84 + 50 * 12))" "$stl_bytes"
+
+    out="$(rpc open "$TMP/stlbox.stl")"
+    assert_eq "meshimp: open .stl through File>Open dispatch" True \
+        "$(jget "$out" "d['result'].get('ok')")"
+    assert_eq "meshimp: one entity imported" 1 "$(count)"
+    stl_id="$(max_id)"
+    assert_eq "meshimp: it is a solid entity" "$stl_id" "$(solid_ids)"
+
+    # Geometry check on the mesh itself: the box's own bounding box.
+    assert_eq "meshimp: mesh bbox is the 10mm box" True "$(jget "$(rpc query bounds)" \
+        "all(abs(a-b) < 1e-6 for a,b in zip(d['result']['bounds'], [0,0,10,10]))")"
+
+    out="$(rpc view3d on)"
+    assert_eq "meshimp: 3D view on" True "$(jget "$out" "d['result'].get('is3d')")"
+    shot "meshimp: mesh renders in 3D" "$TMP/stl_mesh.png"
+
+    gexec "meshimp: MESH2SOLID converts the mesh" "MESH2SOLID $stl_id"
+    assert_eq "meshimp: sewn solid is exactly 1000 mm3" True \
+        "$(jget "$(rpc query describe)" \
+            "any(abs(s['volume'] - 1000.0) < 1e-6 for s in d['result']['describe']['solids'])")"
+
+    gexec "meshimp: UNDO the conversion" "UNDO"
+    assert_eq "meshimp: still one entity after undo" 1 "$(count)"
+else
+    record PASS "meshimp: SKIP (STL export produced nothing)" "no fixture"
+fi
+
 # --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
 # Opens the fab-output directory headless through the IPC "open" verb (one
 # layer per file, ONE transaction), checks the layer list, proves the render

@@ -78,6 +78,8 @@ int printUsage(FILE* out)
         "  vikicad-cli export FILE.vkd OUT.gtl|.gbs|...|.gko|.gbr|.txt "
         "[--layer NAME]   (one fab layer)\n"
         "  vikicad-cli import IN.step --save-as OUT.vkd\n"
+        "  vikicad-cli import IN.stl  --save-as OUT.vkd   (mesh, ASCII or "
+        "binary)\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
@@ -214,14 +216,15 @@ int cmdImport(const QStringList& args)
     const QString inPath = args[0];
     const QString outPath = args[2];
 
-    // Gerber kit: a directory, or any single file that is neither DXF/DWG
-    // nor STEP (the kit importer sniffs Gerber/Excellon content and reports
+    // Gerber kit: a directory, or any single file that is neither DXF/DWG,
+    // STEP nor STL (the kit importer sniffs Gerber/Excellon content and reports
     // a clear error for anything else).
     const bool dxfLike = inPath.endsWith(QLatin1String(".dxf"), Qt::CaseInsensitive) ||
                          inPath.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive);
     const bool stepLike = inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
                           inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive);
-    if (QFileInfo(inPath).isDir() || (!dxfLike && !stepLike)) {
+    const bool stlLike = inPath.endsWith(QLatin1String(".stl"), Qt::CaseInsensitive);
+    if (QFileInfo(inPath).isDir() || (!dxfLike && !stepLike && !stlLike)) {
         Document doc;
         const GerberKitResult r = importGerberKit(doc, inPath);
         if (!r.ok)
@@ -275,6 +278,23 @@ int cmdImport(const QStringList& args)
             return emitError(QStringLiteral("E_SAVE"), error);
         return emitOk(QJsonObject{{QStringLiteral("solids"), r.solids},
                                   {QStringLiteral("sidecarNotes"), r.notes},
+                                  // What the FILE carried: "colored: 0" means the
+                                  // STEP has no colour, not that we dropped it.
+                                  {QStringLiteral("colored"), r.colored},
+                                  {QStringLiteral("named"), r.named},
+                                  {QStringLiteral("savedTo"), outPath}});
+    }
+
+    if (stlLike) {
+        std::unique_ptr<Document> doc;
+        const StlResult r = importStl(inPath, doc);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_STL"), r.error);
+        QString error;
+        if (!NativeStore::save(*doc, outPath, error))
+            return emitError(QStringLiteral("E_SAVE"), error);
+        return emitOk(QJsonObject{{QStringLiteral("solids"), r.solids},
+                                  {QStringLiteral("triangles"), r.triangles},
                                   {QStringLiteral("savedTo"), outPath}});
     }
 
@@ -460,10 +480,14 @@ int cmdExport(const QStringList& args)
         const ObjResult r = exportObj(*doc, outPath, deflection);
         if (!r.ok)
             return emitError(QStringLiteral("E_OBJ"), r.error);
+        // mtl/materials let a caller (the Obsidian viewer) know whether there is
+        // a material library to load beside the OBJ.
         return emitOk(QJsonObject{{QStringLiteral("savedTo"), outPath},
                                   {QStringLiteral("solids"), r.solids},
                                   {QStringLiteral("vertices"), r.vertices},
-                                  {QStringLiteral("faces"), r.faces}});
+                                  {QStringLiteral("faces"), r.faces},
+                                  {QStringLiteral("materials"), r.materials},
+                                  {QStringLiteral("mtl"), r.mtlPath}});
     }
 
     if (outPath.endsWith(QLatin1String(".pdf"), Qt::CaseInsensitive)) {

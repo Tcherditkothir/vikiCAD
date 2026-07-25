@@ -9,6 +9,7 @@
 #include "render/HitTest.h"
 #include "render/StandardViews.h"
 #include "solid/FeatureTree.h"
+#include "io/StlIo.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
 
@@ -1128,6 +1129,98 @@ private:
     std::vector<EntityId> m_ids;
 };
 
+// MESH2SOLID <solidId> [solidId...]
+//
+// Turn an imported STL mesh into real BREP geometry, so booleans, sections and
+// MINDIST apply to it. Explicit on purpose: the result is faceted, and sewing
+// costs one face per triangle, so the importer never does this on its own.
+//
+// Over kMeshToSolidMaxTriangles it refuses; VIKICAD_MESH2SOLID_MAX raises the
+// cap for the rare case where you accept the cost (same escape-hatch idiom as
+// VIKICAD_STEP_UDA).
+class MeshToSolidCommand : public Command {
+public:
+    const char* name() const override { return "MESH2SOLID"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+            return apply(ctx);
+        }
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select imported mesh(es) to convert:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::EntitySet)
+            m_ids.insert(m_ids.end(), v.entitySet.begin(), v.entitySet.end());
+        else if (v.kind == InputValue::Kind::EntityRef)
+            m_ids.push_back(v.entityRef);
+        else
+            return Step::cancelled();
+        if (m_ids.empty())
+            return Step::cont(InputKind::EntitySet,
+                              QStringLiteral("Select imported mesh(es):"));
+        return apply(ctx);
+    }
+
+private:
+    Step apply(CommandContext& ctx)
+    {
+        // Convert everything BEFORE touching the document: a half-applied batch
+        // where solid 3 converted and solid 5 failed is worse than a clean
+        // refusal, and sewing can fail on any one of them.
+        std::vector<std::pair<EntityId, MeshToSolidResult>> converted;
+        for (const EntityId id : m_ids) {
+            auto* solid = dynamic_cast<SolidEntity*>(ctx.doc().entity(id));
+            if (!solid) {
+                ctx.info(QStringLiteral("id %1 is not a solid").arg(id));
+                return Step::cancelled();
+            }
+            if (!isMeshShape(solid->shape())) {
+                ctx.info(QStringLiteral(
+                             "solid %1 is already real geometry, not a mesh")
+                             .arg(id));
+                return Step::cancelled();
+            }
+            const int cap = qEnvironmentVariableIsSet("VIKICAD_MESH2SOLID_MAX")
+                                ? qEnvironmentVariableIntValue("VIKICAD_MESH2SOLID_MAX")
+                                : kMeshToSolidMaxTriangles;
+            MeshToSolidResult r = meshToSolid(solid->shape(), cap);
+            if (!r.ok || r.shape.IsNull()) {
+                ctx.info(QStringLiteral("MESH2SOLID on %1: %2").arg(id).arg(r.error));
+                return Step::cancelled();
+            }
+            converted.emplace_back(id, std::move(r));
+        }
+
+        ctx.doc().beginTransaction(QLatin1String(name()));
+        for (auto& [id, r] : converted) {
+            auto* mut = static_cast<SolidEntity*>(ctx.doc().beginModify(id));
+            mut->setShape(r.shape);
+            ctx.doc().endModify(id);
+        }
+        ctx.doc().commitTransaction();
+
+        for (const auto& [id, r] : converted) {
+            ctx.info(QStringLiteral("solid %1: %2 triangles sewn into %3 faces (%4)")
+                         .arg(id)
+                         .arg(r.triangles)
+                         .arg(r.faces)
+                         .arg(r.closed ? QStringLiteral("closed solid")
+                                       : QStringLiteral("open shell")));
+            if (!r.warning.isEmpty())
+                ctx.info(QStringLiteral("  %1").arg(r.warning));
+        }
+        return Step::done();
+    }
+
+    std::vector<EntityId> m_ids;
+};
+
 template <typename T>
 std::unique_ptr<Command> make()
 {
@@ -1138,6 +1231,7 @@ std::unique_ptr<Command> make()
 
 void registerSolidCommands(CommandProcessor& p)
 {
+    p.registerCommand(&make<MeshToSolidCommand>, {QStringLiteral("M2S")});
     p.registerCommand(&make<WorkplaneCommand>, {QStringLiteral("WP")});
     p.registerCommand(&make<ExtrudeCommand>, {QStringLiteral("EXT")});
     p.registerCommand(&make<RevolveCommand>, {QStringLiteral("REV")});

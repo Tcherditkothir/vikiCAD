@@ -48,7 +48,7 @@ private slots:
     void openGerberKit(); // pick a fab-output directory -> one layer per file
     void exportGerberKitDir();   // pick a directory -> <docname>.GTL/... + .TXT
     void exportGerberLayerFile(); // pick one fab layer -> one Gerber/Excellon file
-    void insertStepComponent(); // additive STEP import into the current doc (menu)
+    void insertStepComponent(); // additive STEP/STL import into the current doc (menu)
     void toggleUnits();
 
 private:
@@ -65,7 +65,10 @@ private:
     // additive, shared by the menu action (multi-select loop) and IPC
     // "insertstep"; refreshView=false skips the 3D/assembly-panel refresh so
     // a multi-file batch can do it once at the end instead of per file.
-    bool insertStepFile(const QString& path, QString& error, bool refreshView = true);
+    // Additive import of one 3D part (.step/.stp/.stl) into the current
+    // document, tagged as a named assembly component.
+    bool insertComponentFile(const QString& path, QString& error,
+                             bool refreshView = true);
     void refreshAfterAssemblyChange(); // shared post-insert 3D/assembly-panel sync
     // Export dispatch by file suffix (.step/.stp, .dxf, .stl, .obj, the fab
     // extensions .gtl/.gbs/.../.gko/.gbr/.txt) or a DIRECTORY (Gerber kit) —

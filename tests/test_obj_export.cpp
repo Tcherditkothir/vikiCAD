@@ -12,6 +12,7 @@
 #include "doc/Document.h"
 #include "doc/SelectionSet.h"
 #include "io/ObjIo.h"
+#include "solid/SolidEntity.h"
 
 using namespace viki;
 
@@ -117,4 +118,99 @@ TEST_CASE("exportObj fails cleanly when there are no solids", "[obj]")
     const ObjResult r = exportObj(doc, path, 0.1);
     CHECK_FALSE(r.ok);
     CHECK_FALSE(r.error.isEmpty());
+}
+
+TEST_CASE("exportObj writes an MTL sidecar carrying colour and transparency",
+          "[obj][color]")
+{
+    Rig rig;
+    buildBox(rig);
+    SolidEntity* box = nullptr;
+    for (const EntityId id : rig.doc.drawOrder())
+        if (auto* s = dynamic_cast<SolidEntity*>(rig.doc.entity(id)))
+            box = s;
+    REQUIRE(box != nullptr);
+    box->setColor(ColorSpec{/*byLayer=*/false, 0xE8AD23});
+    box->transparency = 0.25;
+    box->component = QStringLiteral("SHIELD");
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("part.obj"));
+    const ObjResult r = exportObj(rig.doc, path, 0.1);
+    REQUIRE(r.ok);
+    CHECK(r.materials == 1);
+    REQUIRE_FALSE(r.mtlPath.isEmpty());
+
+    QFile obj(path);
+    REQUIRE(obj.open(QIODevice::ReadOnly));
+    const QByteArray objText = obj.readAll();
+    // Referenced by BASE NAME, so the .obj/.mtl pair stays resolvable when moved.
+    CHECK(objText.contains("mtllib part.mtl"));
+    CHECK(objText.contains("usemtl vikicad_0"));
+    CHECK(objText.contains("o SHIELD"));
+
+    QFile mtl(r.mtlPath);
+    REQUIRE(mtl.open(QIODevice::ReadOnly));
+    const QByteArray mtlText = mtl.readAll();
+    CHECK(mtlText.contains("newmtl vikicad_0"));
+    // 0xE8AD23 -> 232/255, 173/255, 35/255 = 0.909804 0.678431 0.137255.
+    CHECK(mtlText.contains("Kd 0.909804 0.678431 0.137255"));
+    // `d` is opacity, so 0.25 transparency writes 0.75.
+    CHECK(mtlText.contains("d 0.75"));
+    CHECK(mtlText.contains("Tr 0.25"));
+}
+
+TEST_CASE("exportObj writes no MTL at all for a ByLayer-only model",
+          "[obj][color]")
+{
+    Rig rig;
+    buildBox(rig);
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("plain.obj"));
+    const ObjResult r = exportObj(rig.doc, path, 0.1);
+    REQUIRE(r.ok);
+    // An empty material library only makes readers warn, so there is none.
+    CHECK(r.materials == 0);
+    CHECK(r.mtlPath.isEmpty());
+    CHECK_FALSE(QFile::exists(dir.filePath(QStringLiteral("plain.mtl"))));
+
+    QFile obj(path);
+    REQUIRE(obj.open(QIODevice::ReadOnly));
+    const QByteArray text = obj.readAll();
+    CHECK_FALSE(text.contains("mtllib"));
+    CHECK_FALSE(text.contains("usemtl"));
+}
+
+TEST_CASE("exportObj shares one material between solids of the same colour",
+          "[obj][color]")
+{
+    Rig rig;
+    REQUIRE(rig.run(QStringLiteral("RECT 0,0 10,10")));
+    EntityId rectId = kInvalidEntityId;
+    for (const EntityId id : rig.doc.drawOrder())
+        rectId = std::max(rectId, id);
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 %1").arg(rectId)));
+    REQUIRE(rig.run(QStringLiteral("RECT 20,0 30,10")));
+    for (const EntityId id : rig.doc.drawOrder())
+        rectId = std::max(rectId, id);
+    REQUIRE(rig.run(QStringLiteral("EXTRUDE 10 %1").arg(rectId)));
+
+    std::vector<SolidEntity*> solids;
+    for (const EntityId id : rig.doc.drawOrder())
+        if (auto* s = dynamic_cast<SolidEntity*>(rig.doc.entity(id)))
+            solids.push_back(s);
+    REQUIRE(solids.size() == 2);
+    // Same colour on both: the palette must dedupe rather than emit twins.
+    for (SolidEntity* s : solids)
+        s->setColor(ColorSpec{false, 0xA0A0A0});
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ObjResult r = exportObj(rig.doc, dir.filePath(QStringLiteral("two.obj")), 0.1);
+    REQUIRE(r.ok);
+    CHECK(r.solids == 2);
+    CHECK(r.materials == 1);
 }

@@ -178,7 +178,7 @@ MainWindow::MainWindow()
 #endif
     fileMenu->addAction(QStringLiteral("Open &Gerber kit..."), this,
                         &MainWindow::openGerberKit);
-    fileMenu->addAction(QStringLiteral("Insert STEP as &component..."), this,
+    fileMenu->addAction(QStringLiteral("Insert STEP/STL as &component..."), this,
                         &MainWindow::insertStepComponent);
     // Leaving the .vkd world: export to the planet's formats. The engines
     // existed since M3/M7 (the CLI always could) — the menu was just missing.
@@ -1017,7 +1017,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
     }
     if (method == QLatin1String("open")) {
         const QString path = params[QStringLiteral("path")].toString();
-        // Same dispatch as File>Open: .vkd/.dxf/.dwg/.step, and a
+        // Same dispatch as File>Open: .vkd/.dxf/.dwg/.step/.stl, and a
         // directory opens as a Gerber kit.
         if (!loadFile(path, /*interactive=*/false))
             return {{QStringLiteral("error"),
@@ -1082,7 +1082,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
     }
     if (method == QLatin1String("insertstep")) {
         QString error;
-        if (!insertStepFile(params[QStringLiteral("path")].toString(), error))
+        if (!insertComponentFile(params[QStringLiteral("path")].toString(), error))
             return {{QStringLiteral("error"),
                      error.isEmpty() ? QStringLiteral("insert failed") : error}};
         return {{QStringLiteral("ok"), true}};
@@ -1452,15 +1452,42 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
         if (!r.ok || !doc)
             return reportError(r.error.isEmpty() ? QStringLiteral("STEP import failed")
                                                  : r.error);
-        // Tag the solids as a named component (so it shows in the assembly).
+        // Fall back to the file name only where the STEP carried no part name
+        // of its own — overwriting would throw away what XCAF just recovered.
+        const QString comp = QFileInfo(path).completeBaseName();
+        for (const EntityId id : doc->drawOrder())
+            if (auto* s = dynamic_cast<SolidEntity*>(doc->entity(id)))
+                if (s->component.isEmpty())
+                    s->component = comp;
+        adoptDocument(std::move(doc));
+        QString msg = QStringLiteral("Imported %1 solids from %2 (%3 notes)")
+                          .arg(r.solids).arg(path).arg(r.notes);
+        // Say what the FILE had, so "everything is grey" is never ambiguous
+        // between "no colour in the file" and "colour lost on import".
+        msg += r.colored > 0
+                   ? QStringLiteral(", %1 with colour").arg(r.colored)
+                   : QStringLiteral(", no colour in the file");
+        m_commandBar->appendHistory(msg);
+        return true;
+    }
+    if (ends(".stl")) {
+        std::unique_ptr<Document> doc;
+        const StlResult r = importStl(path, doc);
+        if (!r.ok || !doc)
+            return reportError(r.error.isEmpty() ? QStringLiteral("STL import failed")
+                                                 : r.error);
+        // Same component tagging as STEP, so the mesh is named in the assembly
+        // tree instead of showing up as an anonymous solid.
         const QString comp = QFileInfo(path).completeBaseName();
         for (const EntityId id : doc->drawOrder())
             if (auto* s = dynamic_cast<SolidEntity*>(doc->entity(id)))
                 s->component = comp;
         adoptDocument(std::move(doc));
         m_commandBar->appendHistory(
-            QStringLiteral("Imported %1 solids from %2 (%3 notes)")
-                .arg(r.solids).arg(path).arg(r.notes));
+            QStringLiteral("Imported a %1-triangle mesh from %2 — MESH2SOLID "
+                           "converts it to real geometry if you need booleans")
+                .arg(r.triangles)
+                .arg(path));
         return true;
     }
     // A lone Gerber/Excellon file (any extension — .GTL, .TXT drills, .pho…)
@@ -1486,11 +1513,13 @@ void MainWindow::openFile()
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
         QStringLiteral(
-            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.gtl *.gbl *.gts "
-            "*.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 *.gbr *.txt *.drl);;"
+            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.stl *.gtl *.gbl "
+            "*.gts *.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 *.gbr *.txt "
+            "*.drl);;"
             "VikiCAD drawings (*.vkd);;"
             "DXF/DWG (*.dxf *.dwg);;"
             "STEP (*.step *.stp);;"
+            "STL mesh (*.stl);;"
             "Gerber/Excellon (*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp "
             "*.gko *.gm1 *.gbr *.txt *.drl);;"
             "All files (*)"));
@@ -1738,8 +1767,9 @@ void MainWindow::newSketchOffsetDialog()
 void MainWindow::insertStepComponent()
 {
     const QStringList paths = QFileDialog::getOpenFileNames(
-        this, QStringLiteral("Insert STEP as component(s)"), {},
-        QStringLiteral("STEP (*.step *.stp);;All files (*)"));
+        this, QStringLiteral("Insert STEP/STL as component(s)"), {},
+        QStringLiteral("3D parts (*.step *.stp *.stl);;STEP (*.step *.stp);;"
+                       "STL mesh (*.stl);;All files (*)"));
     if (paths.isEmpty())
         return;
     QStringList failures;
@@ -1748,7 +1778,7 @@ void MainWindow::insertStepComponent()
         // refreshView=false: one file per assembly part is common (5-20+),
         // and each 3D/assembly-panel refresh is expensive — do it once below
         // instead of once per file.
-        if (!insertStepFile(path, error, /*refreshView=*/false))
+        if (!insertComponentFile(path, error, /*refreshView=*/false))
             failures << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(),
                                                       error.isEmpty()
                                                           ? QStringLiteral("STEP import failed")
@@ -2007,28 +2037,43 @@ void MainWindow::exportGerberLayerFile()
     }
 }
 
-bool MainWindow::insertStepFile(const QString& path, QString& error, bool refreshView)
+bool MainWindow::insertComponentFile(const QString& path, QString& error,
+                                     bool refreshView)
 {
     if (!m_doc)
         return false;
+    // STEP or STL, dispatched on the extension. Both land as tagged solids in
+    // the current document, which is how an off-the-shelf part (a sensor, a
+    // battery mount) joins an assembly.
     std::unique_ptr<Document> tmp;
-    const StepResult r = importStep(path, tmp);
-    if (!r.ok || !tmp) {
-        error = r.error;
-        return false;
+    if (path.endsWith(QLatin1String(".stl"), Qt::CaseInsensitive)) {
+        const StlResult r = importStl(path, tmp);
+        if (!r.ok || !tmp) {
+            error = r.error;
+            return false;
+        }
+    } else {
+        const StepResult r = importStep(path, tmp);
+        if (!r.ok || !tmp) {
+            error = r.error;
+            return false;
+        }
     }
     // Component name = the file's base name; each imported solid gets tagged.
     const QString comp = QFileInfo(path).completeBaseName();
     int added = 0;
-    TransactionScope scope(*m_doc, QStringLiteral("INSERT STEP"));
+    TransactionScope scope(*m_doc, QStringLiteral("INSERT COMPONENT"));
     try {
         for (const EntityId id : tmp->drawOrder()) {
             const Entity* e = tmp->entity(id);
             if (!e)
                 continue;
             auto copy = e->clone();
+            // Keep the part name the importer recovered from the file; the file
+            // name is only the fallback for anonymous solids.
             if (auto* solid = dynamic_cast<SolidEntity*>(copy.get()))
-                solid->component = comp;
+                if (solid->component.isEmpty())
+                    solid->component = comp;
             m_doc->addEntity(std::move(copy));
             ++added;
         }

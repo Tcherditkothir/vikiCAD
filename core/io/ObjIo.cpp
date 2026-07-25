@@ -1,6 +1,11 @@
 #include "ObjIo.h"
 
+#include <algorithm>
+#include <utility>
+#include <vector>
+
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -19,6 +24,15 @@
 #include "solid/SolidEntity.h"
 
 namespace viki {
+namespace {
+
+// Material names must be stable and free of spaces (MTL is whitespace-split).
+QString materialName(int index)
+{
+    return QStringLiteral("vikicad_%1").arg(index);
+}
+
+} // namespace
 
 ObjResult exportObj(const Document& doc, const QString& path, double deflection)
 {
@@ -28,19 +42,82 @@ ObjResult exportObj(const Document& doc, const QString& path, double deflection)
         deflection = 0.1;
 
     // Collect the solids up front so we can fail cleanly on an empty model
-    // before touching the output file.
-    std::vector<TopoDS_Shape> shapes;
+    // before touching the output file. Each keeps its appearance, which becomes
+    // a material below.
+    struct Part {
+        TopoDS_Shape shape;
+        bool hasColor = false;
+        uint32_t rgb = 0xFFFFFF;
+        double transparency = 0.0;
+        QString component;
+    };
+    std::vector<Part> parts;
     for (const EntityId id : doc.drawOrder()) {
         const auto* solid = dynamic_cast<const SolidEntity*>(doc.entity(id));
         if (!solid || solid->shape().IsNull())
             continue;
-        shapes.push_back(solid->shape());
+        Part p;
+        p.shape = solid->shape();
+        p.hasColor = !solid->color().byLayer;
+        p.rgb = solid->color().rgb;
+        p.transparency = std::clamp(solid->transparency, 0.0, 1.0);
+        p.component = solid->component;
+        parts.push_back(std::move(p));
     }
 
-    if (shapes.empty()) {
+    if (parts.empty()) {
         result.error =
             QStringLiteral("no solids to export (EXTRUDE/REVOLVE first)");
         return result;
+    }
+
+    // Distinct colour+transparency pairs, in first-seen order so the .mtl reads
+    // in the same order as the model.
+    std::vector<std::pair<uint32_t, double>> palette;
+    std::vector<int> partMaterial(parts.size(), -1);
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (!parts[i].hasColor)
+            continue;
+        const std::pair<uint32_t, double> key{parts[i].rgb, parts[i].transparency};
+        auto it = std::find(palette.begin(), palette.end(), key);
+        if (it == palette.end()) {
+            palette.push_back(key);
+            it = std::prev(palette.end());
+        }
+        partMaterial[i] = int(it - palette.begin());
+    }
+
+    // The .mtl sits beside the .obj and is referenced by base name, so moving
+    // the pair together keeps it resolvable.
+    QString mtlName;
+    if (!palette.empty()) {
+        const QFileInfo info(path);
+        mtlName = info.completeBaseName() + QStringLiteral(".mtl");
+        const QString mtlPath = info.absolutePath() + QLatin1Char('/') + mtlName;
+        QFile mtl(mtlPath);
+        if (!mtl.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            result.error = QStringLiteral("cannot write MTL to %1").arg(mtlPath);
+            return result;
+        }
+        QTextStream ms(&mtl);
+        ms << "# Material library exported by VikiCAD\n";
+        for (size_t i = 0; i < palette.size(); ++i) {
+            const auto [rgb, transparency] = palette[i];
+            const double r = double((rgb >> 16) & 0xFF) / 255.0;
+            const double g = double((rgb >> 8) & 0xFF) / 255.0;
+            const double b = double(rgb & 0xFF) / 255.0;
+            ms << "\nnewmtl " << materialName(int(i)) << '\n';
+            ms << "Kd " << r << ' ' << g << ' ' << b << '\n';
+            // `d` is opacity (1 = opaque). Tr is its complement; writing both
+            // covers readers that only honour one of them.
+            ms << "d " << (1.0 - transparency) << '\n';
+            ms << "Tr " << transparency << '\n';
+            ms << "illum 1\n";
+        }
+        ms.flush();
+        mtl.close();
+        result.materials = int(palette.size());
+        result.mtlPath = mtlPath;
     }
 
     QFile file(path);
@@ -52,12 +129,21 @@ ObjResult exportObj(const Document& doc, const QString& path, double deflection)
     QTextStream out(&file);
     out << "# Wavefront OBJ exported by VikiCAD\n";
     out << "# units: mm\n";
+    if (!mtlName.isEmpty())
+        out << "mtllib " << mtlName << '\n';
 
     // OBJ face indices are 1-based and global across the whole file, so we keep
     // a running offset as each face contributes its own block of vertices.
     int vertexOffset = 0;
 
-    for (const TopoDS_Shape& shape : shapes) {
+    for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+        const TopoDS_Shape& shape = parts[partIndex].shape;
+        // `o` names the object so a viewer's outliner is readable; `usemtl`
+        // binds the appearance for every face that follows.
+        if (!parts[partIndex].component.isEmpty())
+            out << "o " << parts[partIndex].component << '\n';
+        if (partMaterial[partIndex] >= 0)
+            out << "usemtl " << materialName(partMaterial[partIndex]) << '\n';
         // Triangulate. IncrementalMesh mutates the shape's triangulation in
         // place; Perform() must run before we can read the facets back.
         BRepMesh_IncrementalMesh mesher(shape, deflection, Standard_False, 0.5,
