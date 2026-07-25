@@ -14,8 +14,10 @@ bien qu'à la souris.
 - **Stack** : C++17, Qt6 Widgets, OpenCASCADE 7.9, format natif SQLite
   (`.vkd`), CMake.
 - **Interop** : DXF R12–2018 (libdxfrw vendoré et patché), DWG en import
-  (via `dwg2dxf`/LibreDWG), STEP (OCCT, notes en sidecar JSON ou attributs
-  AP242 optionnels), STL/OBJ, PDF, et **Gerber RS-274X + Excellon** en
+  (via `dwg2dxf`/LibreDWG), STEP en lecture/écriture avec **couleurs,
+  transparence et noms de pièces** (OCCT XCAF ; notes en sidecar JSON ou
+  attributs AP242 optionnels), **STL en import (maillage) et export**,
+  OBJ avec matières `.mtl`, PDF, et **Gerber RS-274X + Excellon** en
   lecture/écriture.
 - **Pilotable par agent, par conception** : `vikicad-cli` headless en JSON,
   socket JSON-RPC sur la GUI en cours d'exécution (`vikicad-cli connect`),
@@ -143,8 +145,10 @@ one to be as usable by AI agents as by a mouse.
 - **Stack**: C++17, Qt6 Widgets, OpenCASCADE 7.9, native SQLite format
   (`.vkd`), CMake.
 - **Interop**: DXF R12–2018 (vendored, patched libdxfrw), DWG import (via
-  `dwg2dxf`/LibreDWG), STEP (OCCT, notes as sidecar JSON or optional AP242
-  attributes), STL/OBJ, PDF, and **Gerber RS-274X + Excellon** read/write.
+  `dwg2dxf`/LibreDWG), STEP read/write with **colour, transparency and part
+  names** (OCCT XCAF; notes as sidecar JSON or optional AP242 attributes),
+  **STL import (as a mesh) and export**, OBJ with `.mtl` materials, PDF, and
+  **Gerber RS-274X + Excellon** read/write.
 - **Agent-friendly by design**: headless `vikicad-cli` with JSON output,
   JSON-RPC socket on the running GUI (`vikicad-cli connect`), `.vks` command
   scripts (AutoCAD `.scr` semantics). See [docs/AGENT.md](docs/AGENT.md).

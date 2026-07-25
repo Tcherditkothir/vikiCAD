@@ -28,7 +28,7 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 | `open` | `$CLI open part.vkd --exec "INSPECT 2 All"` — add `--save` / `--save-as out.vkd` to persist |
 | `query` | `$CLI query part.vkd --entities --bounds` (also `--layers --notes --blocks --layouts --describe`) |
 | `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`, fab extensions `.gtl`...`.gko`/`.gbr`/`.txt` for one layer — §7d; a DIRECTORY target exports the whole Gerber kit) |
-| `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg` and `.step`) |
+| `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg`, `.step` and `.stl`) |
 | script | `$CLI new --run script.vks --save-as out.vkd` — a `.vks` file, one input line per row (AutoCAD `.scr` semantics) |
 
 `--exec` runs ONE complete command per flag, in order, left to right; the
@@ -52,7 +52,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
-| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
+| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.stl`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj`, fab extensions (one layer, optional layer-name arg), directory = Gerber kit (§7d) |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
@@ -60,7 +60,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `viewdir` | `$CLI connect viewdir FRONT` | aim the 3D camera along `TOP BOTTOM FRONT BACK LEFT RIGHT ISO` and refit the scene (3D view only — §5a) |
 | `pick3d` | `$CLI connect pick3d 400 300` | click at physical view pixels; no coords = view centre; returns e.g. `"picked face 2 of solid #3"` |
 | `sketchface` | `$CLI connect sketchface` | start a sketch on the currently selected face (pick3d a face first) |
-| `insertstep` | `$CLI connect insertstep other.step` | additive STEP import as an assembly component |
+| `insertstep` | `$CLI connect insertstep other.step` | additive STEP **or STL** import as an assembly component (the verb name predates STL) |
 
 Everything registered in the single CommandProcessor is available through
 BOTH channels — a command that works in `--exec` works in `connect exec`
@@ -476,6 +476,15 @@ an assembly exploded across the scene).
 - **DWG is import-only.** `$CLI import file.dwg --save-as out.vkd` works
   (R14–2013 natively, 2018+ via a bundled `dwg2dxf` fallback); there is no
   DWG export — export DXF instead.
+- **An imported STL is a MESH, not a solid.** It arrives as one face carrying
+  a triangulation and no surface — enough to view, measure, place
+  (`MOVE3D`/`ROTATE3D`), section and re-export, but booleans, fillets and
+  push/pull need real geometry and refuse with a message saying so.
+  `MESH2SOLID <id>` sews the triangles into a BREP solid when you truly need
+  that; it is capped at 20 000 triangles (`VIKICAD_MESH2SOLID_MAX` overrides)
+  because sewing 50 k cost 39 s and 800 MB here, and the result is faceted
+  either way. Both dialects are detected by content — a binary STL whose
+  80-byte header happens to start with the word `solid` does not fool it.
 - **GUI from a sandbox: systemd unit or nothing.** A GUI launched with
   plain `&`/`nohup` from an agent shell dies with the sandbox. Use the
   `systemd-run` recipe in §1b, poll `connect ping`, and stop the unit when

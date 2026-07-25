@@ -431,3 +431,52 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   925 dans test_rect_profile.cpp — les assertions étaient justes, le
   commentaire non. Un chiffre faux en commentaire coûte une heure au
   prochain lecteur qui refait le calcul.
+
+## 2026-07-25 — Maillages STL et couleurs STEP
+
+- **Un STL binaire peut commencer par le mot `solid`.** L'en-tête binaire
+  fait 80 octets libres et beaucoup d'exportateurs y écrivent
+  `solid <nom>` : 12 des 13 STL du coffre de Lex sont dans ce cas. Toute
+  détection ASCII/binaire par préfixe est donc FAUSSE. Le critère fiable
+  est arithmétique : `taille == 84 + 50 × nb_triangles`. `RWStl::ReadFile`
+  et le `STLLoader` de three.js font tous deux la bonne chose ; c'est le
+  code de diagnostic écrit à la va-vite qui se trompe.
+- **Une face porteuse d'une seule triangulation n'a AUCUNE `TopoDS_Edge`.**
+  C'est ce qui rend l'import STL gratuit pour le canevas 2D : la garde
+  `edges > 0 && edges <= 4000` de `SolidEntity::updateCache()` saute le
+  HLR d'office. À retenir avant d'ajouter un traitement qui suppose des
+  arêtes — sur un maillage il ne verra rien, ou pire, tournera à vide.
+- **`STEPControl_Reader` ne lit QUE la géométrie.** Couleurs, noms de
+  pièces et arbre d'assemblage sont silencieusement jetés. Le lecteur qui
+  les voit est `STEPCAFControl_Reader` avec `SetColorMode(true)` /
+  `SetNameMode(true)` — ces modes sont à FALSE par défaut, donc les
+  oublier redonne exactement l'ancien comportement sans le moindre
+  message. Symétrique côté écriture : `STEPControl_Writer` n'écrit aucune
+  couleur, il faut `STEPCAFControl_Writer` alimenté par un doc XCAF.
+- **Chercher la couleur au niveau de la PIÈCE ne trouve rien.** Les vrais
+  exportateurs stylent chaque CORPS : SolidWorks écrit
+  `STYLED_ITEM → MANIFOLD_SOLID_BREP`, un par solide. La recherche doit se
+  faire par `TopAbs_SOLID`, sur la forme NON DÉPLACÉE (c'est celle
+  qu'XCAF a indexée — déplacer avant de chercher casse la correspondance).
+- **Un nom de matériau ne dit pas sa couleur.** Vu dans les fichiers de
+  Lex : `COLOUR_RGB('Opaque(232,173,35)', 0., 0., 0.)`. SolidWorks garde
+  les valeurs du sélecteur dans le NOM et exporte du noir pur. Rapporter
+  le fichier, jamais le nom.
+- **Un style STEP peut être orphelin** : chaîne complète
+  `COLOUR_RGB → FILL_AREA_STYLE_COLOUR → … → PRESENTATION_STYLE_ASSIGNMENT`
+  que plus aucun `STYLED_ITEM` ne référence. Avant de conclure « on perd
+  une couleur », remonter la chaîne de références jusqu'au bout.
+- **Distinguer « pas de couleur dans le fichier » de « couleur perdue ».**
+  Les deux se ressemblent à l'écran (tout gris). D'où les compteurs
+  `colored`/`named` de `StepResult`, remontés dans le JSON du CLI et dans
+  la ligne d'historique : ils décrivent ce que le FICHIER portait. Un
+  AP203 nu n'a légitimement aucune couleur.
+- **Mesurer avant d'écrire le commentaire.** Le plafond de MESH2SOLID
+  était documenté « 50k prend des minutes et des gigaoctets » — écrit
+  avant la mesure. Réalité : 39 s et 817 Mo à 52 484 triangles, 48 s et
+  1,64 Go à 107 628 (debug). Faux sur le temps, juste sur la mémoire.
+- **Un test d'injection qui n'injecte rien est un test vert menteur.** Le
+  premier essai (`sed` avec des tabulations sur un fichier indenté aux
+  espaces) n'a modifié aucune ligne ; la suite est passée au vert sur du
+  code intact. TOUJOURS vérifier que l'injection a bien été posée
+  (`grep -c`) avant de lire le résultat.

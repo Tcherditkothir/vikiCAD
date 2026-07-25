@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- **STL import**: `.stl` files open as a mesh — one OCCT face carrying the
+  triangulation, so viewing, measuring, sectioning and placing
+  (`MOVE3D`/`ROTATE3D`, insert-as-component) all work. Both dialects are
+  detected by content, which matters because a binary STL's 80-byte header
+  often begins with the word `solid`. Booleans and fillets need real
+  geometry and refuse with a message saying so; `MESH2SOLID` (alias `M2S`)
+  sews the triangles into a BREP solid on demand, capped at 20 000
+  triangles (`VIKICAD_MESH2SOLID_MAX` overrides) because the cost is
+  dominated by memory — 52 k triangles measured at 39 s and 817 MB.
+- **STEP colour, transparency and part names**, both directions. Import
+  now goes through `STEPCAFControl_Reader`/XCAF and looks colour up per
+  SOLID (real exporters style each body, not the part), export through
+  `STEPCAFControl_Writer`. A ByLayer solid is deliberately left unstyled.
+  New `colored`/`named` counts report what the FILE carried, so "no
+  colour" is never mistaken for "colour lost".
+- **OBJ export writes materials**: a `.mtl` beside the `.obj`, one material
+  per colour+transparency pair, plus `o <component>` names. A model with no
+  explicit colour gets no `.mtl` and no `mtllib` line.
+- Fixed: OCCT printed parse diagnostics on **stdout**, which corrupted the
+  CLI's JSON reply on a malformed STL. Silencing is now shared by every
+  importer (`core/io/OcctMessages.h`).
+
 ## 0.2.0 — 2026-07-17
 
 Fusion-style 3D interaction, full headless/agent parity, and a new PCB

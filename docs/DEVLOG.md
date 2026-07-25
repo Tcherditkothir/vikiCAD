@@ -1011,3 +1011,125 @@ refus de R, RECT D sommets prédits à la main, lignes Propriétés lues via
 query ui, extrusion 6000 mm³ = la ligne même du clic droit, UNDO total).
 TOUS VERTS. Reste : validation souris de Lex (liste en tête de
 REPRISE.md).
+
+---
+
+## 2026-07-25 — STL en import + couleurs STEP récupérées (XCAF) ✅
+
+**Contexte.** Deux constats de Lex. (1) « vikicad ne prend pas en charge
+les STL » : l'export existait depuis la nuit autonome du 09, l'import
+n'avait jamais été écrit — un `.stl` tombait dans la branche kit Gerber
+et sortait `E_GERBERKIT: no Gerber or Excellon files recognized`, erreur
+trompeuse. (2) « on semble perdre les couleurs des STEP lors de la
+conversion, c'est le cas ? ou il n'y en a juste pas de sauvegarde dans le
+step ? » — question tranchée par la mesure avant d'écrire une ligne.
+
+**Réponse à la question des couleurs, prouvée sur les fichiers de Lex.**
+Elles SONT dans les fichiers, et c'est vikiCAD qui les jetait :
+`BOUCLIER_BLACK_N_ClearBlue.step` porte 2 `COLOUR_RGB` + 3 `STYLED_ITEM`,
+`ELECTRONIK_BLACK_N_WHITE.step` 3 + 13, `RobotSumoS5M0V1.step` 3 + 5 ;
+en revanche `ESP32 Heltec WIFI.STEP` (AP203) n'en porte aucune — donc les
+deux cas existent et il fallait pouvoir les distinguer. Reproduction
+headless avant correction : les 3 solides de BOUCLIER arrivaient tous en
+`bylayer`, sans nom ni transparence.
+
+**Trois endroits perdaient la couleur, pas un :**
+1. `importStep` lisait avec `STEPControl_Reader` — géométrie SEULEMENT.
+2. `exportStep` écrivait avec `STEPControl_Writer` — donc l'aller-retour
+   restait destructeur même une fois le lecteur corrigé.
+3. `exportObj` n'émettait aucune matière, et côté plugin Obsidian un
+   `MeshStandardMaterial` gris unique écrasait tout inconditionnellement.
+
+**Livré.**
+- **`importStl`** : `RWStl::ReadFile` (angle de fusion π/2, soudure des
+  sommets coïncidents) → `Poly_Triangulation` → `BRep_Builder::MakeFace`
+  → UNE face sans surface, logée dans le `SolidEntity` existant. Aucun
+  nouveau type d'entité, aucun nouveau renderer : la sérialisation
+  BinTools passe `withTriangles=true` (vérifié, sinon un maillage
+  disparaîtrait en silence à la réouverture du `.vkd`), et une face
+  porteuse d'une seule triangulation n'a AUCUNE `TopoDS_Edge` — donc la
+  garde à 4000 arêtes de `updateCache()` saute le HLR d'office, sans quoi
+  un maillage de 100k triangles figerait le canevas 2D.
+- **`MESH2SOLID`** (alias `M2S`) : triangles → faces planes →
+  `BRepBuilderAPI_Sewing` → coque, puis solide si elle est fermée. Refus
+  net au-dessus de 20 000 triangles, plafond fixé SUR MESURE et non au
+  jugé : 4 014 tri → 0,7 s ; 11 140 → 2,9 s ; 52 484 → 39,3 s et 817 Mo ;
+  107 628 → 48,3 s et 1,64 Go (build debug). La mémoire est le vrai mur.
+  `VIKICAD_MESH2SOLID_MAX` relève le plafond (même idiome que
+  `VIKICAD_STEP_UDA`). Les triangles d'aire nulle sont sautés et comptés
+  plutôt que de faire échouer toute la conversion.
+- **`importStep` via `STEPCAFControl_Reader` + XCAF** : couleur,
+  transparence et nom de pièce par solide. La recherche se fait AU NIVEAU
+  DU SOLIDE et sur la forme NON DÉPLACÉE (c'est celle qu'XCAF indexe) :
+  SolidWorks écrit `STYLED_ITEM → MANIFOLD_SOLID_BREP`, un par corps, et
+  une recherche au niveau pièce ne trouve rien — constaté, puis corrigé.
+  Parcours récursif de l'arbre d'assemblage avec composition des
+  placements. Nouveaux compteurs `colored`/`named` dans `StepResult` et
+  dans le JSON du CLI : ils disent ce que le FICHIER portait, pour que
+  « aucune couleur » ne soit jamais confondu avec « couleur perdue ».
+- **`exportStep` via `STEPCAFControl_Writer`** : symétrique. Un solide
+  `ByLayer` reste NON stylé (ne pas cuire la couleur de calque du jour
+  dans le fichier). L'injection des notes AP242 passe désormais par
+  `writer.ChangeWriter().WS()->Model()`.
+- **`exportObj` + `.mtl`** : une matière par couple couleur+transparence,
+  `usemtl` avant les faces, `o <composant>` pour l'outliner. Aucun `.mtl`
+  ni `mtllib` quand le modèle est entièrement `ByLayer` — une
+  bibliothèque vide ne ferait que déclencher des avertissements.
+- **`silenceOcctMessages` factorisé** dans `core/io/OcctMessages.h` :
+  vérifié qu'un STL tronqué fait imprimer « premature end of file » par
+  OCCT sur **stdout**, ce qui corrompait le JSON du CLI. Les deux cas
+  (fichier bidon, fichier tronqué) rendent maintenant du JSON valide.
+- **Câblage** : CLI `import IN.stl`, File>Open (+ filtre), et
+  `insertStepFile` renommé `insertComponentFile` — il accepte STEP ET STL,
+  ce qui est le vrai usage des 13 STL du coffre (pièces du commerce à
+  placer dans un assemblage). Le nom de fichier ne sert plus que de repli
+  quand le fichier ne porte pas de nom de pièce, sinon il écrasait ce
+  qu'XCAF venait de récupérer.
+
+**Leçons.**
+- **Un STL binaire dont les 80 octets d'en-tête commencent par le mot
+  `solid` est courant** — 12 des 13 fichiers du coffre. Toute détection
+  ASCII/binaire par préfixe se trompe ; l'arithmétique
+  `taille == 84 + 50 × n` est la bonne (vérifiée à l'octet près sur 4
+  fichiers). OCCT et STLLoader font tous deux la bonne chose.
+- **Un nom de matériau SolidWorks ne dit pas sa couleur** :
+  `COLOUR_RGB('Opaque(232,173,35)', 0., 0., 0.)` — le nom garde les
+  valeurs du sélecteur, le fichier écrit du noir pur. Rapporter
+  fidèlement le fichier, jamais le nom.
+- **Un style STEP peut être orphelin** : dans ELECTRONIK, la chaîne du
+  noir s'arrête à un `PRESENTATION_STYLE_ASSIGNMENT` que RIEN ne
+  référence. 12 styles → 12 solides colorés, 3 sans style, 1 couleur
+  morte : tout est comptabilisé, rien n'est perdu.
+- `MESH2SOLID FORCE` a été tenté puis abandonné : à un prompt
+  `EntitySet` l'analyseur avale les identifiants en bloc, un mot-clé y
+  casse la grammaire (et LESSONS note déjà qu'un prompt laissé ouvert
+  avale la commande suivante). Variable d'environnement à la place.
+- Le commentaire d'en-tête du plafond affirmait d'abord « 50k prend des
+  minutes et des gigaoctets » — écrit AVANT de mesurer. Faux sur le temps
+  (39 s), juste sur la mémoire. Remplacé par le tableau des mesures.
+
+**Tests d'injection (règle du dépôt : exiger la preuve, pas le vert).**
+`SetColorMode(false)` → 2 cas / 6 assertions tombent. `usemtl` supprimé de
+l'export OBJ → 1 cas / 1 assertion tombe. Le premier essai d'injection
+n'avait PAS pris (motif `sed` non apparié, 0 occurrence) : le « vert »
+observé portait sur du code intact — refait correctement. Fichiers
+restaurés, empreintes md5 identiques.
+
+**Chiffres** : ctest 5848/348 → **6049 assertions / 364 cas** ;
+gui-smoke 281 → **292 checks** (phase `meshimp:` : export STL binaire de
+684 = 84+50×12 octets, réouverture par le dispatch File>Open, bbox du cube,
+rendu 3D, MESH2SOLID à 1000 mm³ exactement, UNDO). TOUS VERTS.
+
+**Projet compagnon** (dépôt `vikicad-obsidian-viewer`) : `stepView.ts`
+devient `mesh3dView.ts` et sert les deux formats. Un `.stl` est lu
+DIRECTEMENT par three.js — aucune conversion, aucun `vikicad-cli` — donc
+c'est le seul format 3D qui marche sur toutes les machines de Lex. Le
+`.mtl` voisin est chargé quand il existe, et le matériau de repli ne
+s'applique plus que là où le fichier ne dit rien. Vérifié hors navigateur
+sur les vrais fichiers : les 3 solides de BOUCLIER arrivent avec
+`vikicad_0` noir et `vikicad_1` gris `#a0a0a0`, et le DHT22 (en-tête
+`solid`, binaire) donne 11 140 triangles et 15,0 × 10,8 × 40,6 mm.
+
+**Reste à faire** : validation souris par Lex (tour en tête de
+REPRISE.md). Le « ClearBlue » du nom de BOUCLIER n'a jamais atteint le
+STEP — réglage d'export SolidWorks, hors de notre portée.
