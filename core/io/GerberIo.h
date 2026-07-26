@@ -99,6 +99,12 @@ struct GerberFile {
     GerberUnit unit = GerberUnit::Unknown;
     std::map<int, GerberAperture> apertures;  // by D-code
     std::map<QString, GerberMacro> macros;    // by %AM name
+    // %AM bodies that use $n variables / arithmetic, kept as raw statements.
+    // They are bound at %ADD time: the referencing aperture gets a private,
+    // fully numeric copy in `macros` (name suffixed "_Dnn"), so everything
+    // downstream — rings, inspector, writer, camMeta — only ever sees
+    // concrete values. P-CAD/Protel kits (OC8...) depend on this.
+    QMap<QString, QStringList> paramMacros;
     std::vector<GerberObject> objects;        // document (paint) order
     // X2 file attributes from BOTH forms — naked %TF...*% and the Altium
     // comment form `G04 #@! TF...*`. Key ".FileFunction" etc -> raw value.

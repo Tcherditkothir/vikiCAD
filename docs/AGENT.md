@@ -52,7 +52,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
-| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.stl`, EAGLE `.brd`/`.sch`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
+| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.igs` `.stl`, EAGLE `.brd`/`.sch`/`.lbr`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj`, fab extensions (one layer, optional layer-name arg), directory = Gerber kit (§7d) |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
@@ -497,9 +497,22 @@ an assembly exploded across the scene).
   substitute `>NAME`/`>VALUE` and lay sheets SIDE BY SIDE with a 25 mm gap.
   There is no EAGLE export and no going back: this is a one-way viewing
   import, connectivity (contactrefs, classes, design rules) is not carried.
-  Three refusals by design, each naming the cure in its message: EAGLE ≤5
-  binaries (first byte 0x10 — resave as XML in EAGLE 6+), `.lbr` libraries,
-  and `.sch` files from other EDA tools (content-sniffed, not extension).
+  A `.lbr` library opens as a CONTACT SHEET: one grid cell per package and
+  symbol, names on a dedicated "Labels" layer, `>NAME`/`>VALUE` literal.
+  Two refusals by design, each naming the cure in its message: EAGLE ≤5
+  binaries (first byte 0x10 — resave as XML in EAGLE 6+) and `.sch` files
+  from other EDA tools (content-sniffed, not extension).
+- **IGES imports as surfaces, on purpose.** `$CLI import model.igs
+  --save-as out.vkd` uses the same XCAF pipeline as STEP, but IGES files in
+  the wild are trimmed surfaces: a solid-free file arrives as ONE viewable
+  entity (view/measure/section fine; booleans need MESH2SOLID-style real
+  geometry that IGES rarely carries). No IGES export.
+- **Old P-CAD/Protel gerbers are first-class.** Aperture macros with `$n`
+  variables/expressions bind at %ADD into concrete private macros
+  (`NAME_Dnn`); `D01` with no prior `G01` assumes linear with a warning;
+  `.top/.bot/.smt/.smb/.sst/.ssb/.spt/.spb` map to their kit roles. If a
+  kit still skips a layer, read the `skipped` array — it names the file
+  and the reason.
 - **An imported STL is a MESH, not a solid.** It arrives as one face carrying
   a triangulation and no surface — enough to view, measure, place
   (`MOVE3D`/`ROTATE3D`), section and re-export, but booleans, fillets and

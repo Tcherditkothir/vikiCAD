@@ -1542,6 +1542,26 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
         m_commandBar->appendHistory(msg);
         return true;
     }
+    if (ends(".igs") || ends(".iges")) {
+        std::unique_ptr<Document> doc;
+        const StepResult r = importIges(path, doc);
+        if (!r.ok || !doc)
+            return reportError(r.error.isEmpty() ? QStringLiteral("IGES import failed")
+                                                 : r.error);
+        const QString comp = QFileInfo(path).completeBaseName();
+        for (const EntityId id : doc->drawOrder())
+            if (auto* s = dynamic_cast<SolidEntity*>(doc->entity(id)))
+                if (s->component.isEmpty())
+                    s->component = comp;
+        adoptDocument(std::move(doc));
+        markNeverSaved();
+        m_commandBar->appendHistory(
+            QStringLiteral("Imported %1 shape(s) from IGES %2 — surface models "
+                           "arrive as one viewable entity")
+                .arg(r.solids)
+                .arg(path));
+        return true;
+    }
     if (ends(".stl")) {
         std::unique_ptr<Document> doc;
         const StlResult r = importStl(path, doc);
@@ -1613,16 +1633,18 @@ void MainWindow::openFile()
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
         QStringLiteral(
-            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.stl *.brd *.sch "
-            "*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 "
-            "*.gbr *.txt *.drl);;"
+            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.igs *.iges *.stl "
+            "*.brd *.sch *.lbr *.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp "
+            "*.gko *.gm1 *.gm13 *.gm15 *.gm16 *.gpt *.gpb *.gbr *.txt *.drl "
+            "*.tap);;"
             "VikiCAD drawings (*.vkd);;"
             "DXF/DWG (*.dxf *.dwg);;"
-            "STEP (*.step *.stp);;"
+            "STEP/IGES (*.step *.stp *.igs *.iges);;"
             "STL mesh (*.stl);;"
-            "EAGLE board/schematic (*.brd *.sch);;"
+            "EAGLE (*.brd *.sch *.lbr);;"
             "Gerber/Excellon (*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp "
-            "*.gko *.gm1 *.gbr *.txt *.drl);;"
+            "*.gko *.gm1 *.gm13 *.gm15 *.gm16 *.gpt *.gpb *.gbr *.txt *.drl "
+            "*.tap);;"
             "All files (*)"));
     if (path.isEmpty())
         return;
@@ -1663,7 +1685,7 @@ void MainWindow::importEagleFile()
         return;
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Import EAGLE board/schematic"), {},
-        QStringLiteral("EAGLE 6+ XML (*.brd *.sch);;All files (*)"));
+        QStringLiteral("EAGLE 6+ XML (*.brd *.sch *.lbr);;All files (*)"));
     if (path.isEmpty())
         return;
     EagleImportResult r = importEagle(path);

@@ -10,6 +10,7 @@
 #include <BRep_Builder.hxx>
 #include <Quantity_Color.hxx>
 #include <Quantity_ColorRGBA.hxx>
+#include <IGESCAFControl_Reader.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_Reader.hxx>
@@ -340,6 +341,55 @@ StepResult exportStep(const Document& doc, const QString& path)
     return result;
 }
 
+// Shared tail of the XCAF importers (STEP and IGES): walk the assembly tree
+// into SolidEntities, with the solid-free fallback (whole shape as one
+// entity). Fills result.solids; false = result.error is set.
+static bool documentFromXcaf(const Handle(TDocStd_Document)& xdoc,
+                             const QString& path,
+                             std::unique_ptr<Document>& outDoc,
+                             StepResult& result)
+{
+    Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(xdoc->Main());
+    Handle(XCAFDoc_ColorTool) colorTool = XCAFDoc_DocumentTool::ColorTool(xdoc->Main());
+    if (shapeTool.IsNull()) {
+        result.error = QStringLiteral("no shape structure in %1").arg(path);
+        return false;
+    }
+
+    TDF_LabelSequence roots;
+    shapeTool->GetFreeShapes(roots);
+    if (roots.IsEmpty()) {
+        result.error = QStringLiteral("no shapes in %1").arg(path);
+        return false;
+    }
+
+    outDoc = std::make_unique<Document>();
+
+    // Walk the assembly tree so instance placements are applied and every leaf
+    // keeps its own name and colour, then explode each leaf into solids exactly
+    // as before — one SolidEntity per TopAbs_SOLID.
+    int solids = 0;
+    for (int i = 1; i <= roots.Length(); ++i)
+        addLabelToDocument(*outDoc, roots.Value(i), shapeTool, colorTool,
+                           TopLoc_Location(), QString(), solids, result);
+
+    if (solids == 0) {
+        // No SOLID anywhere (a shell-only or surface-only file): keep the
+        // whole thing as one entity rather than opening an empty document.
+        const TopoDS_Shape all = shapeTool->GetShape(roots.Value(1));
+        if (all.IsNull()) {
+            outDoc.reset();
+            result.error = QStringLiteral("no usable shape in %1").arg(path);
+            return false;
+        }
+        outDoc->restoreEntity(std::make_unique<SolidEntity>(all), outDoc->nextId());
+        outDoc->setNextId(outDoc->nextId() + 1);
+        solids = 1;
+    }
+    result.solids = solids;
+    return true;
+}
+
 StepResult importStep(const QString& path, std::unique_ptr<Document>& outDoc)
 {
     StepResult result;
@@ -361,43 +411,8 @@ StepResult importStep(const QString& path, std::unique_ptr<Document>& outDoc)
         return result;
     }
 
-    Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(xdoc->Main());
-    Handle(XCAFDoc_ColorTool) colorTool = XCAFDoc_DocumentTool::ColorTool(xdoc->Main());
-    if (shapeTool.IsNull()) {
-        result.error = QStringLiteral("no shape structure in %1").arg(path);
+    if (!documentFromXcaf(xdoc, path, outDoc, result))
         return result;
-    }
-
-    TDF_LabelSequence roots;
-    shapeTool->GetFreeShapes(roots);
-    if (roots.IsEmpty()) {
-        result.error = QStringLiteral("no shapes in %1").arg(path);
-        return result;
-    }
-
-    outDoc = std::make_unique<Document>();
-
-    // Walk the assembly tree so instance placements are applied and every leaf
-    // keeps its own name and colour, then explode each leaf into solids exactly
-    // as before — one SolidEntity per TopAbs_SOLID.
-    int solids = 0;
-    for (int i = 1; i <= roots.Length(); ++i)
-        addLabelToDocument(*outDoc, roots.Value(i), shapeTool, colorTool,
-                           TopLoc_Location(), QString(), solids, result);
-
-    if (solids == 0) {
-        // No SOLID anywhere (a shell-only or surface-only STEP): keep the whole
-        // thing as one entity rather than opening an empty document.
-        const TopoDS_Shape all = shapeTool->GetShape(roots.Value(1));
-        if (all.IsNull()) {
-            outDoc.reset();
-            result.error = QStringLiteral("no usable shape in %1").arg(path);
-            return result;
-        }
-        outDoc->restoreEntity(std::make_unique<SolidEntity>(all), outDoc->nextId());
-        outDoc->setNextId(outDoc->nextId() + 1);
-        solids = 1;
-    }
 
     // Sidecar notes back in.
     QFile f(sidecarPath(path));
@@ -424,7 +439,34 @@ StepResult importStep(const QString& path, std::unique_ptr<Document>& outDoc)
     }
 
     result.ok = true;
-    result.solids = solids;
+    return result;
+}
+
+StepResult importIges(const QString& path, std::unique_ptr<Document>& outDoc)
+{
+    StepResult result;
+    silenceOcctMessages();
+
+    // Same XCAF pipeline as STEP, different reader. IGES models are usually
+    // trimmed surfaces rather than solids, so the solid-free fallback in
+    // documentFromXcaf (whole shape as ONE entity) is the common path.
+    IGESCAFControl_Reader reader;
+    reader.SetColorMode(Standard_True);
+    reader.SetNameMode(Standard_True);
+    reader.SetLayerMode(Standard_True);
+
+    Handle(TDocStd_Document) xdoc;
+    XCAFApp_Application::GetApplication()->NewDocument(
+        TCollection_ExtendedString("MDTV-XCAF"), xdoc);
+    if (!reader.Perform(TCollection_AsciiString(path.toUtf8().constData()), xdoc)) {
+        result.error = QStringLiteral("cannot read IGES file %1").arg(path);
+        return result;
+    }
+
+    if (!documentFromXcaf(xdoc, path, outDoc, result))
+        return result;
+
+    result.ok = true;
     return result;
 }
 

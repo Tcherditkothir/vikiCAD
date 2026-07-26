@@ -441,16 +441,101 @@ TEST_CASE("EAGLE import refusals are explicit", "[eagle]")
         CHECK(result.error.contains("not an EAGLE XML file"));
     }
 
-    SECTION("libraries are refused with guidance")
+}
+
+TEST_CASE("EAGLE library import: grid of packages and symbols", "[eagle]")
+{
+    QTemporaryDir dir;
+    const char kLbrXml[] = R"(<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE eagle SYSTEM "eagle.dtd">
+<eagle version="6.5.0">
+<drawing>
+<layers>
+<layer number="1" name="Top" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="21" name="tPlace" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="25" name="tNames" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="94" name="Symbols" color="4" fill="1" visible="yes" active="yes"/>
+</layers>
+<library>
+<packages>
+<package name="P1">
+<smd name="1" x="0" y="0" dx="2" dy="1" layer="1"/>
+<text x="0" y="1.5" size="1.27" layer="25">&gt;NAME</text>
+</package>
+<package name="P2">
+<wire x1="-2" y1="0" x2="2" y2="0" width="0.2" layer="21"/>
+</package>
+</packages>
+<symbols>
+<symbol name="RES">
+<wire x1="0" y1="0" x2="2.54" y2="0" width="0.254" layer="94"/>
+<pin name="A" x="-2.54" y="0" length="short"/>
+</symbol>
+</symbols>
+</library>
+</drawing>
+</eagle>
+)";
+    const QString path = writeTemp(dir, "lib.lbr", kLbrXml);
+
+    auto result = importEagle(path);
+    INFO(result.error.toStdString());
+    REQUIRE(result.ok);
+    CHECK(result.kind == "library");
+    REQUIRE(result.document);
+    Document& doc = *result.document;
+
+    SECTION("every item gets a title on the Labels layer")
     {
-        const QString path = writeTemp(dir, "lib.lbr",
-            "<?xml version=\"1.0\"?><eagle version=\"6.4\"><drawing>"
-            "<library><packages/></library></drawing></eagle>");
-        CHECK(isEagleXml(path));
-        auto result = importEagle(path);
-        CHECK_FALSE(result.ok);
-        CHECK(result.error.contains(".lbr"));
+        const Layer* labels = doc.layerByName("Labels");
+        REQUIRE(labels);
+        for (const char* name : {"P1", "P2", "RES"}) {
+            const auto* t = findEntity<TextEntity>(doc, [&](const TextEntity& e) {
+                return e.text() == QLatin1String(name);
+            });
+            INFO(name);
+            REQUIRE(t);
+            CHECK(t->layerId() == labels->id);
+        }
     }
+
+    SECTION(">NAME stays literal, like EAGLE's library editor")
+    {
+        CHECK(findEntity<TextEntity>(doc, [](const TextEntity& t) {
+            return t.text() == ">NAME";
+        }));
+    }
+
+    SECTION("cells do not overlap")
+    {
+        std::vector<Vec2d> titlePos;
+        for (const EntityId id : doc.drawOrder()) {
+            const auto* t = dynamic_cast<const TextEntity*>(doc.entity(id));
+            if (t && (t->text() == "P1" || t->text() == "P2" || t->text() == "RES"))
+                titlePos.push_back(t->position());
+        }
+        REQUIRE(titlePos.size() == 3);
+        for (size_t i = 0; i < titlePos.size(); ++i)
+            for (size_t j = i + 1; j < titlePos.size(); ++j)
+                CHECK((titlePos[i] - titlePos[j]).length() > 3.0);
+    }
+}
+
+TEST_CASE("EAGLE library import: real vault library", "[eagle]")
+{
+    const QString lbr = QStringLiteral(
+        "/home/lex/LSB_LexSecondBrain/_4_Archives/50-OldJobs/GUILLAUME_SIMARD/"
+        "Aki3/aki-pcb/lib/ALRMP_RLC.lbr");
+    if (!QFileInfo::exists(lbr)) {
+        SKIP("vault library not present on this machine");
+    }
+    auto result = importEagle(lbr);
+    INFO(result.error.toStdString());
+    REQUIRE(result.ok);
+    CHECK(result.kind == "library");
+    CHECK(result.imported > 50);
+    INFO(result.skippedTypes.join(", ").toStdString());
+    CHECK(result.document->layerByName("Labels"));
 }
 
 TEST_CASE("EAGLE import: real vault files", "[eagle]")

@@ -152,6 +152,24 @@ std::optional<Role> roleFromExtension(const QString& ext, int& outlinePriority)
         return Role{QStringLiteral("Top-Pads"), kTopPadsRgb, kRankTopPads};
     if (ext == QLatin1String("GPB"))
         return Role{QStringLiteral("Bottom-Pads"), kBotPadsRgb, kRankBotPads};
+    // P-CAD / Protel short names (Aki3, AGC kits): TOP/BOT copper,
+    // SMT/SMB solder mask, SST/SSB silkscreen, SPT/SPB paste.
+    if (ext == QLatin1String("TOP"))
+        return Role{QStringLiteral("Top-Copper"), kTopCopperRgb, kRankTopCopper};
+    if (ext == QLatin1String("BOT"))
+        return Role{QStringLiteral("Bottom-Copper"), kBotCopperRgb, kRankBotCopper};
+    if (ext == QLatin1String("SMT"))
+        return Role{QStringLiteral("Top-Mask"), kTopMaskRgb, kRankTopMask};
+    if (ext == QLatin1String("SMB"))
+        return Role{QStringLiteral("Bottom-Mask"), kBotMaskRgb, kRankBotMask};
+    if (ext == QLatin1String("SST"))
+        return Role{QStringLiteral("Top-Silk"), kTopSilkRgb, kRankTopSilk};
+    if (ext == QLatin1String("SSB"))
+        return Role{QStringLiteral("Bottom-Silk"), kBotSilkRgb, kRankBotSilk};
+    if (ext == QLatin1String("SPT"))
+        return Role{QStringLiteral("Top-Paste"), kTopPasteRgb, kRankTopPaste};
+    if (ext == QLatin1String("SPB"))
+        return Role{QStringLiteral("Bottom-Paste"), kBotPasteRgb, kRankBotPaste};
     if (ext == QLatin1String("GKO")) {
         outlinePriority = 0;
         return Role{QStringLiteral("Keepout"), kKeepoutRgb, kRankKeepout};

@@ -93,7 +93,7 @@ target_link_libraries(vikicore
         # TopoDS_Shape to consumers (visualization stays out of core).
         TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
         TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKOffset
-        TKDESTEP TKXSBase TKShHealing
+        TKDESTEP TKDEIGES TKXSBase TKShHealing
         TKMesh TKDESTL
     PRIVATE
         viki_warnings

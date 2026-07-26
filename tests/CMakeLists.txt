@@ -55,6 +55,7 @@ add_executable(vikicad-tests
     test_layer_stack.cpp
     test_mindist.cpp
     test_eagle_import.cpp
+    test_iges_import.cpp
 )
 
 # Committed golden files (synthetic Gerber fixtures, ...).

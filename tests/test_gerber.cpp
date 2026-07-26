@@ -564,9 +564,9 @@ TEST_CASE("Gerber: errors carry line numbers", "[gerber]")
     expectError("%FSLAX25Y25*%\n%MOIN*%\nG91*\nM02*\n", "G91", 3);
     // Negative image polarity.
     expectError("%FSLAX25Y25*%\n%MOIN*%\n%IPNEG*%\nM02*\n", "polarity", 3);
-    // Macro variables are out of scope — explicit refusal.
-    expectError("%FSLAX25Y25*%\n%MOIN*%\n%AMVAR*\n1,1,$1,0,0*\n%\nM02*\n",
-                "variables", 3);
+    // A parametric macro must exist before an %ADD binds parameters to it.
+    expectError("%FSLAX25Y25*%\n%MOIN*%\n%ADD22NOPE,0.070*%\nM02*\n",
+                "not defined before use", 3);
     // Unterminated extended command.
     expectError("%FSLAX25Y25*\nM02*\n", "unterminated", 1);
     // Region never closed.
@@ -847,4 +847,139 @@ TEST_CASE("Gerber kits: plausible board extents and full conversion", "[gerber][
     CHECK(res.blocks == 26);   // distinct D-codes flashed on this layer
     CHECK(doc.entityCount() > 400);
     CHECK(doc.blocks().size() == 26);
+}
+
+TEST_CASE("aperture macros with variables and expressions (P-CAD OC8)", "[gerber]")
+{
+    SECTION("polygon macro bound at %ADD time")
+    {
+        // The P-CAD classic: octagon whose circumscribed diameter is
+        // 1.08239 x the %ADD parameter. MOIN: everything converts to mm.
+        const QByteArray src =
+            "%FSLAX25Y25*%\n%MOIN*%\n"
+            "%AMOC8*\n5,1,8,0,0,1.08239X$1,22.5*\n%\n"
+            "%ADD22OC8,0.070*%\n"
+            "G01*\nD22*\nX0Y0D03*\nM02*\n";
+        const GerberParseResult r = parseGerberData(src);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        const GerberAperture& ap = r.file.apertures.at(22);
+        CHECK(ap.kind == 'M');
+        REQUIRE(r.file.macros.count(ap.macroName));
+        QStringList warnings;
+        const auto rings = gerberApertureRings(ap, r.file, warnings);
+        REQUIRE(rings.size() == 1);
+        CHECK(rings[0].size() == 8);
+        double maxR = 0;
+        for (const Vec2d& p : rings[0])
+            maxR = std::max(maxR, p.length());
+        // 1.08239 * 0.070 / 2 inch = 0.9622 mm vertex radius.
+        CHECK(maxR == Approx(1.08239 * 0.070 / 2.0 * 25.4).margin(1e-3));
+    }
+
+    SECTION("assignments, parentheses, division and unary minus")
+    {
+        // $3 = 2*$1, rect w=$3 h=(0.020+$1)/2, then a second rect using -$2.
+        const QByteArray src =
+            "%FSLAX25Y25*%\n%MOIN*%\n"
+            "%AMDBL*\n$3=$1x2*\n21,1,$3,(0.020+$1)/2,0,0,0*\n%\n"
+            "%ADD30DBL,0.010*%\n"
+            "G01*\nD30*\nX0Y0D03*\nM02*\n";
+        const GerberParseResult r = parseGerberData(src);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        const GerberAperture& ap = r.file.apertures.at(30);
+        QStringList warnings;
+        const auto rings = gerberApertureRings(ap, r.file, warnings);
+        REQUIRE(rings.size() == 1);
+        REQUIRE(rings[0].size() == 4);
+        BBox2d box;
+        for (const Vec2d& p : rings[0])
+            box.expand(p);
+        CHECK(box.width() == Approx(0.020 * 25.4).margin(1e-3));   // 2 x 0.010
+        CHECK(box.height() == Approx(0.015 * 25.4).margin(1e-3));  // 0.030 / 2
+    }
+
+    SECTION("undefined variable reads as 0, macro without params still binds")
+    {
+        const QByteArray src =
+            "%FSLAX25Y25*%\n%MOMM*%\n"
+            "%AMHOLE*\n1,1,$1,$9,0*\n%\n"
+            "%ADD40HOLE,1.5*%\n"
+            "G01*\nD40*\nX0Y0D03*\nM02*\n";
+        const GerberParseResult r = parseGerberData(src);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        QStringList warnings;
+        const auto rings =
+            gerberApertureRings(r.file.apertures.at(40), r.file, warnings);
+        REQUIRE(rings.size() == 1);
+        BBox2d box;
+        for (const Vec2d& p : rings[0])
+            box.expand(p);
+        // Circle d=1.5 centered at ($9=0, 0). The ring is a polygonized
+        // circle, so its bbox is a hair asymmetric — mm-scale margin.
+        CHECK(box.center().x == Approx(0.0).margin(1e-2));
+        CHECK(box.width() == Approx(1.5).margin(1e-2));
+    }
+
+    SECTION("parameters on a variable-free macro warn and are ignored")
+    {
+        const QByteArray src =
+            "%FSLAX25Y25*%\n%MOMM*%\n"
+            "%AMFIX*\n1,1,0.5,0,0*\n%\n"
+            "%ADD41FIX,0.1*%\n"
+            "G01*\nD41*\nX0Y0D03*\nM02*\n";
+        const GerberParseResult r = parseGerberData(src);
+        INFO(r.error.toStdString());
+        REQUIRE(r.ok);
+        CHECK(r.file.warnings.filter(QStringLiteral("takes no variables")).size() == 1);
+        CHECK(r.file.apertures.at(41).macroName == QStringLiteral("FIX"));
+    }
+
+    SECTION("bad expression fails with the macro named")
+    {
+        const QByteArray src =
+            "%FSLAX25Y25*%\n%MOMM*%\n"
+            "%AMBAD*\n1,1,$1+,0,0*\n%\n"
+            "%ADD42BAD,0.1*%\nM02*\n";
+        const GerberParseResult r = parseGerberData(src);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("BAD")));
+    }
+}
+
+TEST_CASE("D01 with no explicit G01 defaults to linear (P-CAD, OrCAD)", "[gerber]")
+{
+    const QByteArray src =
+        "%FSLAX25Y25*%\n%MOMM*%\n"
+        "%ADD10C,0.2*%\n"
+        "D10*\nX0Y0D02*\nX100000Y0D01*\nM02*\n";
+    const GerberParseResult r = parseGerberData(src);
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+    REQUIRE(r.file.objects.size() == 1);
+    CHECK(r.file.objects[0].kind == GerberObjKind::Draw);
+    CHECK(r.file.warnings.filter(QStringLiteral("assuming linear")).size() == 1);
+}
+
+TEST_CASE("real P-CAD kit (Aki3) parses end to end", "[gerber]")
+{
+    const QString top = QStringLiteral(
+        "/home/lex/LSB_LexSecondBrain/_4_Archives/50-OldJobs/GUILLAUME_SIMARD/"
+        "Aki3/aki-pcb/aki-controller/pm5-rn2903-micrf220/output/"
+        "aki-controller-pm5-rn2903-micrf220-rev-100.top");
+    if (!QFile::exists(top)) {
+        SKIP("Aki3 kit not present on this machine");
+    }
+    const GerberParseResult r = parseGerber(top);
+    INFO(r.error.toStdString());
+    REQUIRE(r.ok);
+    CHECK(r.file.objects.size() > 500);
+    Document doc;
+    const GerberImportResult res =
+        gerberToDocument(doc, r.file, QStringLiteral("TOP"));
+    INFO(res.error.toStdString());
+    REQUIRE(res.ok);
+    CHECK(doc.entityCount() > 500);
 }

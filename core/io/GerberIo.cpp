@@ -5,6 +5,7 @@
 #include <optional>
 
 #include <QFile>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -134,6 +135,238 @@ bool parseFS(ParseState& st, const QString& s, int line)
     return true;
 }
 
+// Validates one macro primitive's arity and appends it (code 2 is the
+// deprecated alias of 20). Shared by the literal %AM path and by the
+// %ADD-time binding of parametric macros.
+bool appendMacroPrim(ParseState& st, GerberMacro& macro, const QString& name,
+                     int code, std::vector<double> params, int line)
+{
+    if (code == 2) { // deprecated alias of 20 (vector line)
+        st.warn(line, QStringLiteral("macro primitive code 2 treated as 20"));
+        code = 20;
+    }
+    GerberMacroPrim prim;
+    prim.line = line;
+    prim.params = std::move(params);
+    const size_t np = prim.params.size();
+    switch (code) {
+    case 1:
+        if (np < 4)
+            return st.fail(line, QStringLiteral("macro circle needs 4+ parameters"));
+        break;
+    case 20:
+        if (np < 7)
+            return st.fail(line, QStringLiteral("macro vector line needs 7 parameters"));
+        break;
+    case 21:
+        if (np < 6)
+            return st.fail(line, QStringLiteral("macro center rect needs 6 parameters"));
+        break;
+    case 4: {
+        if (np < 2)
+            return st.fail(line, QStringLiteral("macro outline truncated"));
+        const int n = int(std::lround(prim.params[1]));
+        if (n < 1 || np < size_t(2 + 2 * (n + 1) + 1))
+            return st.fail(line, QStringLiteral("macro outline truncated"));
+        break;
+    }
+    case 5:
+        if (np < 6)
+            return st.fail(line, QStringLiteral("macro polygon needs 6 parameters"));
+        break;
+    case 6:
+    case 7:
+    case 22:
+        break; // kept raw; conversion warns
+    default:
+        st.warn(line, QStringLiteral("unknown macro primitive code %1 in '%2'")
+                          .arg(code).arg(name));
+        break;
+    }
+    prim.code = code;
+    macro.prims.push_back(std::move(prim));
+    return true;
+}
+
+// RS-274X %AM expression: numbers, $n variables, + - x X /, parentheses,
+// unary minus. An undefined variable reads as 0 (spec 4.5.4.3).
+class MacroExpr {
+public:
+    MacroExpr(const QString& s, const QHash<int, double>& vars)
+        : m_s(s), m_vars(vars) {}
+
+    bool eval(double& out)
+    {
+        m_pos = 0;
+        m_ok = true;
+        out = expr();
+        return m_ok && m_pos == m_s.size();
+    }
+
+private:
+    QChar peek() const { return m_pos < m_s.size() ? m_s.at(m_pos) : QChar(); }
+
+    double expr()
+    {
+        double v = term();
+        while (m_ok) {
+            const QChar c = peek();
+            if (c == QLatin1Char('+')) {
+                ++m_pos;
+                v += term();
+            } else if (c == QLatin1Char('-')) {
+                ++m_pos;
+                v -= term();
+            } else {
+                break;
+            }
+        }
+        return v;
+    }
+    double term()
+    {
+        double v = factor();
+        while (m_ok) {
+            const QChar c = peek();
+            if (c == QLatin1Char('x') || c == QLatin1Char('X')) {
+                ++m_pos;
+                v *= factor();
+            } else if (c == QLatin1Char('/')) {
+                ++m_pos;
+                const double d = factor();
+                if (d == 0.0) {
+                    m_ok = false;
+                    return 0.0;
+                }
+                v /= d;
+            } else {
+                break;
+            }
+        }
+        return v;
+    }
+    double factor()
+    {
+        const QChar c = peek();
+        if (c == QLatin1Char('-')) {
+            ++m_pos;
+            return -factor();
+        }
+        if (c == QLatin1Char('+')) {
+            ++m_pos;
+            return factor();
+        }
+        if (c == QLatin1Char('(')) {
+            ++m_pos;
+            const double v = expr();
+            if (peek() != QLatin1Char(')')) {
+                m_ok = false;
+                return 0.0;
+            }
+            ++m_pos;
+            return v;
+        }
+        if (c == QLatin1Char('$')) {
+            ++m_pos;
+            const int start = m_pos;
+            while (m_pos < m_s.size() && m_s.at(m_pos).isDigit())
+                ++m_pos;
+            if (m_pos == start) {
+                m_ok = false;
+                return 0.0;
+            }
+            return m_vars.value(m_s.mid(start, m_pos - start).toInt(), 0.0);
+        }
+        const int start = m_pos;
+        while (m_pos < m_s.size() &&
+               (m_s.at(m_pos).isDigit() || m_s.at(m_pos) == QLatin1Char('.')))
+            ++m_pos;
+        if (m_pos == start) {
+            m_ok = false;
+            return 0.0;
+        }
+        bool numOk = false;
+        const double v = m_s.mid(start, m_pos - start).toDouble(&numOk);
+        if (!numOk)
+            m_ok = false;
+        return v;
+    }
+
+    QString m_s;
+    QHash<int, double> m_vars;
+    int m_pos = 0;
+    bool m_ok = true;
+};
+
+// Binds $1..$n to the %ADD parameters and evaluates every statement, turning
+// a parametric macro into a plain numeric one owned by this D-code. The
+// specialized copy lands in file.macros under "NAME_Dnn", so rings, the
+// inspector, camMeta and the RS-274X writer only ever see concrete numbers.
+bool specializeMacro(ParseState& st, const QString& macroName,
+                     const std::vector<double>& params, int dcode, int line,
+                     QString& specializedName)
+{
+    const QStringList body = st.file.paramMacros.value(macroName);
+    QHash<int, double> vars;
+    for (size_t i = 0; i < params.size(); ++i)
+        vars.insert(int(i) + 1, params[i]);
+
+    specializedName = params.empty()
+        ? macroName
+        : QStringLiteral("%1_D%2").arg(macroName).arg(dcode);
+    while (st.file.macros.count(specializedName))
+        specializedName += QLatin1Char('R'); // D-code redefined; keep names unique
+
+    GerberMacro macro;
+    macro.name = specializedName;
+    for (const QString& raw : body) {
+        QString s = raw;
+        s.remove(QLatin1Char(' '));
+        s.remove(QLatin1Char('\t'));
+        if (s.isEmpty())
+            continue;
+        if (s.startsWith(QLatin1Char('0')))
+            continue; // primitive 0: comment
+        if (s.startsWith(QLatin1Char('$'))) { // $k=expr
+            const int eq = s.indexOf(QLatin1Char('='));
+            bool ok = false;
+            const int k = eq > 1 ? s.mid(1, eq - 1).toInt(&ok) : 0;
+            if (!ok || k < 1)
+                return st.fail(line,
+                               QStringLiteral("bad variable assignment '%1' in "
+                                              "macro '%2'").arg(raw, macroName));
+            double v = 0.0;
+            MacroExpr e(s.mid(eq + 1), vars);
+            if (!e.eval(v))
+                return st.fail(line,
+                               QStringLiteral("bad expression '%1' in macro "
+                                              "'%2'").arg(raw, macroName));
+            vars.insert(k, v);
+            continue;
+        }
+        const QStringList fields = s.split(QLatin1Char(','));
+        bool ok = false;
+        const int code = fields[0].toInt(&ok);
+        if (!ok)
+            return st.fail(line,
+                           QStringLiteral("bad macro primitive '%1'").arg(raw));
+        std::vector<double> p;
+        for (int k = 1; k < fields.size(); ++k) {
+            double v = 0.0;
+            MacroExpr e(fields[k], vars);
+            if (!e.eval(v))
+                return st.fail(line,
+                               QStringLiteral("bad expression '%1' in macro "
+                                              "'%2'").arg(fields[k], macroName));
+            p.push_back(v);
+        }
+        if (!appendMacroPrim(st, macro, macroName, code, std::move(p), line))
+            return false;
+    }
+    st.file.macros[specializedName] = std::move(macro);
+    return true;
+}
+
 bool parseAD(ParseState& st, const QString& stmt, int line)
 {
     // ADD10C,0.00787[X<hole>] | ADD15ROUNDEDRECTD15
@@ -192,13 +425,26 @@ bool parseAD(ParseState& st, const QString& stmt, int line)
         ap.params = {params[0], double(n), params.size() > 2 ? params[2] : 0.0};
         ap.holeDiameter = params.size() > 3 ? params[3] : 0.0;
     } else {
-        // Macro reference. Parameters would bind $1.. variables — out of scope.
-        if (!params.empty())
-            return st.fail(line,
-                           QStringLiteral("macro aperture parameters ($ substitution) not "
-                                          "supported: '%1'").arg(stmt));
         ap.kind = 'M';
-        ap.macroName = name;
+        if (st.file.paramMacros.contains(name)) {
+            // Parametric macro: bind the parameters NOW into a private,
+            // fully numeric copy — nothing downstream knows about variables.
+            QString spec;
+            if (!specializeMacro(st, name, params, dcode, line, spec))
+                return false;
+            ap.macroName = spec;
+        } else if (!params.empty()) {
+            if (st.file.macros.count(name)) {
+                st.warn(line, QStringLiteral("macro '%1' takes no variables — "
+                                             "parameters ignored").arg(name));
+                ap.macroName = name;
+            } else {
+                return st.fail(line, QStringLiteral(
+                    "macro '%1' not defined before use in '%2'").arg(name, stmt));
+            }
+        } else {
+            ap.macroName = name;
+        }
     }
     if (st.file.apertures.count(dcode))
         st.warn(line, QStringLiteral("aperture D%1 redefined").arg(dcode));
@@ -212,6 +458,24 @@ bool parseAM(ParseState& st, const QStringList& stmts, int line)
     const QString name = stmts[0].mid(2).trimmed();
     if (name.isEmpty())
         return st.fail(line, QStringLiteral("missing macro name in %AM"));
+    // A body using $n variables or assignments cannot be evaluated yet: the
+    // values only exist once an %ADD binds parameters. Keep it as raw text;
+    // parseAD specializes it per referencing D-code.
+    bool parametric = false;
+    for (int i = 1; i < stmts.size(); ++i) {
+        if (stmts[i].contains(QLatin1Char('$')) ||
+            stmts[i].contains(QLatin1Char('='))) {
+            parametric = true;
+            break;
+        }
+    }
+    if (parametric) {
+        if (st.file.paramMacros.contains(name))
+            st.warn(line, QStringLiteral("macro '%1' redefined").arg(name));
+        st.file.paramMacros[name] = stmts.mid(1);
+        return true;
+    }
+
     GerberMacro macro;
     macro.name = name;
     for (int i = 1; i < stmts.size(); ++i) {
@@ -222,64 +486,21 @@ bool parseAM(ParseState& st, const QStringList& stmts, int line)
             continue;
         if (s.startsWith(QLatin1Char('0')))
             continue; // primitive 0: comment
-        if (s.contains(QLatin1Char('$')) || s.contains(QLatin1Char('=')))
-            return st.fail(line, QStringLiteral(
-                "macro '%1' uses variables/expressions — not supported").arg(name));
         const QStringList fields = s.split(QLatin1Char(','));
         bool ok = false;
-        int code = fields[0].toInt(&ok);
+        const int code = fields[0].toInt(&ok);
         if (!ok)
             return st.fail(line, QStringLiteral("bad macro primitive '%1'").arg(stmts[i]));
-        GerberMacroPrim prim;
-        prim.line = line;
+        std::vector<double> params;
         for (int k = 1; k < fields.size(); ++k) {
             bool numOk = false;
-            prim.params.push_back(fields[k].toDouble(&numOk));
+            params.push_back(fields[k].toDouble(&numOk));
             if (!numOk)
                 return st.fail(line,
                                QStringLiteral("bad macro parameter '%1'").arg(fields[k]));
         }
-        if (code == 2) { // deprecated alias of 20 (vector line)
-            st.warn(line, QStringLiteral("macro primitive code 2 treated as 20"));
-            code = 20;
-        }
-        const size_t np = prim.params.size();
-        switch (code) {
-        case 1:
-            if (np < 4)
-                return st.fail(line, QStringLiteral("macro circle needs 4+ parameters"));
-            break;
-        case 20:
-            if (np < 7)
-                return st.fail(line, QStringLiteral("macro vector line needs 7 parameters"));
-            break;
-        case 21:
-            if (np < 6)
-                return st.fail(line, QStringLiteral("macro center rect needs 6 parameters"));
-            break;
-        case 4: {
-            if (np < 2)
-                return st.fail(line, QStringLiteral("macro outline truncated"));
-            const int n = int(std::lround(prim.params[1]));
-            if (n < 1 || np < size_t(2 + 2 * (n + 1) + 1))
-                return st.fail(line, QStringLiteral("macro outline truncated"));
-            break;
-        }
-        case 5:
-            if (np < 6)
-                return st.fail(line, QStringLiteral("macro polygon needs 6 parameters"));
-            break;
-        case 6:
-        case 7:
-        case 22:
-            break; // kept raw; conversion warns
-        default:
-            st.warn(line, QStringLiteral("unknown macro primitive code %1 in '%2'")
-                              .arg(code).arg(name));
-            break;
-        }
-        prim.code = code;
-        macro.prims.push_back(std::move(prim));
+        if (!appendMacroPrim(st, macro, name, code, std::move(params), line))
+            return false;
     }
     if (st.file.macros.count(name))
         st.warn(line, QStringLiteral("macro '%1' redefined").arg(name));
@@ -495,9 +716,14 @@ bool applyOperation(ParseState& st, int op, const Vec2d& target, bool hasIJ, dou
         return true;
     }
 
-    // op == 1: interpolate.
-    if (st.interp == 0)
-        return st.fail(line, QStringLiteral("D01 before any G01/G02/G03 mode"));
+    // op == 1: interpolate. Old writers (P-CAD, OrCAD) never emit an explicit
+    // G01: linear has been the de-facto power-on default since RS-274D, and
+    // every reader in the field (gerbv, Altium) honours it. Warn once.
+    if (st.interp == 0) {
+        st.warn(line, QStringLiteral(
+            "D01 before any G01/G02/G03 — assuming linear (G01)"));
+        st.interp = 1;
+    }
     const bool isArc = (st.interp == 2 || st.interp == 3);
     const bool cw = (st.interp == 2);
     Vec2d center;

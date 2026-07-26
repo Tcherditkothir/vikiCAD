@@ -222,7 +222,8 @@ public:
         m_doc = m_result.document.get();
     }
 
-    void run(const ENode& drawing, const ENode& section, bool isBoard);
+    enum class Kind { Board, Schematic, Library };
+    void run(const ENode& drawing, const ENode& section, Kind kind);
 
 private:
     EagleImportResult& m_result;
@@ -370,10 +371,11 @@ private:
     static std::vector<Vec2d> shapeRing(const QString& shape, double outer,
                                         double rotDeg);
 
-    // ---- board / schematic ----
+    // ---- board / schematic / library ----
 
     void runBoard(const ENode& board);
     void runSchematic(const ENode& schematic);
+    void runLibrary(const ENode& library);
 };
 
 // ---------------------------------------------------------------------------
@@ -1144,8 +1146,103 @@ void Importer::runSchematic(const ENode& schematic)
 }
 
 // ---------------------------------------------------------------------------
+// Library: every package and symbol becomes one cell of a grid, its name
+// printed underneath on a dedicated "Labels" layer. >NAME/>VALUE stay
+// literal, exactly like EAGLE's own library editor shows them.
+// ---------------------------------------------------------------------------
 
-void Importer::run(const ENode& drawing, const ENode& section, bool isBoard)
+void Importer::runLibrary(const ENode& library)
+{
+    m_result.kind = QStringLiteral("library");
+
+    Subst literal;
+    literal.name = QStringLiteral(">NAME");
+    literal.value = QStringLiteral(">VALUE");
+    literal.part = QStringLiteral(">PART");
+    literal.gate = QStringLiteral(">GATE");
+
+    struct Cell {
+        std::vector<std::unique_ptr<Entity>> entities;
+        BBox2d box;
+    };
+    std::vector<Cell> cells;
+
+    const LayerId labels = m_doc->ensureLayer(QStringLiteral("Labels"), 0xFFFF64);
+    m_doc->setLayerRank(labels, 40);
+    if (m_anyLayer == 0)
+        m_anyLayer = labels;
+
+    auto harvest = [&](const ENode& item, bool isBoard) {
+        for (const auto& c : item.children)
+            emitNode(c, Placement{}, literal, isBoard);
+        BBox2d box;
+        for (const auto& e : m_staged)
+            box.expand(e->bounds());
+        if (!box.isValid())
+            box = BBox2d({-1, -1}, {1, 1});
+        auto title = std::make_unique<TextEntity>(
+            Vec2d{box.center().x, box.min.y - 1.5}, 2.0, 0.0, item.attr("name"));
+        title->hAlign = TextHAlign::Center;
+        title->vAlign = TextVAlign::Top;
+        title->setLayerId(labels);
+        box.expand(title->bounds());
+        m_staged.push_back(std::move(title));
+        ++m_result.imported;
+        Cell cell;
+        cell.entities = std::move(m_staged);
+        m_staged.clear();
+        cell.box = box;
+        cells.push_back(std::move(cell));
+    };
+
+    if (const ENode* pkgs = library.child("packages")) {
+        for (const auto& p : pkgs->children)
+            if (p.name == QLatin1String("package"))
+                harvest(p, true);
+    }
+    if (const ENode* syms = library.child("symbols")) {
+        for (const auto& sy : syms->children)
+            if (sy.name == QLatin1String("symbol"))
+                harvest(sy, false);
+    }
+    // Devicesets only wire gates to symbols already shown — nothing to draw.
+
+    if (cells.empty())
+        return; // an empty library imports as an empty document
+
+    // Row-flow grid: ~square cell count, gap sized from the biggest cell.
+    const int cols = std::max(1, int(std::ceil(std::sqrt(double(cells.size())))));
+    double gap = 0.0;
+    for (const auto& c : cells)
+        gap = std::max({gap, c.box.width(), c.box.height()});
+    gap = std::max(5.0, gap * 0.15);
+
+    double rowY = 0.0; // top edge of the current row
+    double cursorX = 0.0;
+    double rowDepth = 0.0;
+    int inRow = 0;
+    for (auto& cell : cells) {
+        if (inRow == cols) {
+            rowY -= rowDepth + gap;
+            cursorX = 0.0;
+            rowDepth = 0.0;
+            inRow = 0;
+        }
+        const Vec2d offset{cursorX - cell.box.min.x, rowY - cell.box.max.y};
+        for (auto& e : cell.entities) {
+            e->transform(Xform2d::translation(offset));
+            m_doc->restoreEntity(std::move(e), m_doc->nextId());
+            m_doc->setNextId(m_doc->nextId() + 1);
+        }
+        cursorX += cell.box.width() + gap;
+        rowDepth = std::max(rowDepth, cell.box.height());
+        ++inRow;
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+void Importer::run(const ENode& drawing, const ENode& section, Kind kind)
 {
     if (const ENode* layers = drawing.child("layers")) {
         for (const auto& l : layers->children) {
@@ -1159,10 +1256,17 @@ void Importer::run(const ENode& drawing, const ENode& section, bool isBoard)
         }
     }
 
-    if (isBoard)
+    switch (kind) {
+    case Kind::Board:
         runBoard(section);
-    else
+        break;
+    case Kind::Schematic:
         runSchematic(section);
+        break;
+    case Kind::Library:
+        runLibrary(section);
+        break;
+    }
 
     if (m_anyLayer != 0) {
         m_doc->setCurrentLayer(m_anyLayer);
@@ -1249,22 +1353,22 @@ EagleImportResult importEagle(const QString& path)
         result.error = QStringLiteral("EAGLE file has no <drawing>: %1").arg(path);
         return result;
     }
-    if (drawing->child("library")) {
-        result.error = QStringLiteral(
-            "EAGLE library files (.lbr) are not supported — open a .brd or .sch");
-        return result;
-    }
-
     const ENode* board = drawing->child("board");
     const ENode* schematic = drawing->child("schematic");
-    if (!board && !schematic) {
-        result.error =
-            QStringLiteral("EAGLE drawing has no board or schematic: %1").arg(path);
+    const ENode* library = drawing->child("library");
+    if (!board && !schematic && !library) {
+        result.error = QStringLiteral(
+            "EAGLE drawing has no board, schematic or library: %1").arg(path);
         return result;
     }
 
     Importer importer(result);
-    importer.run(*drawing, board ? *board : *schematic, board != nullptr);
+    if (board)
+        importer.run(*drawing, *board, Importer::Kind::Board);
+    else if (schematic)
+        importer.run(*drawing, *schematic, Importer::Kind::Schematic);
+    else
+        importer.run(*drawing, *library, Importer::Kind::Library);
     return result;
 }
 

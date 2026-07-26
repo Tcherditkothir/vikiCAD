@@ -668,6 +668,37 @@ printf '\x10\x00legacy' > "$TMP/smoke-old.brd"
 out="$(rpc open "$TMP/smoke-old.brd")"
 assert_eq "eagle: binary v5 refused headless (no modal)" True \
   "$(jget "$out" "'could not open' in str(d.get('error'))")"
+# .lbr opens as a grid of packages/symbols with titles on "Labels".
+cat > "$TMP/smoke-eagle.lbr" <<'EAGLE_LBR_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE eagle SYSTEM "eagle.dtd">
+<eagle version="6.5.0">
+<drawing>
+<layers>
+<layer number="1" name="Top" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="94" name="Symbols" color="4" fill="1" visible="yes" active="yes"/>
+</layers>
+<library>
+<packages>
+<package name="PKG"><smd name="1" x="0" y="0" dx="2" dy="1" layer="1"/></package>
+</packages>
+<symbols>
+<symbol name="SYM"><wire x1="0" y1="0" x2="2.54" y2="0" width="0.254" layer="94"/></symbol>
+</symbols>
+</library>
+</drawing>
+</eagle>
+EAGLE_LBR_EOF
+out="$(rpc open "$TMP/smoke-eagle.lbr")"
+assert_eq "eagle: open .lbr via IPC ok" True "$(jget "$out" "d['result'].get('ok')")"
+# smd + wire + 2 titles = 4
+assert_eq "eagle: lbr grid entity count" 4 "$(count)"
+lbr_layers="$(jget "$(rpc query layers)" "','.join(l['name'] for l in d['result']['layers'])")"
+if [[ ",$lbr_layers," == *",Labels,"* ]]; then
+  record PASS "eagle: lbr Labels layer" "present"
+else
+  record FAIL "eagle: lbr Labels layer" "missing from: $lbr_layers"
+fi
 
 # --- new-project phase: blank doc -> WORKPLANE YZ -> sketch -> extrude --------
 # "The starting point of every new project": a FRESH document, a world

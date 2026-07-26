@@ -69,8 +69,8 @@ int printUsage(FILE* out)
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "              [--notes] [--blocks] [--layouts] [--describe]\n"
         "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
-        "  vikicad-cli import IN.brd|IN.sch --save-as OUT.vkd   (EAGLE 6+ XML, "
-        "viewing-grade)\n"
+        "  vikicad-cli import IN.brd|IN.sch|IN.lbr --save-as OUT.vkd   (EAGLE 6+ "
+        "XML, viewing-grade; .lbr = grid of packages/symbols)\n"
         "  vikicad-cli import KITDIR|IN.gbr|IN.txt --save-as OUT.vkd\n"
         "              (Gerber kit: directory or single Gerber/Excellon file)\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
@@ -83,7 +83,7 @@ int printUsage(FILE* out)
         "with '/'; writes <base>.GTL/... + .TXT)\n"
         "  vikicad-cli export FILE.vkd OUT.gtl|.gbs|...|.gko|.gbr|.txt "
         "[--layer NAME]   (one fab layer)\n"
-        "  vikicad-cli import IN.step --save-as OUT.vkd\n"
+        "  vikicad-cli import IN.step|IN.igs --save-as OUT.vkd\n"
         "  vikicad-cli import IN.stl  --save-as OUT.vkd   (mesh, ASCII or "
         "binary)\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
@@ -234,8 +234,11 @@ int cmdImport(const QStringList& args)
         inPath.endsWith(QLatin1String(".brd"), Qt::CaseInsensitive) ||
         inPath.endsWith(QLatin1String(".sch"), Qt::CaseInsensitive) ||
         inPath.endsWith(QLatin1String(".lbr"), Qt::CaseInsensitive);
+    const bool igesLike =
+        inPath.endsWith(QLatin1String(".igs"), Qt::CaseInsensitive) ||
+        inPath.endsWith(QLatin1String(".iges"), Qt::CaseInsensitive);
     if (QFileInfo(inPath).isDir() ||
-        (!dxfLike && !stepLike && !stlLike && !eagleLike)) {
+        (!dxfLike && !stepLike && !stlLike && !eagleLike && !igesLike)) {
         Document doc;
         const GerberKitResult r = importGerberKit(doc, inPath);
         if (!r.ok)
@@ -278,12 +281,13 @@ int cmdImport(const QStringList& args)
                          QStringLiteral("built without DXF support"));
 #endif
 
-    if (inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
-        inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive)) {
+    if (stepLike || igesLike) {
         std::unique_ptr<Document> doc;
-        const StepResult r = importStep(inPath, doc);
+        const StepResult r = igesLike ? importIges(inPath, doc)
+                                      : importStep(inPath, doc);
         if (!r.ok)
-            return emitError(QStringLiteral("E_STEP"), r.error);
+            return emitError(igesLike ? QStringLiteral("E_IGES")
+                                      : QStringLiteral("E_STEP"), r.error);
         QString error;
         if (!NativeStore::save(*doc, outPath, error))
             return emitError(QStringLiteral("E_SAVE"), error);

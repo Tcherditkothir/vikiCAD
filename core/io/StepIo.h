@@ -34,4 +34,11 @@ StepResult exportStep(const Document& doc, const QString& path);
 // lost".
 StepResult importStep(const QString& path, std::unique_ptr<Document>& outDoc);
 
+// IGES import through the same XCAF pipeline (IGESCAFControl_Reader), so
+// colours and names survive where the file carries them. IGES models are
+// usually trimmed surfaces rather than solids — a solid-free file imports as
+// ONE shape entity, which views, measures and sections fine. Import only:
+// VikiCAD does not write IGES.
+StepResult importIges(const QString& path, std::unique_ptr<Document>& outDoc);
+
 } // namespace viki

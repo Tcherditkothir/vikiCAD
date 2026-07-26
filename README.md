@@ -17,10 +17,11 @@ bien qu'à la souris.
   et en export** (via `dwg2dxf`/`dxf2dwg` de LibreDWG), STEP en
   lecture/écriture avec **couleurs, transparence et noms de pièces** (OCCT
   XCAF ; notes en sidecar JSON ou attributs AP242 optionnels), **STL en
-  import (maillage) et export**, OBJ avec matières `.mtl`, PDF,
-  **Gerber RS-274X + Excellon** en lecture/écriture, et **EAGLE 6+ en
-  import** (planches `.brd` et schémas `.sch` XML, qualité visualisation :
-  calques/couleurs EAGLE, feuilles côte à côte).
+  import (maillage) et export**, **IGES en import** (surfaces des modèles
+  fournisseurs), OBJ avec matières `.mtl`, PDF, **Gerber RS-274X +
+  Excellon** en lecture/écriture (macros d'ouverture à variables comprises
+  — kits P-CAD/Protel), et **EAGLE 6+ en import** (planches `.brd`,
+  schémas `.sch` multi-feuilles, bibliothèques `.lbr` en planche-contact).
 - **Pilotable par agent, par conception** : `vikicad-cli` headless en JSON,
   socket JSON-RPC sur la GUI en cours d'exécution (`vikicad-cli connect`),
   scripts `.vks` (sémantique `.scr` d'AutoCAD). Voir
@@ -105,7 +106,8 @@ vikicad-cli export part.vkd out.step
 vikicad-cli export kit.vkd fab/                # kit Gerber/Excellon complet
 vikicad-cli import legacy.dxf --save-as legacy.vkd
 vikicad-cli import fab-outputs/ --save-as board.vkd   # dossier = kit Gerber
-vikicad-cli import vieux.brd --save-as vieux.vkd      # EAGLE 6+ (.brd/.sch)
+vikicad-cli import vieux.brd --save-as vieux.vkd      # EAGLE 6+ (.brd/.sch/.lbr)
+vikicad-cli import modele.igs --save-as modele.vkd    # IGES (surfaces fournisseurs)
 vikicad-cli connect exec "LINE 0,0 100,0"      # pilote la GUI en cours d'exécution
 ```
 
@@ -155,12 +157,13 @@ one to be as usable by AI agents as by a mouse.
 - **Interop**: DXF R12–2018 (vendored, patched libdxfrw), **DWG import and
   export** (via LibreDWG's `dwg2dxf`/`dxf2dwg`), STEP read/write with
   **colour, transparency and part names** (OCCT XCAF; notes as sidecar JSON
-  or optional AP242 attributes), **STL import (as a mesh) and export**, OBJ
-  with `.mtl` materials, PDF, **Gerber RS-274X + Excellon** read/write, and
-  **EAGLE 6+ import** (XML `.brd` boards and `.sch` schematics,
-  viewing-grade: EAGLE layers/colours, sheets side by side).
-  Save As offers every export format; a non-native pick exports without
-  rebinding the working file.
+  or optional AP242 attributes), **STL import (as a mesh) and export**,
+  **IGES import** (vendor surface models), OBJ with `.mtl` materials, PDF,
+  **Gerber RS-274X + Excellon** read/write (parametric aperture macros
+  included — P-CAD/Protel kits), and **EAGLE 6+ import** (XML `.brd`
+  boards, multi-sheet `.sch` schematics, `.lbr` libraries as a contact
+  sheet). Save As offers every export format; a non-native pick exports
+  without rebinding the working file.
 - **Agent-friendly by design**: headless `vikicad-cli` with JSON output,
   JSON-RPC socket on the running GUI (`vikicad-cli connect`), `.vks` command
   scripts (AutoCAD `.scr` semantics). See [docs/AGENT.md](docs/AGENT.md).

@@ -1407,3 +1407,46 @@ sérigraphie, PIC24 broche par broche, ULN2803A transistor par transistor).
 variable ainsi dans du code lié à QtCore sans QT_NO_KEYWORDS. Renommé
 `sigs` — l'erreur de compilation (« expected unqualified-id before
 public ») pointe la LIGNE mais pas la cause.
+
+## 2026-07-26 — Trio vert : gerbers P-CAD/Protel, IGES, bibliothèques EAGLE ✅
+
+**Demande de Lex** : après l'inventaire des vieux projets (« identifie les
+types de fichier qu'on pourrait ajouter »), feu vert sur le trio à meilleur
+rendement : extensions Gerber manquantes, import IGES, .lbr EAGLE.
+
+**Livré (1) — les kits P-CAD/Protel des vieilles jobs s'ouvrent.** Le
+chantier « extensions » a déterré deux VRAIS trous de parseur : les macros
+d'ouverture à variables (`%AMOC8*5,1,8,0,0,1.08239X$1,22.5*` — l'octogone
+P-CAD classique) et le `D01` sans `G01` préalable (linéaire implicite
+depuis RS-274D). Macros désormais LIÉES au `%ADD` : évaluateur
+d'expressions (`$n`, + - x /, parenthèses, moins unaire), copie privée
+purement numérique `NOM_Dnn` — anneaux, inspecteur, camMeta et writer ne
+voient jamais une variable. Rôles de calques pour les noms courts Protel
+(top/bot, smt/smb, sst/ssb, spt/spb). Kit Aki3 témoin : 1 fichier lu avant,
+7/7 après (39 130 entités). Côté plugin : gm13/15/16, gpt/gpb, tap et les
+noms Protel enregistrés, avec sniff de contenu pour les extensions
+génériques avant d'entrer dans un kit.
+
+**Livré (2) — IGES en import.** Même pipeline XCAF que STEP
+(IGESCAFControl_Reader, TKDEIGES au lien) ; les IGES du monde réel sont des
+surfaces découpées, pas des solides — le repli « fichier sans solide = UNE
+entité affichable » est le chemin normal. Chaîne plugin : .igs → OBJ (la
+conversion STEP était déjà générique). Testé sur les modèles fournisseurs
+de C1P0 (DHT22, ESP32).
+
+**Livré (3) — .lbr EAGLE en planche-contact.** Chaque package et symbole =
+une cellule d'une grille en rangées, nom dessous sur un calque « Labels »
+dédié, >NAME/>VALUE laissés littéraux comme dans l'éditeur de bibliothèques
+d'EAGLE. Balayage réel : **73/73 bibliothèques XML du vault, 0 nœud
+sauté**, jusqu'à 495 679 entités (TI element14). Rendu contrôlé sur
+ALRMP_RLC (grille de centaines d'empreintes étiquetées).
+
+**Preuves.** ctest **388/388** (5 cas macros/G01, 3 cas IGES dont un vrai
+fichier, 2 cas .lbr dont ALRMP_RLC réel) ; gui-smoke **325 TOUT VERT**
+(phase eagle étendue au .lbr par IPC) ; kits Aki3 rendus par gerbv
+(la route du plugin) et vérifiés à l'œil.
+
+**Leçon.** Un chantier « liste d'extensions » peut cacher un trou de
+PARSEUR : vérifier le moteur sur un vrai fichier AVANT de conclure que
+seule la liste manque. Les deux archaïsmes étaient invisibles tant que le
+sniff d'extension écartait les fichiers.

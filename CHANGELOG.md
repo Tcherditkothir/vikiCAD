@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Aperture macros with variables and arithmetic (RS-274X).** `%AM` bodies
+  using `$n` variables, assignments and expressions (`+ - x /`, parentheses,
+  unary minus) now parse: the macro is bound at `%ADD` time into a private,
+  fully numeric copy, so rings, the inspector, camMeta and the RS-274X
+  writer never see a variable. This is what P-CAD/Protel kits (the classic
+  `OC8` octagon) are made of. Two more old-writer archaisms accepted with a
+  warning instead of a refusal: `D01` before any `G01/G02/G03` (linear has
+  been the de-facto default since RS-274D) and parameters passed to a
+  variable-free macro. Protel short extensions (`.top/.bot`, `.smt/.smb`,
+  `.sst/.ssb`, `.spt/.spb`) get their proper kit roles. A 7-file P-CAD kit
+  that previously imported 1 file now imports 7 (39 130 entities).
+- **IGES import (.igs/.iges).** Same XCAF pipeline as STEP
+  (`IGESCAFControl_Reader`), so colours and names survive where the file
+  carries them. IGES models are usually trimmed surfaces, not solids — a
+  solid-free file imports as ONE viewable entity instead of failing.
+  Import only; VikiCAD does not write IGES.
+- **EAGLE libraries (.lbr) open as a contact sheet.** Every package and
+  symbol becomes one cell of a grid, its name printed underneath on a
+  dedicated "Labels" layer; `>NAME`/`>VALUE` stay literal exactly like
+  EAGLE's own library editor. Proven against all 73 XML libraries in the
+  vault (up to 495 679 entities) with zero skipped nodes.
 - **EAGLE 6+ import (.brd/.sch), viewing-grade.** File ▸ Open, File ▸ Import
   EAGLE, the IPC `open` verb and `vikicad-cli import` all read EAGLE XML
   boards and schematics natively (QXmlStreamReader, no new dependency).
