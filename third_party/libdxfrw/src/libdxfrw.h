@@ -153,6 +153,10 @@ private:
     std::vector<DRW_ImageDef*> imageDef;  /*!< imageDef list */
 
     int currHandle;
+    /* VikiCAD patch 0005: owner (group 330) of the entities being written —
+       "1F" (*Model_Space) in the ENTITIES section, the owning block record's
+       handle while a BLOCK's contents are written. */
+    std::string currOwner {"1F"};
 
 };
 

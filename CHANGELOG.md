@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- **Unsaved-changes guard.** Closing the window, New, Open and the imports
+  now ask Save / Discard / Cancel when the drawing has unsaved changes, and
+  the title bar marks the state with the classic `*`. Tracking is an id
+  comparison on the undo journal (each committed transaction gets a
+  lifetime-unique state id), so undoing back to the last saved state clears
+  the flag, and a state abandoned on a dead redo branch can never pass for
+  saved. Imported documents (DXF/DWG/STEP/STL/Gerber kits) start life
+  modified — they exist nowhere as a `.vkd` yet. Headless flows are
+  untouched: the IPC `open`/`save` verbs never prompt.
+- **DWG export.** `File ▸ Export ▸ DWG`, the Save As dialog, the IPC
+  `export` verb and `vikicad-cli export FILE.vkd OUT.dwg` all write DWG
+  r2000 through GNU LibreDWG's `dxf2dwg` (PATH or `~/.local/bin`, the same
+  lookup as the import fallback). The intermediate DXF is made canonical
+  first — two vendored libdxfrw patches: `0005` gives every entity its
+  owner handle (330) and drops the empty CLASSES section (without owners,
+  LibreDWG stored the entities as orphans and every reader saw an EMPTY
+  drawing), `0006` writes the MTEXT rotation as the X-axis direction
+  vector 11/21/31 (group 50 is fatal to LibreDWG, and readers guessing
+  its unit no longer have to). Proven at scale: a 5 186-entity imported
+  drawing exports and reads back 5 186/5 186 with all types intact,
+  block-embedded hatches included. Conversion runs in a temp dir and the
+  target is only written on success.
+- **Save As speaks every format.** The Save dialog now offers VKD, STEP,
+  DXF, DWG, STL and OBJ. Picking a non-native format EXPORTS (same engine
+  as File ▸ Export) and leaves the open document untouched — path, title
+  and dirty flag stay on the `.vkd`; a lossy format never silently becomes
+  the working file. With no typed suffix, the selected filter decides.
+- **Clipboard: Ctrl+C/X/V, including across documents.** New `COPYCLIP`,
+  `CUTCLIP` and `PASTECLIP` commands (Edit menu, standard shortcuts) put a
+  self-contained JSON payload on the system clipboard under the
+  `application/x-vikicad-entities` MIME type: entities travel with the
+  layers, block definitions and dimension styles they reference — and
+  solids with their BREP — so pasting works in the same document, in
+  another document, or in another running VikiCAD. Layers are matched by
+  name (created when missing; an existing layer of the same name wins).
+  Paste asks for an insertion point with a live ghost (2D and 3D); Enter
+  pastes at the original coordinates, the cross-document alignment case.
+  The pasted set becomes the selection. Typing in the command bar still
+  copies/pastes text — focused text fields keep the standard keys.
 - **STL import**: `.stl` files open as a mesh — one OCCT face carrying the
   triangulation, so viewing, measuring, sectioning and placing
   (`MOVE3D`/`ROTATE3D`, insert-as-component) all work. Both dialects are

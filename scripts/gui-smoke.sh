@@ -67,7 +67,11 @@ DIFF_PIXELS_MIN=50 # basis points = 0.50 % of pixels
 FAILS=0
 ROWS=()
 
+XPROC_A=""; XPROC_B="" # cross-process postlude instances (reaped by cleanup)
+
 cleanup() {
+    [[ -n "$XPROC_A" ]] && kill "$XPROC_A" 2>/dev/null
+    [[ -n "$XPROC_B" ]] && kill "$XPROC_B" 2>/dev/null
     systemctl --user stop "$UNIT" 2>/dev/null
     systemctl --user reset-failed "$UNIT" 2>/dev/null
     rm -rf "$TMP"
@@ -570,6 +574,32 @@ if grep -q "ENTITIES" "$TMP/smoke.dxf" 2>/dev/null; then
 else
   record FAIL "export: DXF has ENTITIES" "no"
 fi
+# DWG through the same IPC verb (DwgExporter -> dxf2dwg). SKIP when GNU
+# LibreDWG is absent; when dwg2dxf is ALSO there, read the DWG back and
+# demand actual entities — an "empty DWG" was exactly the historical bug
+# (orphan entities without owners, libdxfrw patch 0005).
+if command -v dxf2dwg >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/dxf2dwg" ]]; then
+  out="$(rpc export "$TMP/smoke.dwg")"
+  assert_eq "export: DWG via GUI ok" True "$(jget "$out" "d['result'].get('ok')")"
+  if [[ -s "$TMP/smoke.dwg" ]]; then
+    record PASS "export: DWG non-empty" "$(stat -c%s "$TMP/smoke.dwg") bytes"
+  else
+    record FAIL "export: DWG non-empty" "missing or 0 bytes"
+  fi
+  DWG2DXF="$(command -v dwg2dxf || echo "$HOME/.local/bin/dwg2dxf")"
+  if [[ -x "$DWG2DXF" ]]; then
+    "$DWG2DXF" -y -o "$TMP/smoke-back.dxf" "$TMP/smoke.dwg" >/dev/null 2>&1 || true
+    back_count="$(tr -d '\r' < "$TMP/smoke-back.dxf" 2>/dev/null \
+      | grep -cE '^(LINE|CIRCLE|ARC|LWPOLYLINE|TEXT|MTEXT|INSERT|HATCH|SPLINE|ELLIPSE|POINT|DIMENSION)$' || true)"
+    if [[ "${back_count:-0}" -gt 0 ]]; then
+      record PASS "export: DWG reads back with entities" "$back_count entities"
+    else
+      record FAIL "export: DWG reads back with entities" "0 entities (orphan bug?)"
+    fi
+  fi
+else
+  record SKIP "export: DWG via GUI" "dxf2dwg not installed"
+fi
 
 # --- new-project phase: blank doc -> WORKPLANE YZ -> sketch -> extrude --------
 # "The starting point of every new project": a FRESH document, a world
@@ -754,6 +784,48 @@ if [[ -s "$TMP/stlbox.stl" ]]; then
     assert_eq "meshimp: still one entity after undo" 1 "$(count)"
 else
     record PASS "meshimp: SKIP (STL export produced nothing)" "no fixture"
+fi
+
+# --- clipboard phase: Ctrl+C/X/V land here ----------------------------------
+# COPYCLIP/CUTCLIP/PASTECLIP through the shared processor and the REAL system
+# clipboard (the GUI context uses QClipboard + the VikiCAD MIME type, so this
+# proves the OS round-trip, not just the in-process buffer). Side effect: the
+# desktop clipboard holds the copied entities after the run.
+"$CLI" new --exec "RECT 0,0 10,10" --save-as "$TMP/clipsrc.vkd" >/dev/null 2>&1
+if [[ -s "$TMP/clipsrc.vkd" ]]; then
+    out="$(rpc open "$TMP/clipsrc.vkd")"
+    assert_eq "clip: open source doc" True "$(jget "$out" "d['result'].get('ok')")"
+    assert_eq "clip: one entity to start" 1 "$(count)"
+    clip_id="$(max_id)"
+
+    gexec "clip: COPYCLIP the rect" "COPYCLIP $clip_id"
+    gexec "clip: PASTECLIP at 30,0" "PASTECLIP 30,0"
+    assert_eq "clip: paste added an entity" 2 "$(count)"
+    # The copied set's anchor is its lower-left corner, so the duplicate
+    # spans 30..40 and the document now reads 0..40.
+    assert_eq "clip: pasted copy lands at 30,0" True "$(jget "$(rpc query bounds)" \
+        "all(abs(a-b) < 1e-6 for a,b in zip(d['result']['bounds'], [0,0,40,10]))")"
+
+    # CUTCLIP both, paste them back IN PLACE (insertion point = the pair's
+    # own anchor), then unwind: each UNDO peels exactly one transaction.
+    # PASTECLIP leaves its output SELECTED (ready for an immediate MOVE), and
+    # pickfirst would make CUTCLIP eat that selection instead of the typed
+    # ids — clear it first, same as the ergo phase.
+    clip_ids="$(jget "$(rpc query entities)" \
+        "' '.join(str(e['id']) for e in d['result']['entities'])")"
+    gexec "clip: clear selection (pickfirst!)" "SELECT"
+    gexec "clip: CUTCLIP everything" "CUTCLIP $clip_ids"
+    assert_eq "clip: cut emptied the document" 0 "$(count)"
+    gexec "clip: PASTECLIP back in place" "PASTECLIP 0,0"
+    assert_eq "clip: both entities back" 2 "$(count)"
+    assert_eq "clip: geometry back at 0..40" True "$(jget "$(rpc query bounds)" \
+        "all(abs(a-b) < 1e-6 for a,b in zip(d['result']['bounds'], [0,0,40,10]))")"
+    gexec "clip: UNDO the paste" "UNDO"
+    assert_eq "clip: undo removed the pasted pair" 0 "$(count)"
+    gexec "clip: UNDO the cut" "UNDO"
+    assert_eq "clip: undo restored the originals" 2 "$(count)"
+else
+    record PASS "clip: SKIP (no CLI fixture)" "vikicad-cli new failed"
 fi
 
 # --- Gerber kit phase (real S5M0PCBA kit; SKIPs when pcb-ref is absent) -------
@@ -1123,6 +1195,45 @@ if command -v gerbv >/dev/null 2>&1 && [[ -d /home/lex/computer/pcb-ref/S5M0PCBA
 else
     record SKIP "expdiff: export vs original (gerbv)" "gerbv or pcb-ref kits absent"
 fi
+
+# ---- (5c) cross-process clipboard: two REAL instances -----------------------
+# Same-process COPYCLIP/PASTECLIP can be served by Qt without the bytes ever
+# leaving the process; only a SECOND process proves the payload crosses the
+# compositor's clipboard. LAST because instance B steals the single 'vikicad'
+# IPC socket name (so the systemd unit is stopped first, and the smoke can no
+# longer talk to it afterwards). Tolerant: IPC silence or a compositor that
+# denies an unfocused window the clipboard records SKIP, not FAIL.
+systemctl --user stop "$UNIT" 2>/dev/null
+"$GUI" >/dev/null 2>&1 & XPROC_A=$!
+xproc_up=""
+for _ in $(seq 20); do
+    sleep 0.5
+    [[ "$(jget "$(rpc ping 2>/dev/null)" "d.get('ok')")" == "True" ]] && { xproc_up=1; break; }
+done
+if [[ -n "$xproc_up" ]]; then
+    rpc exec "RECT 0,0 10,10" >/dev/null 2>&1
+    rpc exec "COPYCLIP 1" >/dev/null 2>&1
+    "$GUI" >/dev/null 2>&1 & XPROC_B=$!
+    xproc_b=""
+    for _ in $(seq 20); do
+        sleep 0.5
+        # We are talking to B (not A) once the count reads 0: B's document
+        # is empty while A holds the source rect.
+        [[ "$(count)" == "0" ]] && { xproc_b=1; break; }
+    done
+    if [[ -n "$xproc_b" ]]; then
+        rpc exec "PASTECLIP 0,0" >/dev/null 2>&1
+        assert_eq "xproc: paste in the SECOND process" 1 "$(count)"
+        assert_eq "xproc: geometry crossed intact" True "$(jget "$(rpc query bounds)" \
+            "all(abs(a-b) < 1e-6 for a,b in zip(d['result']['bounds'], [0,0,10,10]))")"
+    else
+        record SKIP "xproc: paste in the SECOND process" "instance B never took the socket"
+    fi
+else
+    record SKIP "xproc: paste in the SECOND process" "instance A unreachable over IPC"
+fi
+kill "$XPROC_A" "$XPROC_B" 2>/dev/null
+XPROC_A=""; XPROC_B=""
 
 # ---- (6) report -------------------------------------------------------------
 

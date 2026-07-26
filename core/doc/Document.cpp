@@ -114,6 +114,7 @@ void Document::commitTransaction()
     if (!m_openTransaction)
         return;
     if (!m_openTransaction->changes.empty()) {
+        m_openTransaction->stateId = ++m_stateCounter;
         m_undoStack.push_back(std::move(*m_openTransaction));
         if (m_undoStack.size() > kMaxUndo)
             m_undoStack.erase(m_undoStack.begin());

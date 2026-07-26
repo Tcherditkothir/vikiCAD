@@ -591,6 +591,7 @@ void registerBuiltinCommands(CommandProcessor& p)
     registerDrawCommands2(p);
     registerLayerCommands(p);
     registerModifyCommands(p);
+    registerClipboardCommands(p);
     registerEditCommands(p);
     registerAnnotateCommands(p);
     registerBlockCommands(p);

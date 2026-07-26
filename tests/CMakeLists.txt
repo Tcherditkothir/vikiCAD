@@ -32,6 +32,7 @@ add_executable(vikicad-tests
     test_stl_import.cpp
     test_step_color.cpp
     test_obj_export.cpp
+    test_clipboard.cpp
     test_params.cpp
     test_sketch.cpp
     test_feature_tree.cpp
@@ -60,7 +61,8 @@ target_compile_definitions(vikicad-tests PRIVATE
     VIKICAD_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 
 if(VIKICAD_HAS_DXF)
-    target_sources(vikicad-tests PRIVATE test_dxf_import.cpp test_dxf_roundtrip.cpp)
+    target_sources(vikicad-tests PRIVATE test_dxf_import.cpp test_dxf_roundtrip.cpp
+                   test_dwg_export.cpp)
 endif()
 
 target_link_libraries(vikicad-tests PRIVATE vikicore Catch2::Catch2WithMain viki_warnings)

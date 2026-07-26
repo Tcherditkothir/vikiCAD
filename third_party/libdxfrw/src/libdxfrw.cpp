@@ -15,6 +15,7 @@
 #include "libdxfrw.h"
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <cassert>
 #include "intern/drw_textcodec.h"
@@ -130,11 +131,10 @@ bool dxfRW::write(DRW_Interface *interface_, DRW::Version ver, bool bin){
     entCount =FIRSTHANDLE;
     header.write(writer, version);
     writer->writeString(0, "ENDSEC");
-    if (ver > DRW::AC1009) {
-        writer->writeString(0, "SECTION");
-        writer->writeString(2, "CLASSES");
-        writer->writeString(0, "ENDSEC");
-    }
+    /* VikiCAD patch 0005: do NOT write an empty CLASSES section. Nothing was
+       ever emitted between SECTION and ENDSEC, GNU LibreDWG aborts on
+       "2 CLASSES" not followed by at least one "0 CLASS" (READ ERROR 0x800),
+       and the section is optional. */
     writer->writeString(0, "SECTION");
     writer->writeString(2, "TABLES");
     writeTables();
@@ -146,6 +146,7 @@ bool dxfRW::write(DRW_Interface *interface_, DRW::Version ver, bool bin){
 
     writer->writeString(0, "SECTION");
     writer->writeString(2, "ENTITIES");
+    currOwner = "1F"; // VikiCAD patch 0005: *Model_Space owns ENTITIES
     iface->writeEntities();
     writer->writeString(0, "ENDSEC");
 
@@ -167,6 +168,13 @@ bool dxfRW::write(DRW_Interface *interface_, DRW::Version ver, bool bin){
 bool dxfRW::writeEntity(DRW_Entity *ent) {
     ent->handle = ++entCount;
     writer->writeString(5, toHexStr(ent->handle));
+    /* VikiCAD patch 0005: canonical DXF gives every entity its owner handle
+       (330), like BLOCK/ENDBLK already had. Without it GNU LibreDWG's
+       dxf2dwg stores the entities as orphans of the object map — a DWG that
+       every reader (dwg2dxf, AutoCAD) then shows as EMPTY. */
+    if (version > DRW::AC1014) {
+        writer->writeString(330, currOwner);
+    }
     if (version > DRW::AC1009) {
         writer->writeString(100, "AcDbEntity");
     }
@@ -1276,10 +1284,18 @@ bool dxfRW::writeMText(DRW_MText *ent){
         writer->writeDouble(210, ent->extPoint.x);
         writer->writeDouble(220, ent->extPoint.y);
         writer->writeDouble(230, ent->extPoint.z);
-        writer->writeDouble(50, ent->angle);
+        /* VikiCAD patch 0006: rotation as the X-axis direction vector
+           (11/21/31) — what AutoCAD writes — instead of group 50. GNU
+           LibreDWG's DXF reader treats 50 on MTEXT as FATAL (kills the
+           whole dxf2dwg conversion), and readers that heuristically guess
+           the 50 unit (radians per spec, degrees in the wild) don't have
+           to guess a vector. `angle` is radians here (the code-50
+           convention this writer always used). */
+        writer->writeDouble(11, std::cos(ent->angle));
+        writer->writeDouble(21, std::sin(ent->angle));
+        writer->writeDouble(31, 0.0);
         writer->writeInt16(73, ent->alignV);
         writer->writeDouble(44, ent->interlin);
-//RLZ ... 11, 21, 31 needed?
     } else {
         //RLZ: TODO convert mtext in text lines (not exist in acad 12)
     }
@@ -1393,6 +1409,8 @@ bool dxfRW::writeBlock(DRW_Block *bk){
     writer->writeString(0, "BLOCK");
     if (version > DRW::AC1009) {
         currHandle = (*(blockMap.find(bk->name))).second;
+        // VikiCAD patch 0005: this block record owns its content entities.
+        currOwner = toHexStr(currHandle);
         writer->writeString(5, toHexStr(currHandle+1));
         if (version > DRW::AC1014) {
             writer->writeString(330, toHexStr(currHandle));

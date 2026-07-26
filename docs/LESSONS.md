@@ -480,3 +480,54 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   espaces) n'a modifié aucune ligne ; la suite est passée au vert sur du
   code intact. TOUJOURS vérifier que l'injection a bien été posée
   (`grep -c`) avant de lire le résultat.
+
+## 2026-07-25 — Presse-papier (Ctrl+C/X/V)
+
+- **Une commande qui SÉLECTIONNE son résultat arme le pickfirst pour la
+  commande tapée suivante.** PASTECLIP laisse le collage sélectionné
+  (voulu : MOVE immédiat en GUI) ; au smoke, le `CUTCLIP <ids>` suivant a
+  pris la sélection et AVALÉ les ids tapés sans un mot (les tokens
+  restants meurent avec la commande terminée). Remède de script : `SELECT`
+  nu avant toute commande à ids explicites — la phase ergo le faisait
+  déjà. À retenir pour toute future commande qui écrit dans la sélection.
+- **Un aller-retour presse-papier DANS le même processus ne prouve pas le
+  transport OS.** QClipboard ressert son propre QMimeData sans que les
+  octets traversent le compositeur ; sous Wayland, le vrai passage
+  n'existe qu'à la demande d'un AUTRE client. Preuve honnête : deux
+  instances réelles (la 2e VOLE la socket IPC `vikicad` par
+  `removeServer`+`listen` — utile ET destructeur : l'instance A devient
+  impilotable, d'où la phase en FIN de smoke).
+- **ShortcutOverride est l'arbitre texte/entités, pas nous.** Un QAction
+  `ApplicationShortcut` sur Ctrl+C/V/X perd contre un QLineEdit focusé
+  (qui accepte les touches standard via ShortcutOverride) — c'est
+  précisément ce qu'on veut, et c'est déjà ce qui route Ctrl+Z vers
+  l'undo de texte de la barre. Aucune garde de focus à coder ; ne PAS
+  redéclarer ces touches dans shortcuts.json (doublon = ambigu = mort).
+
+## Export DWG (chantier Enregistrer sous / DWG, 2026-07-26)
+
+- **Un écrivain de fichier se juge à la RELECTURE INDÉPENDANTE, jamais au
+  fichier produit.** Le premier DWG sorti de dxf2dwg contenait bel et bien
+  LINE, CIRCLE et LWPOLYLINE dans sa carte d'objets (dwgread les listait)…
+  mais ownerhandle absent = entités ORPHELINES, jamais rattachées à
+  `*Model_Space` : tout lecteur voyait un dessin VIDE. Taille non nulle,
+  exit 0, objets présents — et pourtant rien. Le verdict n'est venu que du
+  cycle complet écrire → relire par une AUTRE implémentation → compter.
+- **« AutoCAD le lit » ne veut pas dire canonique.** libdxfrw écrivait une
+  section CLASSES vide, des entités sans owner 330 et la rotation MTEXT en
+  groupe 50 : AutoCAD tolère les trois, LibreDWG refuse les trois (dont un
+  FATAL). Écrire ce qu'AutoCAD ÉCRIT (owners, vecteur 11/21/31, pas de
+  section creuse) sert tous les lecteurs stricts — patches 0005/0006,
+  vendorisés et documentés.
+- **Le message d'erreur d'un parseur peut nommer le mauvais coupable.**
+  « Unknown DXF code 21 for HATCH » × 6 : reproduit à l'identique avec une
+  section ENTITIES **VIDE** — les fautives étaient dans les BLOCS, et
+  l'étiquette « HATCH » du message ne désignait même pas l'objet en cause
+  au moment où j'ai bissecté. Bissecter le FICHIER (sections, puis entités
+  une à une), pas la piste suggérée par le libellé.
+- **Bissection par suppression : vérifier que chaque variante reste un
+  fichier VALIDE.** Mes tranches h*/bh* cassaient parfois l'alternance
+  code/valeur (« Unexpected DXF end-of-file ») : les résultats binaires
+  oui/non restaient exploitables en DIFFÉRENTIEL (compte d'erreurs), mais
+  « pas de DWG produit » ne voulait plus rien dire — j'ai failli conclure
+  que des hachures innocentes étaient fatales.

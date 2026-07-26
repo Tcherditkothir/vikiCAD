@@ -1,10 +1,15 @@
 #include "MainWindow.h"
 
+#include <QClipboard>
+#include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMimeData>
+#include <QRegularExpression>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QStandardPaths>
@@ -31,9 +36,11 @@
 #include "Version.h"
 #include "canvas/CanvasWidget.h"
 #ifdef VIKICAD_HAS_DXF
+#include "io/DwgExporter.h"
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
+#include "io/ClipboardIo.h"
 #include "io/ExcellonWriter.h"
 #include "io/GerberKit.h"
 #include "io/GerberKitWriter.h"
@@ -56,6 +63,34 @@
 #include "panels/ToolPanels.h"
 
 namespace viki {
+namespace {
+
+// COPYCLIP/PASTECLIP transport over the real system clipboard, under the
+// VikiCAD MIME type — this is what lets entities travel between two running
+// VikiCAD windows. Headless front ends leave the hook unset and fall back
+// to the process-local buffer.
+class SystemClipboardHook : public ClipboardHook {
+public:
+    void setData(const QByteArray& bytes) override
+    {
+        auto* mime = new QMimeData; // the clipboard takes ownership
+        mime->setData(QLatin1String(kClipboardMimeType), bytes);
+        QGuiApplication::clipboard()->setMimeData(mime);
+    }
+    QByteArray data() const override
+    {
+        const QMimeData* mime = QGuiApplication::clipboard()->mimeData();
+        return mime ? mime->data(QLatin1String(kClipboardMimeType)) : QByteArray();
+    }
+};
+
+SystemClipboardHook& systemClipboardHook()
+{
+    static SystemClipboardHook hook;
+    return hook;
+}
+
+} // namespace
 
 MainWindow::MainWindow()
 {
@@ -188,6 +223,8 @@ MainWindow::MainWindow()
 #ifdef VIKICAD_HAS_DXF
     exportMenu->addAction(QStringLiteral("DXF (2D drawing)..."), this,
                           [this] { exportAs(QStringLiteral("dxf")); });
+    exportMenu->addAction(QStringLiteral("DWG (2D drawing, via LibreDWG)..."),
+                          this, [this] { exportAs(QStringLiteral("dwg")); });
 #endif
     exportMenu->addAction(QStringLiteral("STL (3D-print mesh)..."), this,
                           [this] { exportAs(QStringLiteral("stl")); });
@@ -226,6 +263,28 @@ MainWindow::MainWindow()
     redoAct->setShortcutContext(Qt::ApplicationShortcut);
     connect(redoAct, &QAction::triggered, this,
             [this] { onCommandEntered(QStringLiteral("REDO")); });
+    editMenu->addSeparator();
+    // Ctrl+X/C/V run the clipboard commands through the shared processor.
+    // ApplicationShortcut is safe for text fields: a focused QLineEdit /
+    // QTextEdit claims these standard keys via ShortcutOverride, so typing
+    // in the command bar still cuts/copies/pastes TEXT (the same mechanism
+    // that routes Ctrl+Z to a focused line edit's own undo).
+    const auto addClipAction = [this, editMenu](const QString& label,
+                                                QKeySequence::StandardKey key,
+                                                const QString& command) {
+        QAction* act = editMenu->addAction(label);
+        act->setShortcuts(key);
+        act->setShortcutContext(Qt::ApplicationShortcut);
+        connect(act, &QAction::triggered, this,
+                [this, command] { onCommandEntered(command); });
+        return act;
+    };
+    addClipAction(QStringLiteral("Cu&t"), QKeySequence::Cut,
+                  QStringLiteral("CUTCLIP"));
+    addClipAction(QStringLiteral("&Copy"), QKeySequence::Copy,
+                  QStringLiteral("COPYCLIP"));
+    addClipAction(QStringLiteral("&Paste"), QKeySequence::Paste,
+                  QStringLiteral("PASTECLIP"));
     editMenu->addSeparator();
     QAction* delAct = editMenu->addAction(QStringLiteral("&Delete selection"));
     delAct->setShortcut(QKeySequence::Delete);
@@ -1041,6 +1100,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         if (!NativeStore::save(*m_doc, path, error))
             return {{QStringLiteral("error"), error}};
         m_doc->setFilePath(path);
+        m_savedStateId = m_doc->stateId();
         updateWindowTitle();
         return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
     }
@@ -1245,6 +1305,7 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
     m_selection.clear();
     m_doc = std::move(doc);
     m_ctx = std::make_unique<CommandContext>(*m_doc, m_selection, m_canvas);
+    m_ctx->setClipboard(&systemClipboardHook());
     m_processor = std::make_unique<CommandProcessor>(*m_ctx);
     registerBuiltinCommands(*m_processor);
     m_commandBar->setCompletions(m_processor->completionEntries());
@@ -1259,7 +1320,11 @@ void MainWindow::adoptDocument(std::unique_ptr<Document> doc)
         m_layerPanel->refresh();
         m_assemblyPanel->refresh();
         updateSketchStatus(); // sketch open/close/rename fires this too
+        updateWindowTitle();  // the "*" tracks every commit/undo/redo
     });
+    // The adopted state IS the on-disk state (fresh doc, or a loaded .vkd).
+    // Import paths override with markNeverSaved() right after adoption.
+    m_savedStateId = m_doc->stateId();
     updateSketchStatus();
     m_canvas->clearSketchReference();
     m_canvas->setMirroredX(false); // BOARDVIEW BOTTOM mirror is per-document view state
@@ -1376,8 +1441,10 @@ void MainWindow::updateWindowTitle()
 {
     const QString file = m_doc->filePath().isEmpty() ? QStringLiteral("untitled")
                                                      : m_doc->filePath();
-    setWindowTitle(QStringLiteral("VikiCAD %1 — %2")
-                       .arg(QLatin1String(versionString()), file));
+    setWindowTitle(QStringLiteral("VikiCAD %1 — %2%3")
+                       .arg(QLatin1String(versionString()), file,
+                            isDocumentModified() ? QStringLiteral(" *")
+                                                 : QString()));
 }
 
 void MainWindow::updateUnitsButton()
@@ -1432,6 +1499,7 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
         if (!r.ok)
             return reportError(r.error);
         adoptDocument(std::move(r.document));
+        markNeverSaved();
         QString msg = QStringLiteral("Imported %1 entities from %2")
                           .arg(r.imported)
                           .arg(path);
@@ -1460,6 +1528,7 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
                 if (s->component.isEmpty())
                     s->component = comp;
         adoptDocument(std::move(doc));
+        markNeverSaved();
         QString msg = QStringLiteral("Imported %1 solids from %2 (%3 notes)")
                           .arg(r.solids).arg(path).arg(r.notes);
         // Say what the FILE had, so "everything is grey" is never ambiguous
@@ -1483,6 +1552,7 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
             if (auto* s = dynamic_cast<SolidEntity*>(doc->entity(id)))
                 s->component = comp;
         adoptDocument(std::move(doc));
+        markNeverSaved();
         m_commandBar->appendHistory(
             QStringLiteral("Imported a %1-triangle mesh from %2 — MESH2SOLID "
                            "converts it to real geometry if you need booleans")
@@ -1505,11 +1575,15 @@ void MainWindow::openPath(const QString& path)
 
 void MainWindow::newFile()
 {
+    if (!maybeSaveBeforeDiscard())
+        return;
     adoptDocument(std::make_unique<Document>());
 }
 
 void MainWindow::openFile()
 {
+    if (!maybeSaveBeforeDiscard())
+        return;
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
         QStringLiteral(
@@ -1531,6 +1605,8 @@ void MainWindow::openFile()
 void MainWindow::importDxfFile()
 {
 #ifdef VIKICAD_HAS_DXF
+    if (!maybeSaveBeforeDiscard())
+        return;
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Import DXF/DWG"), {},
         QStringLiteral("CAD drawings (*.dxf *.dwg);;All files (*)"));
@@ -1544,6 +1620,7 @@ void MainWindow::importDxfFile()
         return;
     }
     adoptDocument(std::move(r.document));
+    markNeverSaved();
     QString msg = QStringLiteral("Imported %1 entities from %2").arg(r.imported).arg(path);
     if (r.skipped > 0)
         msg += QStringLiteral(" (%1 skipped: %2)")
@@ -1555,6 +1632,8 @@ void MainWindow::importDxfFile()
 
 void MainWindow::openGerberKit()
 {
+    if (!maybeSaveBeforeDiscard())
+        return;
     const QString dir = QFileDialog::getExistingDirectory(
         this, QStringLiteral("Open Gerber kit (fabrication output directory)"));
     if (dir.isEmpty())
@@ -1577,6 +1656,7 @@ bool MainWindow::loadGerberKit(const QString& path, bool interactive)
     // The kit was imported as ONE transaction into the fresh document, so a
     // single Ctrl+Z after adoption restores an empty drawing.
     adoptDocument(std::move(doc));
+    markNeverSaved();
     m_commandBar->appendHistory(
         QStringLiteral("Gerber kit: %1 file(s) -> %2 layer(s), %3 entities from %4")
             .arg(r.files.size())
@@ -1603,9 +1683,50 @@ bool MainWindow::saveTo(const QString& path)
         return false;
     }
     m_doc->setFilePath(path);
+    m_savedStateId = m_doc->stateId();
     updateWindowTitle();
     statusBar()->showMessage(QStringLiteral("Saved %1").arg(path), 3000);
     return true;
+}
+
+bool MainWindow::isDocumentModified() const
+{
+    return m_doc && m_doc->stateId() != m_savedStateId;
+}
+
+void MainWindow::markNeverSaved()
+{
+    // An imported document exists nowhere as a .vkd yet: closing it would
+    // lose the import, so it starts life modified.
+    m_savedStateId = kNeverSaved;
+    updateWindowTitle();
+}
+
+bool MainWindow::maybeSaveBeforeDiscard()
+{
+    if (!isDocumentModified())
+        return true;
+    const auto choice = QMessageBox::warning(
+        this, QStringLiteral("Unsaved changes"),
+        QStringLiteral("\"%1\" has unsaved changes.\nSave them first?")
+            .arg(m_doc->filePath().isEmpty() ? QStringLiteral("untitled")
+                                             : m_doc->filePath()),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (choice == QMessageBox::Cancel)
+        return false;
+    if (choice == QMessageBox::Discard)
+        return true;
+    saveFile(); // untitled -> Save As dialog; cancelling it keeps the doc dirty
+    return !isDocumentModified();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (maybeSaveBeforeDiscard())
+        event->accept();
+    else
+        event->ignore();
 }
 
 void MainWindow::saveFile()
@@ -1619,14 +1740,50 @@ void MainWindow::saveFile()
 
 void MainWindow::saveFileAs()
 {
+    // ONE dialog for the native format AND the planet's: picking a non-VKD
+    // filter EXPORTS to that format and leaves the open document untouched
+    // (path, title, dirty flag) — only a .vkd choice rebinds the working
+    // file. Lossy formats must never silently become the current document.
+    QStringList filters{QStringLiteral("VikiCAD drawings (*.vkd)"),
+                        QStringLiteral("STEP (*.step *.stp)")};
+#ifdef VIKICAD_HAS_DXF
+    filters << QStringLiteral("DXF drawing (*.dxf)")
+            << QStringLiteral("DWG drawing (*.dwg)");
+#endif
+    filters << QStringLiteral("STL mesh (*.stl)")
+            << QStringLiteral("Wavefront OBJ (*.obj)");
+    QString selected = filters.first();
     QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Save drawing"), {},
-        QStringLiteral("VikiCAD drawings (*.vkd)"));
+        filters.join(QStringLiteral(";;")), &selected);
     if (path.isEmpty())
         return;
-    if (!path.endsWith(QLatin1String(".vkd")))
-        path += QLatin1String(".vkd");
-    saveTo(path);
+    static const QStringList kKnown{
+        QStringLiteral("vkd"), QStringLiteral("step"), QStringLiteral("stp"),
+        QStringLiteral("dxf"), QStringLiteral("dwg"), QStringLiteral("stl"),
+        QStringLiteral("obj")};
+    QString suffix = QFileInfo(path).suffix().toLower();
+    if (!kKnown.contains(suffix)) {
+        // No (or exotic) suffix typed: the chosen filter decides.
+        const QString ext = QRegularExpression(QStringLiteral("\\*\\.(\\w+)"))
+                                .match(selected)
+                                .captured(1)
+                                .toLower();
+        suffix = ext.isEmpty() ? QStringLiteral("vkd") : ext;
+        path += QLatin1Char('.') + suffix;
+    }
+    if (suffix == QLatin1String("vkd")) {
+        saveTo(path);
+        return;
+    }
+    QString message;
+    if (exportToPath(path, message)) {
+        m_commandBar->appendHistory(message);
+        statusBar()->showMessage(message, 4000);
+    } else {
+        m_commandBar->appendHistory(QStringLiteral("! export: %1").arg(message));
+        QMessageBox::warning(this, QStringLiteral("Export failed"), message);
+    }
 }
 
 void MainWindow::beginSketchOnFace()
@@ -1926,6 +2083,22 @@ bool MainWindow::exportToPath(const QString& path, QString& message,
                        : r.error;
         return r.ok;
     }
+    if (suffix == QLatin1String("dwg")) {
+        const DwgExportResult r = exportDwg(*m_doc, path);
+        message = r.ok ? QStringLiteral("DWG: %1 entit%2 exported%3 → %4")
+                             .arg(r.exported)
+                             .arg(r.exported == 1 ? QStringLiteral("y")
+                                                  : QStringLiteral("ies"))
+                             .arg(r.skipped
+                                      ? QStringLiteral(", %1 skipped (%2)")
+                                            .arg(r.skipped)
+                                            .arg(r.skippedTypes.join(
+                                                QStringLiteral(", ")))
+                                      : QString())
+                             .arg(path)
+                       : r.error;
+        return r.ok;
+    }
 #endif
     if (suffix == QLatin1String("stl")) {
         const StlResult r = exportStl(*m_doc, path);
@@ -1944,7 +2117,7 @@ bool MainWindow::exportToPath(const QString& path, QString& message,
         return r.ok;
     }
     message = QStringLiteral("unsupported export format: .%1 "
-                             "(step/stp, dxf, stl, obj)").arg(suffix);
+                             "(step/stp, dxf, dwg, stl, obj)").arg(suffix);
     return false;
 }
 
@@ -1955,6 +2128,8 @@ void MainWindow::exportAs(const QString& kind)
         filter = QStringLiteral("STEP (*.step *.stp)");
     else if (kind == QLatin1String("dxf"))
         filter = QStringLiteral("DXF drawing (*.dxf)");
+    else if (kind == QLatin1String("dwg"))
+        filter = QStringLiteral("DWG drawing (*.dwg)");
     else if (kind == QLatin1String("stl"))
         filter = QStringLiteral("STL mesh (*.stl)");
     else

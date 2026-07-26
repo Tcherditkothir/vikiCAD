@@ -1133,3 +1133,233 @@ sur les vrais fichiers : les 3 solides de BOUCLIER arrivent avec
 **Reste à faire** : validation souris par Lex (tour en tête de
 REPRISE.md). Le « ClearBlue » du nom de BOUCLIER n'a jamais atteint le
 STEP — réglage d'export SolidWorks, hors de notre portée.
+
+## 2026-07-25 — Presse-papier : Ctrl+C/X/V, y compris entre documents ✅
+
+**Demande de Lex** : « le ctl-c / ctl-v doit fonctionner… et entre les
+documents aussi. »
+
+**Livré.** Trois commandes nouvelles dans le processeur partagé —
+`COPYCLIP`, `CUTCLIP`, `PASTECLIP` — donc identiques au clavier, au menu
+Édition (Couper/Copier/Coller), en CLI, en script et en IPC. Le payload
+(`core/io/ClipboardIo.h`) est un JSON AUTONOME sous le type MIME
+`application/x-vikicad-entities` : les entités (sérialisation
+toJson/entityFromJson déjà éprouvée par le .vkd et l'undo — le BREP des
+solides voyage en base64) PLUS tout ce qu'elles référencent par nom ou
+par id : calques, définitions de blocs (récursif pour les inserts
+imbriqués), styles de cote. Au collage, remappage par NOM : un calque
+manquant est créé avec ses propriétés transportées ; un calque existant
+du même nom GAGNE tel quel (ses couleurs appartiennent au document
+cible). Nouveaux ids, une seule transaction, le collage devient la
+sélection courante (prêt pour un MOVE immédiat).
+
+**Pourquoi ça marche entre les documents** : vikiCAD est mono-document
+par processus, donc « entre les documents » = entre processus = le
+presse-papier de l'OS. La GUI branche un `ClipboardHook` (QClipboard +
+QMimeData) sur le `CommandContext` ; sans crochet (CLI headless, tests),
+un tampon local au processus prend le relais — copier/coller reste
+fonctionnel dans un script.
+
+**Interaction.** Ctrl+V demande le point d'insertion (l'ancre = coin
+inférieur gauche de l'ensemble copié), ghost 2D sous le curseur et ghost
+3D bleu (compound des solides) dans la vue OCCT ; **Enter colle À LA
+POSITION D'ORIGINE** — le cas d'alignement entre deux documents. En
+headless strict, le Finish implicite donne le collage sur place. Les
+xlines sont exclues du calcul d'ancre (leur boîte sentinelle l'aurait
+projetée à ±1e9).
+
+**Qt fait le tri texte/entités tout seul** : les QActions en
+`ApplicationShortcut` perdent volontairement contre un QLineEdit focusé
+via ShortcutOverride — taper dans la barre de commande copie/colle du
+TEXTE, exactement comme Ctrl+Z y fait déjà l'undo de texte. Aucun code
+de garde à écrire.
+
+**Leçons.**
+- **PASTECLIP sélectionne son collage, donc la commande TAPÉE suivante
+  hérite du pickfirst** : au smoke, `CUTCLIP <ids>` a mangé la sélection
+  et avalé les ids en silence — 1 entité restait. Même piège que la
+  phase ergo, même remède (`SELECT` nu d'abord). C'est le comportement
+  voulu en GUI (Ctrl+X coupe la sélection), mais en script : vider la
+  sélection avant toute commande à ids explicites.
+- **Le presse-papier même-processus ne prouve RIEN du transport OS** :
+  Qt ressert son propre QMimeData sans que les octets traversent le
+  compositeur. D'où la phase `xproc:` : DEUX instances réelles, A copie,
+  B (qui VOLE la socket IPC `vikicad` — `removeServer` + `listen`)
+  colle. Vérifié sous Wayland : « 1 object(s) pasted », bornes exactes.
+  La phase est en FIN de smoke (la socket volée rend A muet) et tolère
+  un SKIP si le compositeur refuse le clipboard à une fenêtre sans focus.
+
+**Tests d'injection (la preuve, pas le vert)** : remap de calques
+supprimé → le cas inter-documents tombe ; ancre = centre au lieu du coin
+→ 2 cas / 3 assertions tombent. Fichier restauré, md5 identique.
+
+Le prompt d'insertion suit la règle des jalons optionnels (AGENT.md §2.6) :
+un token étranger prend le défaut (collage sur place) et REPOUSSE le token
+vers une nouvelle ligne de commande — `PASTECLIP` puis `RECT …` en .vks ou
+en IPC exécute les deux au lieu d'avaler le RECT (le piège .vks
+historique, testé).
+
+**Chiffres** : ctest 6049/364 → **6155 assertions / 373 cas** (9 cas
+presse-papier : même document, entre documents, calques remappés, solide
+avec BREP+couleur+transparence+composant, CUTCLIP+UNDO, payload étranger
+refusé sans toucher au document, token étranger au prompt d'insertion,
+bloc transporté, style de cote transporté) ; gui-smoke 292 →
+**310 checks** (phase `clip:` 16 lignes + postlude `xproc:` 2 lignes).
+TOUS VERTS.
+
+## 2026-07-26 — Vue DWG du plugin : les faux triangles de hachure ✅
+
+**Constat de Lex** : sur `Pyramide.dwg`, la vue Obsidian noyait le plan du
+2e étage sous de grands triangles bleus hachurés ; vikiCAD, lui, rendait
+bien. **Deux bogues de dxf-viewer 1.0.48**, tous deux corrigés DANS le
+plugin (`src/hatchBoundary.ts`), zéro modification vendorée.
+
+**L'enquête, parce que la piste courte mentait.** Les hachures du fichier
+sont saines (l'inventaire DXF le prouvait), la scène headless semblait
+saine aussi — parce que je mesurais l'ÉTENDUE des lots, pas leur contenu.
+La percée : sonder les PIXELS dans le banc navigateur (`verify/dxf.html`),
+puis masquer les objets three.js un à un jusqu'à perdre le bleu. Coupable :
+le lot de lignes du calque `2e_wall_ruff` — le « triangle plein » était en
+fait des MILLIERS de segments ANSI31 remplissant une région fausse. Le
+tracé SVG de la frontière a montré le zigzag : des diagonales parasites
+d'un coin à l'autre du plan.
+
+**Bogue 1 — arêtes en vrac.** Une frontière de HATCH « liste d'arêtes »
+ne garantit ni l'ordre ni l'orientation (AutoCAD ré-enchaîne à la lecture ;
+il écrit d'ailleurs le MÊME contour dans deux ordres différents pour les
+deux hachures jumelles du bloc `w2b`). dxf-viewer concatène tel quel :
+première arête inversée = polygone en zigzag = auto-intersections = la
+parité remplit des nœuds papillon triangulaires. Correctif : tesseller
+chaque arête séparément (les routines de dxf-viewer restent maîtresses),
+puis reconstruire le contour par CIRCUIT EULÉRIEN (Hierholzer) — un
+glouton « prochaine arête qui touche » se coince aux jonctions des PONTS
+(le contour sort vers un îlot et en revient). GARDE-BARRIÈRE : si chaque
+arête suit déjà la précédente, le code d'origine fait foi à l'identique —
+no-op strict, vérifié au segment près.
+
+**Bogue 2 — boucles perdues après 97/330.** ParseEdge avale le code 97
+(compte de références d'associativité) qui clôt chaque boucle ; le 330
+orphelin fait rendre null à ParseBoundaryLoop et TOUTES les boucles
+suivantes de la hachure sont perdues — ici la boucle intérieure
+(« outermost »), donc la parité n'avait plus que l'externe et remplissait
+bien trop. Correctif : purge textuelle des blocs 97/330 des HATCH avant le
+parseur (même famille de remède que le recollage LibreDWG), ces références
+n'ayant aucune valeur pour un rendu.
+
+**Vérification** (`verify/verify-hatch.mjs`, recensement par entité
+AVANT/APRÈS) : reproduction avérée (1209/1211 segments sur 929×929) ;
+encre dégonflée 88 249 → 38 807 (la bande de mur exacte) ; NO-OP STRICT
+sur les hachures réellement ordonnées (NET, ANSI31 fine, AR-CONC et ses
+6 069 segments — identiques au segment près) ; les inondations DISCRÈTES
+des autres hachures de murs réparées au passage (70A5 : 1 577 → 492
+d'encre — brouillées pareil, juste moins visibles) ; plein fichier de
+48 Mo re-vérifié in situ. Banc navigateur A/B au pixel : pièce inondée
+[50,109,202] → fond [38,38,42], encre 9,20 % → 6,64 %.
+
+**Leçons.**
+- **Mesurer l'étendue d'un lot ne dit rien de son contenu** : l'inondation
+  vivait dans un lot à l'emprise parfaitement normale. C'est la sonde de
+  pixels + la bissection de visibilité qui ont nommé le coupable, pas
+  trois généreuses passes de statistiques géométriques.
+- **Mes « hachures saines » de contrôle ne l'étaient pas** : mêmes arêtes
+  brouillées, inondation discrète. Un témoin de non-régression se PROUVE
+  (ordre des arêtes vérifié), il ne se devine pas à l'œil.
+- **Un harnais async qui restaure son crochet avant l'await mesure du
+  vide** : premier « TOUT VERT » à zéro checks. Depuis : le harnais compte
+  ses propres checks et échoue sous 8.
+- Le cache navigateur heuristique a servi un bundle périmé pendant la
+  vérification (python http.server n'envoie aucun Cache-Control) — marqueur
+  global + nom de fichier neuf pour trancher, puis retour au nom canonique.
+
+**Portée** : le correctif vit CÔTÉ VISIONNEUSE, donc il s'applique quel
+que soit le convertisseur amont (dwg2dxf primaire ou secours vikiCAD) et
+à tout `.dxf` ouvert tel quel. Le cache de conversions n'a pas à être
+invalidé : il contient le DXF d'entrée, pas le rendu.
+
+## 2026-07-26 — Enregistrer sous multi-formats, export DWG, VKD dans Obsidian ✅
+
+**Demande de Lex** : « quand je sauvegarde, je ne peux pas choisir le
+type… seulement en VKD (et export devrait être aussi intégré au "save
+as") ; dans Obsidian un fichier VKD ne s'affiche pas en preview, il
+s'ouvre directement dans vikiCAD ! (oups) ; je ne peux pas exporter en
+DWG ? »
+
+**Livré.**
+- **« Enregistrer sous » parle tous les formats** : VKD, STEP, DXF, DWG,
+  STL, OBJ dans le même dialogue. Un format non natif EXPORTE (même moteur
+  que File ▸ Export) sans toucher au document courant — le `.vkd` reste le
+  fichier de travail, aucun format avec pertes ne devient silencieusement
+  le document. Sans suffixe tapé, le filtre choisi décide du type.
+- **Export DWG** (une première) : `core/io/DwgExporter` écrit un DXF r2000
+  temporaire puis le convertit par `dxf2dwg` (GNU LibreDWG, résolu PATH
+  puis `~/.local/bin`, comme l'import). Câblé partout : menu Export,
+  Enregistrer sous, IPC `export`, CLI `export FILE.vkd OUT.dwg`. Le succès
+  se juge au FICHIER produit (converti dans le dossier temporaire, copié
+  sur la cible seulement s'il existe et pèse plus de zéro octet).
+- **Deux patches libdxfrw** pour écrire un DXF canonique que LibreDWG
+  digère :
+  - **0005** — owner `330` sur chaque entité (`1F` en model space, le
+    record du bloc pour son contenu) et plus de section CLASSES vide.
+    Sans owners, dxf2dwg rangeait les entités ORPHELINES dans la carte
+    d'objets : un DWG plein… que tout lecteur relisait VIDE.
+  - **0006** — rotation MTEXT en vecteur de direction `11/21/31` (ce
+    qu'AutoCAD écrit) au lieu du groupe `50`, FATAL pour LibreDWG ; en
+    prime notre propre réimport ne devine plus radians contre degrés,
+    il lit le vecteur.
+- **VKD s'affiche DANS Obsidian** (dépôt vikicad-obsidian-viewer) :
+  extension `vkd` enregistrée, vue d'aiguillage `VkdView` — un
+  `query --describe` (aucune conversion) décide : au moins un solide →
+  vue 3D (export OBJ+MTL), sinon vue 2D (export DXF, mêmes traits fins
+  que les DWG) ; branches `vkd` dans DwgView et Mesh3dView, conversions
+  au même cache que le reste. Avant : cliquer un `.vkd` ÉJECTAIT hors
+  d'Obsidian vers vikiCAD.
+
+**Preuves.** ctest **375/375** (2 cas DWG neufs : géométrie + hachure +
+calque via `importDwg` — l'autre implémentation — et blocs+INSERT
+préservés) ; gui-smoke **313 TOUT VERT × 3 passes** (nouvelle phase :
+export DWG par IPC, DWG non vide, relecture dwg2dxf exigeant des
+entités) ; échelle réelle : Pyramide.dwg importée (5 186 entités) →
+export DWG 1,7 Mo en ~43 s → relecture indépendante **5 186/5 186**
+(3 759 LINE, 392 INSERT, 386 ARC, 316 LWPOLYLINE, 200 CIRCLE, 88 TEXT,
+30 ELLIPSE, 10 HATCH, 3 MTEXT, 2 SPLINE) et **13/13 hachures de blocs**
+présentes dans les définitions relues. Plugin : build propre, aiguillage
+vérifié headless (0 solide → 2D ; 1 solide → 3D ; exports produits).
+
+**Leçons** (détail dans LESSONS.md) : un écrivain de fichier se juge à la
+RELECTURE INDÉPENDANTE ; « AutoCAD le lit » ne veut pas dire canonique ;
+le message d'erreur d'un parseur peut nommer le mauvais coupable.
+
+**Restes assumés.** LibreDWG émet 6 « Unknown DXF code 21 for HATCH »
+NON FATALS sur 2 hachures de blocs de Pyramide (séquences de codes
+identiques aux hachures acceptées, seules les valeurs diffèrent — bogue
+de parseur LibreDWG, pas de notre écrivain) ; les 13 hachures survivent
+au comptage. À cette échelle, dxf2dwg prend ~40 s : c'est le
+convertisseur qui travaille, pas nous — le délai de DwgExporter est à
+120 s.
+
+## 2026-07-26 — Garde de fermeture : plus de travail perdu sans avertir ✅
+
+**Demande de Lex** : « et si je ferme vikiCAD sans avoir sauvegardé, j'ai
+un avertissement offrant la sauvegarde ? » — la réponse était NON : aucun
+`closeEvent`, aucun suivi de modification ; fermer, New, Open et les
+imports jetaient le travail en silence, sans même un `*` au titre.
+
+**Livré.** Suivi par IDENTITÉ D'ÉTAT dans le journal d'undo : chaque
+transaction commise reçoit un `stateId` unique à vie ;
+`Document::stateId()` = l'id de la dernière transaction appliquée (0 =
+tel que chargé). « Modifié » = comparaison avec l'id mémorisé à
+l'ouverture/sauvegarde — donc Ctrl+Z jusqu'à l'état sauvegardé REDONNE un
+document propre, une branche redo abandonnée ne peut JAMAIS repasser pour
+sauvegardée (ids retirés à jamais), et l'éviction du plafond d'undo rend
+honnêtement l'état « modifié pour toujours ». Câblage GUI :
+Sauvegarder / Ignorer / Annuler à la fermeture ET avant New/Open/imports,
+`*` au titre rafraîchi par l'écouteur de changements du document, imports
+marqués « jamais sauvegardés » (ils n'existent nulle part en .vkd).
+L'IPC `open`/`save` ne demande RIEN (un modal gèlerait la socket) ; arrêt
+d'unité systemd = SIGTERM, sans closeEvent — consigné dans AGENT.md.
+
+**Preuves.** ctest **376/376** (nouveau cas : ids uniques, undo/redo
+retombent sur les MÊMES ids, retour à 0, branche morte jamais réutilisée,
+commit vide sans effet) ; gui-smoke **313 TOUT VERT** — preuve en creux
+qu'aucun chemin headless ne déclenche le dialogue, sinon le harnais
+gèlerait. Validation souris du dialogue au tour de REPRISE.md.

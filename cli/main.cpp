@@ -12,6 +12,7 @@
 #include "cmd/CommandProcessor.h"
 #include "doc/SelectionSet.h"
 #ifdef VIKICAD_HAS_DXF
+#include "io/DwgExporter.h"
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
 #endif
@@ -70,6 +71,8 @@ int printUsage(FILE* out)
         "  vikicad-cli import KITDIR|IN.gbr|IN.txt --save-as OUT.vkd\n"
         "              (Gerber kit: directory or single Gerber/Excellon file)\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
+        "  vikicad-cli export FILE.vkd OUT.dwg   (r2000, via GNU LibreDWG's "
+        "dxf2dwg)\n"
         "  vikicad-cli export FILE.vkd OUT.pdf [--layout NAME] [--with-notes]\n"
         "  vikicad-cli export FILE.vkd OUT.step   (solids + notes sidecar)\n"
         "  vikicad-cli export FILE.vkd OUT.stl [--deflection MM] [--ascii]\n"
@@ -530,6 +533,22 @@ int cmdExport(const QStringList& args)
                                    QJsonArray{layout->paperW, layout->paperH}}});
     }
 
+    if (outPath.endsWith(QLatin1String(".dwg"), Qt::CaseInsensitive)) {
+        const DwgExportResult r = exportDwg(*doc, outPath);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_DWG"), r.error);
+        QJsonObject result;
+        result[QStringLiteral("savedTo")] = outPath;
+        result[QStringLiteral("exported")] = r.exported;
+        result[QStringLiteral("skipped")] = r.skipped;
+        QJsonArray st;
+        for (const QString& t : r.skippedTypes)
+            st.append(t);
+        result[QStringLiteral("skippedTypes")] = st;
+        result[QStringLiteral("tool")] = r.tool;
+        return emitOk(result);
+    }
+
     // GUI/IPC parity (G3 closure): an unrecognized extension must NOT fall
     // back to DXF silently — "export FILE.vkd gerbers" (forgotten trailing
     // '/') used to write a DXF file NAMED "gerbers" with ok:true, a trap
@@ -538,9 +557,9 @@ int cmdExport(const QStringList& args)
         return emitError(
             QStringLiteral("E_FORMAT"),
             QStringLiteral("unsupported export format: '%1' — use .dxf, "
-                           ".step/.stp, .stl, .obj, .pdf, a fab extension "
-                           "(.gtl/.gbr/.txt/...), or a kit directory "
-                           "(must exist or end with '/')")
+                           ".dwg, .step/.stp, .stl, .obj, .pdf, a fab "
+                           "extension (.gtl/.gbr/.txt/...), or a kit "
+                           "directory (must exist or end with '/')")
                 .arg(QFileInfo(outPath).fileName()));
 
     const DxfExportResult r = exportDxf(*doc, outPath, version);

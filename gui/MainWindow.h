@@ -99,11 +99,23 @@ private:
     void updateWindowTitle();
     void updateUnitsButton();
     bool saveTo(const QString& path);
+    // Unsaved-changes tracking: modified = the document's undo stateId no
+    // longer matches the one recorded at open/save. Imports record a
+    // sentinel no state ever matches — they exist nowhere as a .vkd yet.
+    bool isDocumentModified() const;
+    void markNeverSaved();
+    // Save / Discard / Cancel before an action that would drop the current
+    // document (window close, New, Open, imports). false = abort the action.
+    // INTERACTIVE paths only — the IPC "open" verb never prompts.
+    bool maybeSaveBeforeDiscard();
+    void closeEvent(QCloseEvent* event) override;
 
     std::unique_ptr<Document> m_doc;
     SelectionSet m_selection;
     std::unique_ptr<CommandContext> m_ctx;
     std::unique_ptr<CommandProcessor> m_processor;
+    quint64 m_savedStateId = 0; // Document::stateId() at last open/save
+    static constexpr quint64 kNeverSaved = ~quint64(0);
 
     CanvasWidget* m_canvas = nullptr;
     CommandBar* m_commandBar = nullptr;

@@ -30,7 +30,9 @@ bien qu'à la souris.
 MOVE/COPY/ROTATE/MIRROR/SCALE/STRETCH ; TRIM/EXTEND/OFFSET/FILLET/CHAMFER/
 BREAK/JOIN/EXPLODE ; accrochages aux objets (extrémité/milieu/centre/
 quadrant/intersection/perpendiculaire) + ORTHO/POLAIRE/GRILLE ; poignées de
-sommets ; calques ; bascule mm/pouce en un clic (`x,y`, `@dx,dy`,
+sommets ; calques ; presse-papier Ctrl+C/X/V (COPYCLIP/CUTCLIP/PASTECLIP) —
+y compris entre deux vikiCAD, avec calques, blocs, styles de cote et solides
+transportés ; bascule mm/pouce en un clic (`x,y`, `@dx,dy`,
 `@dist<angle`, `2"`, `10mm`).
 
 **Annotation** — MTEXT, 5 types de cotes régénérées en direct depuis le
@@ -72,8 +74,10 @@ vérifiée **pixel par pixel contre `gerbv`** (le renderer de référence) sur
 de vraies cartes ; `PANELIZE` ; pont DXF↔Gerber (un contour de carte
 dessiné en 2D s'exporte en `.GKO` propre). Détails : [docs/PCB_CAM.md](docs/PCB_CAM.md).
 
-**Export** — STL/OBJ, plots PDF, DXF, STEP, kits Gerber/Excellon complets ou
-calque par calque.
+**Export** — STL/OBJ, plots PDF, DXF, **DWG** (r2000, via `dxf2dwg` de GNU
+LibreDWG), STEP, kits Gerber/Excellon complets ou calque par calque. Le
+dialogue « Enregistrer sous » offre tous ces formats : un format non natif
+exporte sans changer le fichier de travail.
 
 ### Compilation
 
@@ -94,6 +98,7 @@ vikicad-cli open part.vkd --exec "CIRCLE 50,50 10" --exec "EXTRUDE 20 1" --save
 vikicad-cli query part.vkd --entities --layers --notes --blocks --layouts
 vikicad-cli query part.vkd --describe          # volume/aire/bbox/centroïde/features, en JSON
 vikicad-cli export part.vkd out.dxf --dxf-version 2013
+vikicad-cli export part.vkd out.dwg            # r2000, via dxf2dwg (LibreDWG)
 vikicad-cli export part.vkd out.step
 vikicad-cli export kit.vkd fab/                # kit Gerber/Excellon complet
 vikicad-cli import legacy.dxf --save-as legacy.vkd
@@ -144,11 +149,13 @@ one to be as usable by AI agents as by a mouse.
 
 - **Stack**: C++17, Qt6 Widgets, OpenCASCADE 7.9, native SQLite format
   (`.vkd`), CMake.
-- **Interop**: DXF R12–2018 (vendored, patched libdxfrw), DWG import (via
-  `dwg2dxf`/LibreDWG), STEP read/write with **colour, transparency and part
-  names** (OCCT XCAF; notes as sidecar JSON or optional AP242 attributes),
-  **STL import (as a mesh) and export**, OBJ with `.mtl` materials, PDF, and
-  **Gerber RS-274X + Excellon** read/write.
+- **Interop**: DXF R12–2018 (vendored, patched libdxfrw), **DWG import and
+  export** (via LibreDWG's `dwg2dxf`/`dxf2dwg`), STEP read/write with
+  **colour, transparency and part names** (OCCT XCAF; notes as sidecar JSON
+  or optional AP242 attributes), **STL import (as a mesh) and export**, OBJ
+  with `.mtl` materials, PDF, and **Gerber RS-274X + Excellon** read/write.
+  Save As offers every export format; a non-native pick exports without
+  rebinding the working file.
 - **Agent-friendly by design**: headless `vikicad-cli` with JSON output,
   JSON-RPC socket on the running GUI (`vikicad-cli connect`), `.vks` command
   scripts (AutoCAD `.scr` semantics). See [docs/AGENT.md](docs/AGENT.md).
@@ -159,6 +166,8 @@ one to be as usable by AI agents as by a mouse.
 MOVE/COPY/ROTATE/MIRROR/SCALE/STRETCH; TRIM/EXTEND/OFFSET/FILLET/CHAMFER/
 BREAK/JOIN/EXPLODE; object snaps (endpoint/midpoint/center/quadrant/
 intersection/perpendicular) + ORTHO/POLAR/GRID; vertex grips; layers;
+Ctrl+C/X/V clipboard (COPYCLIP/CUTCLIP/PASTECLIP) — across running VikiCAD
+instances too, carrying layers, blocks, dimension styles and solids;
 one-click mm/inch toggle (`x,y`, `@dx,dy`, `@dist<angle`, `2"`, `10mm`).
 
 **Annotation** — MTEXT, 5 dimension kinds regenerated live from DimStyle and
@@ -219,6 +228,7 @@ vikicad-cli open part.vkd --exec "CIRCLE 50,50 10" --exec "EXTRUDE 20 1" --save
 vikicad-cli query part.vkd --entities --layers --notes --blocks --layouts
 vikicad-cli query part.vkd --describe          # volume/area/bbox/centroid/features, JSON
 vikicad-cli export part.vkd out.dxf --dxf-version 2013
+vikicad-cli export part.vkd out.dwg            # r2000, via dxf2dwg (LibreDWG)
 vikicad-cli export part.vkd out.step
 vikicad-cli export kit.vkd fab/                # a full Gerber/Excellon kit
 vikicad-cli import legacy.dxf --save-as legacy.vkd

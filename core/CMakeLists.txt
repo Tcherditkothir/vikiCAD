@@ -30,6 +30,7 @@ add_library(vikicore STATIC
     cmd/CommandsDraw2.cpp
     cmd/CommandsLayer.cpp
     cmd/CommandsModify.cpp
+    cmd/CommandsClipboard.cpp
     cmd/CommandsEdit.cpp
     cmd/CommandsAnnotate.cpp
     cmd/CommandsBlock.cpp
@@ -51,6 +52,7 @@ add_library(vikicore STATIC
     edit/EditOps.cpp
     edit/MinDist.cpp
     io/NativeStore.cpp
+    io/ClipboardIo.cpp
     io/QueryJson.cpp
     io/PdfPlotter.cpp
     script/ScriptRunner.cpp
@@ -74,7 +76,8 @@ add_library(vikicore STATIC
 )
 
 if(VIKICAD_HAS_DXF)
-    target_sources(vikicore PRIVATE io/DxfImporter.cpp io/DxfExporter.cpp)
+    target_sources(vikicore PRIVATE io/DxfImporter.cpp io/DxfExporter.cpp
+                   io/DwgExporter.cpp)
 endif()
 
 target_include_directories(vikicore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

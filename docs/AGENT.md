@@ -131,7 +131,12 @@ Commands are state machines fed by whitespace-separated tokens. The rules:
 Useful command vocabulary (aliases in parentheses): 2D drawing
 `LINE (L) CIRCLE (C) ARC (A) RECT (REC) PLINE (PL) ELLIPSE (EL) SPLINE (SPL)`,
 editing `MOVE (M) COPY (CO) ROTATE (RO) MIRROR (MI) SCALE (SC) ERASE (E)
-TRIM (TR) OFFSET (O) FILLET (F) UNDO (U) REDO`, 3D
+TRIM (TR) OFFSET (O) FILLET (F) UNDO (U) REDO`, clipboard
+`COPYCLIP <ids>` / `CUTCLIP <ids>` / `PASTECLIP [x,y]` (no point = paste at
+the original position; the offline CLI uses a process-local buffer, the GUI
+over IPC uses the REAL system clipboard — and PASTECLIP SELECTS what it
+pasted, so clear with a bare `SELECT` before the next id-explicit command,
+or pickfirst eats the typed ids), 3D
 `WORKPLANE (WP) EXTRUDE (EXT) REVOLVE (REV) UNION SUBTRACT (SUB)
 INTERSECT (INT) HOLE (HO) SHELL (SH) SPLIT COMBINE SWEEP (SW) LOFT (LO)
 FILLET3D (F3D) CHAMFER3D (CH3D) MOVE3D (M3) ROTATE3D (RO3)`, and the
@@ -473,9 +478,15 @@ an assembly exploded across the scene).
   `{"ok":true,...}` with the explanation only in `messages`
   (e.g. `"that id is not a solid"`). Always check `messages`; in
   `gui-smoke.sh` see how every `gexec` is followed by a state assertion.
-- **DWG is import-only.** `$CLI import file.dwg --save-as out.vkd` works
-  (R14–2013 natively, 2018+ via a bundled `dwg2dxf` fallback); there is no
-  DWG export — export DXF instead.
+- **DWG goes both ways, through LibreDWG.** Import: `$CLI import file.dwg
+  --save-as out.vkd` (R14–2013 natively, 2018+ via the `dwg2dxf` fallback).
+  Export: `$CLI export part.vkd out.dwg` (r2000) shells out to `dxf2dwg` —
+  needs GNU LibreDWG on PATH or `~/.local/bin`, budget ~40 s per 5 000
+  entities, and expect harmless `Unknown DXF code 21 for HATCH` warnings on
+  some imported hatches. The failure verdict is the produced file, not the
+  stderr noise. In the GUI, Save As offers DWG (and every other export):
+  a non-VKD pick exports WITHOUT rebinding the working file — the open
+  document stays the `.vkd`.
 - **An imported STL is a MESH, not a solid.** It arrives as one face carrying
   a triangulation and no surface — enough to view, measure, place
   (`MOVE3D`/`ROTATE3D`), section and re-export, but booleans, fillets and
@@ -485,6 +496,13 @@ an assembly exploded across the scene).
   because sewing 50 k cost 39 s and 800 MB here, and the result is faceted
   either way. Both dialects are detected by content — a binary STL whose
   80-byte header happens to start with the word `solid` does not fool it.
+- **The unsaved-changes prompt is a MOUSE-only thing.** The GUI asks
+  Save/Discard/Cancel on window close, New, Open and imports when the
+  document is dirty — but the IPC `open` verb replaces the document with NO
+  prompt (an agent manages its own saves; a modal would hang the socket),
+  and stopping the systemd unit sends SIGTERM, which never runs the close
+  handler. Save explicitly (`connect save PATH`) before `open` or unit stop
+  if the state matters.
 - **GUI from a sandbox: systemd unit or nothing.** A GUI launched with
   plain `&`/`nohup` from an agent shell dies with the sandbox. Use the
   `systemd-run` recipe in §1b, poll `connect ping`, and stop the unit when

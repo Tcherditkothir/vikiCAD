@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 
 #include "doc/Document.h"
@@ -19,6 +20,17 @@ public:
     virtual bool mirroredX() const { return false; }
 };
 
+// Transport for COPYCLIP/CUTCLIP/PASTECLIP payloads. The GUI backs it with
+// the system clipboard (QClipboard + the VikiCAD MIME type) so entities move
+// between running VikiCAD instances; when no hook is set, the commands fall
+// back to a process-local buffer (headless CLI, tests).
+class ClipboardHook {
+public:
+    virtual ~ClipboardHook() = default;
+    virtual void setData(const QByteArray& bytes) = 0;
+    virtual QByteArray data() const = 0;
+};
+
 // Everything a command needs to run, front-end agnostic.
 class CommandContext {
 public:
@@ -28,6 +40,8 @@ public:
     Document& doc() { return m_doc; }
     SelectionSet& selection() { return m_selection; }
     ViewHook* view() { return m_view; }
+    ClipboardHook* clipboard() { return m_clipboard; }
+    void setClipboard(ClipboardHook* hook) { m_clipboard = hook; }
 
     // mm per display unit — input parsing multiplies bare numbers by this.
     double unitFactor() const
@@ -83,6 +97,7 @@ private:
     Document& m_doc;
     SelectionSet& m_selection;
     ViewHook* m_view;
+    ClipboardHook* m_clipboard = nullptr;
     PrimitiveList m_overlay;
     Vec2d m_lastPoint;
     Vec2d m_pointerHint;

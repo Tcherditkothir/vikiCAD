@@ -32,6 +32,9 @@ struct Change {
 struct Transaction {
     QString name;
     std::vector<Change> changes;
+    // Unique for the document's lifetime, assigned at commit — the identity
+    // of the state this transaction leads TO (see Document::stateId()).
+    uint64_t stateId = 0;
 };
 
 // A sketch is a LIGHTWEIGHT reference: a name + a work plane + the 2D
@@ -78,6 +81,15 @@ public:
     // Return the name of the undone/redone transaction, empty if none.
     QString undo();
     QString redo();
+    // Identity of the CURRENT state in undo history: 0 = as built/loaded,
+    // else the id of the last applied transaction. Ids are never reused
+    // (an abandoned redo branch, or eviction by the capped undo stack,
+    // retires them forever), so "same state as the one last saved" is a
+    // plain id comparison — that is the GUI's unsaved-changes flag.
+    uint64_t stateId() const
+    {
+        return m_undoStack.empty() ? 0 : m_undoStack.back().stateId;
+    }
 
     // --- layers
     const std::vector<Layer>& layers() const { return m_layers; }
@@ -195,6 +207,7 @@ private:
     std::vector<SnapPoint> m_extraSnapPoints; // transient reference snap targets
 
     std::unique_ptr<Transaction> m_openTransaction;
+    uint64_t m_stateCounter = 0; // last assigned Transaction::stateId
     QJsonObject m_modifyBefore;
     std::vector<Transaction> m_undoStack;
     std::vector<Transaction> m_redoStack;
