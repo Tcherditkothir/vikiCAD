@@ -1363,3 +1363,47 @@ retombent sur les MÊMES ids, retour à 0, branche morte jamais réutilisée,
 commit vide sans effet) ; gui-smoke **313 TOUT VERT** — preuve en creux
 qu'aucun chemin headless ne déclenche le dialogue, sinon le harnais
 gèlerait. Validation souris du dialogue au tour de REPRISE.md.
+
+## 2026-07-26 — EAGLE 6+ en import : les vieux projets redeviennent lisibles ✅
+
+**Demande de Lex** : « compatibilité vikiCAD / plug-in Obsidian des vieux
+fichiers eagles, pour au minimum voir mes schematic et layout des vieux
+projets (édition pas vraiment nécessaire) ».
+
+**Inventaire d'abord.** 234 fichiers .brd/.sch/.lbr dans le LSB : 216 en
+XML EAGLE 6.0→8.2.2 (TOUS ses projets perso et jobs), 13 binaires EAGLE ≤5
+(uniquement des ressources fournisseurs : Tag-Connect, SparkFun), 5 .sch
+TecnoVE d'un AUTRE outil (magie `xV1`, non identifié). Verdict : un
+importeur XML natif couvre tout ce qui compte ; pas de parseur binaire.
+
+**Livré.** `core/io/EagleImporter` (QXmlStreamReader, zéro dépendance
+neuve) : planches APLATIES (packages cuits à la position des éléments,
+miroir → bascule sur les calques b*), pistes = polylignes à largeur réelle
+bouts ronds, pads/vias = hachures pleines percées du foret, polygones =
+leur contour (EAGLE ne stocke jamais le remplissage calculé), textes
+`>NAME`/`>VALUE` substitués (attributs smashed compris), cotes EAGLE →
+DimensionEntity/LeaderEntity vivantes ; schémas : résolution
+part→deviceset→gate→symbol, broches avec noms, nets avec jonctions et
+étiquettes, feuilles multiples posées CÔTE À CÔTE (25 mm). Calques aux
+noms/couleurs/visibilités d'EAGLE, ordre de peinture façon EAGLE (cuivre
+bottom d'abord, annotations dessus). Câblé partout : File>Open,
+File>Import EAGLE, verbe IPC `open`, `vikicad-cli import`, garde de
+fermeture et « jamais sauvegardé » comme les autres imports. Refus nets
+qui NOMMENT le remède : binaire ≤5 (« resauver en XML dans EAGLE 6+ »),
+.lbr, .sch d'un autre outil (sniff de contenu). Plugin Obsidian :
+.brd/.sch → import vikiCAD → export DXF (cache eagle2dxf:) → la même vue
+dxf-viewer que DWG/VKD, bouton Reconvertir compris.
+
+**Preuves.** ctest **380/380** (142 assertions eagle : synthétiques brd/sch
++ REV3.brd/REV3.sch réels) ; gui-smoke **322 TOUT VERT** (phase eagle : la
+planche s'ouvre par IPC, miroir prouvé par l'existence même des calques
+Bottom/bNames, binaire refusé en réponse d'erreur SANS modal) ; **balayage
+des 145 fichiers réels du vault : 145/145 importent, 0 nœud sauté** (67
+planches, 78 schémas dont 15 multi-feuilles jusqu'à 5) ; rendu visuel
+contrôlé sur REV3 (planche ET schéma via export PDF : pistes, pads,
+sérigraphie, PIC24 broche par broche, ULN2803A transistor par transistor).
+
+**Leçon.** `signals` est un mot-macro Qt : impossible de nommer une
+variable ainsi dans du code lié à QtCore sans QT_NO_KEYWORDS. Renommé
+`sigs` — l'erreur de compilation (« expected unqualified-id before
+public ») pointe la LIGNE mais pas la cause.

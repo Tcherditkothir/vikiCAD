@@ -45,6 +45,7 @@ private slots:
     void saveFile();
     void saveFileAs();
     void importDxfFile();
+    void importEagleFile(); // EAGLE 6+ XML .brd/.sch, viewing-grade
     void openGerberKit(); // pick a fab-output directory -> one layer per file
     void exportGerberKitDir();   // pick a directory -> <docname>.GTL/... + .TXT
     void exportGerberLayerFile(); // pick one fab layer -> one Gerber/Excellon file

@@ -601,6 +601,74 @@ else
   record SKIP "export: DWG via GUI" "dxf2dwg not installed"
 fi
 
+# --- EAGLE phase: .brd through the SAME IPC "open" verb -----------------------
+# Synthetic 2-element board: outline, one normal + one MIRRORED element (the
+# mirror must swap the smd to Bottom), a track and a via. Headless import must
+# never prompt; a binary v5 file must come back as an ERROR REPLY, not a modal.
+cat > "$TMP/smoke-eagle.brd" <<'EAGLE_EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE eagle SYSTEM "eagle.dtd">
+<eagle version="6.4">
+<drawing>
+<layers>
+<layer number="1" name="Top" color="4" fill="1" visible="yes" active="yes"/>
+<layer number="16" name="Bottom" color="1" fill="1" visible="yes" active="yes"/>
+<layer number="18" name="Vias" color="2" fill="1" visible="yes" active="yes"/>
+<layer number="20" name="Dimension" color="15" fill="1" visible="yes" active="yes"/>
+<layer number="21" name="tPlace" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="22" name="bPlace" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="25" name="tNames" color="7" fill="1" visible="yes" active="yes"/>
+<layer number="26" name="bNames" color="7" fill="1" visible="yes" active="yes"/>
+</layers>
+<board>
+<plain>
+<wire x1="0" y1="0" x2="30" y2="0" width="0" layer="20"/>
+<wire x1="30" y1="0" x2="30" y2="20" width="0" layer="20"/>
+<wire x1="30" y1="20" x2="0" y2="20" width="0" layer="20"/>
+<wire x1="0" y1="20" x2="0" y2="0" width="0" layer="20"/>
+</plain>
+<libraries>
+<library name="L">
+<packages>
+<package name="P">
+<smd name="1" x="0" y="0" dx="2" dy="1" layer="1"/>
+<text x="0" y="1.5" size="1.27" layer="25">&gt;NAME</text>
+</package>
+</packages>
+</library>
+</libraries>
+<elements>
+<element name="U1" library="L" package="P" value="X" x="10" y="10"/>
+<element name="U2" library="L" package="P" value="X" x="20" y="10" rot="MR0"/>
+</elements>
+<signals>
+<signal name="S">
+<wire x1="10" y1="10" x2="20" y2="10" width="0.5" layer="1"/>
+<via x="15" y="10" extent="1-16" drill="0.6"/>
+</signal>
+</signals>
+</board>
+</drawing>
+</eagle>
+EAGLE_EOF
+out="$(rpc open "$TMP/smoke-eagle.brd")"
+assert_eq "eagle: open .brd via IPC ok" True "$(jget "$out" "d['result'].get('ok')")"
+# 4 outline wires + (smd + name) x2 elements + 1 track + 1 via = 10
+assert_eq "eagle: entity count" 10 "$(count)"
+eagle_layers="$(jget "$(rpc query layers)" "','.join(l['name'] for l in d['result']['layers'])")"
+for want in Top Bottom Vias Dimension tNames bNames; do
+  if [[ ",$eagle_layers," == *",$want,"* ]]; then
+    record PASS "eagle: layer $want" "present"
+  else
+    record FAIL "eagle: layer $want" "missing from: $eagle_layers"
+  fi
+done
+# The RPC envelope hoists a handler {"error": ...} to the reply's top level.
+printf '\x10\x00legacy' > "$TMP/smoke-old.brd"
+out="$(rpc open "$TMP/smoke-old.brd")"
+assert_eq "eagle: binary v5 refused headless (no modal)" True \
+  "$(jget "$out" "'could not open' in str(d.get('error'))")"
+
 # --- new-project phase: blank doc -> WORKPLANE YZ -> sketch -> extrude --------
 # "The starting point of every new project": a FRESH document, a world
 # vertical plane (YZ — the RIGHT view reads it upright), a rectangle sketched

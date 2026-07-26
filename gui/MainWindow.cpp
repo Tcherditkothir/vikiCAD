@@ -39,6 +39,7 @@
 #include "io/DwgExporter.h"
 #include "io/DxfExporter.h"
 #include "io/DxfImporter.h"
+#include "io/EagleImporter.h"
 #endif
 #include "io/ClipboardIo.h"
 #include "io/ExcellonWriter.h"
@@ -211,6 +212,8 @@ MainWindow::MainWindow()
 #ifdef VIKICAD_HAS_DXF
     fileMenu->addAction(QStringLiteral("&Import DXF/DWG..."), this, &MainWindow::importDxfFile);
 #endif
+    fileMenu->addAction(QStringLiteral("Import EAG&LE board/schematic..."), this,
+                        &MainWindow::importEagleFile);
     fileMenu->addAction(QStringLiteral("Open &Gerber kit..."), this,
                         &MainWindow::openGerberKit);
     fileMenu->addAction(QStringLiteral("Insert STEP/STL as &component..."), this,
@@ -1560,6 +1563,29 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
                 .arg(path));
         return true;
     }
+    // EAGLE 6+ XML boards and schematics (.lbr goes through importEagle too,
+    // which explains why libraries are refused). Extension first, but the
+    // importer sniffs content and names the cure for v5 binaries and for
+    // .sch files written by other tools.
+    if (ends(".brd") || ends(".sch") || ends(".lbr")) {
+        EagleImportResult r = importEagle(path);
+        if (!r.ok)
+            return reportError(r.error);
+        adoptDocument(std::move(r.document));
+        markNeverSaved();
+        QString msg = QStringLiteral("Imported %1 entities from EAGLE %2 %3")
+                          .arg(r.imported)
+                          .arg(r.kind)
+                          .arg(path);
+        if (r.sheets > 1)
+            msg += QStringLiteral(" (%1 sheets, side by side)").arg(r.sheets);
+        if (r.skipped > 0)
+            msg += QStringLiteral(" (%1 skipped: %2)")
+                       .arg(r.skipped)
+                       .arg(r.skippedTypes.join(QStringLiteral(", ")));
+        m_commandBar->appendHistory(msg);
+        return true;
+    }
     // A lone Gerber/Excellon file (any extension — .GTL, .TXT drills, .pho…)
     // opens as a one-file kit, exactly like the CLI import path. Content
     // sniff, so it never hijacks the known extensions handled above.
@@ -1587,13 +1613,14 @@ void MainWindow::openFile()
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open drawing"), {},
         QStringLiteral(
-            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.stl *.gtl *.gbl "
-            "*.gts *.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 *.gbr *.txt "
-            "*.drl);;"
+            "All supported (*.vkd *.dxf *.dwg *.step *.stp *.stl *.brd *.sch "
+            "*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp *.gko *.gm1 "
+            "*.gbr *.txt *.drl);;"
             "VikiCAD drawings (*.vkd);;"
             "DXF/DWG (*.dxf *.dwg);;"
             "STEP (*.step *.stp);;"
             "STL mesh (*.stl);;"
+            "EAGLE board/schematic (*.brd *.sch);;"
             "Gerber/Excellon (*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp "
             "*.gko *.gm1 *.gbr *.txt *.drl);;"
             "All files (*)"));
@@ -1628,6 +1655,35 @@ void MainWindow::importDxfFile()
                    .arg(r.skippedTypes.join(QStringLiteral(", ")));
     m_commandBar->appendHistory(msg);
 #endif
+}
+
+void MainWindow::importEagleFile()
+{
+    if (!maybeSaveBeforeDiscard())
+        return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Import EAGLE board/schematic"), {},
+        QStringLiteral("EAGLE 6+ XML (*.brd *.sch);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    EagleImportResult r = importEagle(path);
+    if (!r.ok) {
+        QMessageBox::warning(this, QStringLiteral("Import failed"), r.error);
+        return;
+    }
+    adoptDocument(std::move(r.document));
+    markNeverSaved();
+    QString msg = QStringLiteral("Imported %1 entities from EAGLE %2 %3")
+                      .arg(r.imported)
+                      .arg(r.kind)
+                      .arg(path);
+    if (r.sheets > 1)
+        msg += QStringLiteral(" (%1 sheets, side by side)").arg(r.sheets);
+    if (r.skipped > 0)
+        msg += QStringLiteral(" (%1 skipped: %2)")
+                   .arg(r.skipped)
+                   .arg(r.skippedTypes.join(QStringLiteral(", ")));
+    m_commandBar->appendHistory(msg);
 }
 
 void MainWindow::openGerberKit()

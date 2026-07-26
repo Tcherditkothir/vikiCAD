@@ -68,6 +68,7 @@ add_library(vikicore STATIC
     io/StlIo.cpp
     io/ObjIo.cpp
     io/GerberIo.cpp
+    io/EagleImporter.cpp
     io/GerberWriter.cpp
     io/ExcellonIo.cpp
     io/ExcellonWriter.cpp

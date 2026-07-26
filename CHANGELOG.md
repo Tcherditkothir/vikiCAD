@@ -2,7 +2,24 @@
 
 ## Unreleased
 
-- **Unsaved-changes guard.** Closing the window, New, Open and the imports
+- **EAGLE 6+ import (.brd/.sch), viewing-grade.** File ▸ Open, File ▸ Import
+  EAGLE, the IPC `open` verb and `vikicad-cli import` all read EAGLE XML
+  boards and schematics natively (QXmlStreamReader, no new dependency).
+  Boards are flattened: packages at their element positions (bottom-side
+  elements mirror AND swap to the b-layers), copper tracks become polylines
+  with their real widths and round caps, pads/vias solid annuli pierced by
+  their drill, pours their honest outline (EAGLE never stores the computed
+  fill). Schematics resolve part → deviceset → gate → symbol, substitute
+  `>NAME`/`>VALUE` (smashed attributes included), draw pins with names,
+  nets with junction dots and net-name labels, and lay multiple sheets side
+  by side. EAGLE layers become document layers with EAGLE's own names,
+  16-colour palette, visibility and a paint order that stacks like EAGLE
+  (bottom copper first, annotations last). EAGLE dimensions map to live
+  DimensionEntity/LeaderEntity. Proven against the whole vault: 145/145
+  real files (67 boards, 78 schematics up to 5 sheets) import with ZERO
+  skipped nodes. Deliberate refusals name the cure: v5-and-older binaries
+  ("open in EAGLE 6+ and save"), .lbr libraries, and non-EAGLE `.sch` files
+  from other tools. Closing the window, New, Open and the imports
   now ask Save / Discard / Cancel when the drawing has unsaved changes, and
   the title bar marks the state with the classic `*`. Tracking is an id
   comparison on the undo journal (each committed transaction gets a

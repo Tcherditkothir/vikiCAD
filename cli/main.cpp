@@ -17,6 +17,7 @@
 #include "io/DxfImporter.h"
 #endif
 #include "io/ExcellonWriter.h"
+#include "io/EagleImporter.h"
 #include "io/GerberKit.h"
 #include "io/GerberKitWriter.h"
 #include "io/NativeStore.h"
@@ -68,6 +69,8 @@ int printUsage(FILE* out)
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "              [--notes] [--blocks] [--layouts] [--describe]\n"
         "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
+        "  vikicad-cli import IN.brd|IN.sch --save-as OUT.vkd   (EAGLE 6+ XML, "
+        "viewing-grade)\n"
         "  vikicad-cli import KITDIR|IN.gbr|IN.txt --save-as OUT.vkd\n"
         "              (Gerber kit: directory or single Gerber/Excellon file)\n"
         "  vikicad-cli export FILE.vkd OUT.dxf [--dxf-version R12|...|2018]\n"
@@ -227,7 +230,12 @@ int cmdImport(const QStringList& args)
     const bool stepLike = inPath.endsWith(QLatin1String(".step"), Qt::CaseInsensitive) ||
                           inPath.endsWith(QLatin1String(".stp"), Qt::CaseInsensitive);
     const bool stlLike = inPath.endsWith(QLatin1String(".stl"), Qt::CaseInsensitive);
-    if (QFileInfo(inPath).isDir() || (!dxfLike && !stepLike && !stlLike)) {
+    const bool eagleLike =
+        inPath.endsWith(QLatin1String(".brd"), Qt::CaseInsensitive) ||
+        inPath.endsWith(QLatin1String(".sch"), Qt::CaseInsensitive) ||
+        inPath.endsWith(QLatin1String(".lbr"), Qt::CaseInsensitive);
+    if (QFileInfo(inPath).isDir() ||
+        (!dxfLike && !stepLike && !stlLike && !eagleLike)) {
         Document doc;
         const GerberKitResult r = importGerberKit(doc, inPath);
         if (!r.ok)
@@ -299,6 +307,31 @@ int cmdImport(const QStringList& args)
         return emitOk(QJsonObject{{QStringLiteral("solids"), r.solids},
                                   {QStringLiteral("triangles"), r.triangles},
                                   {QStringLiteral("savedTo"), outPath}});
+    }
+
+    if (eagleLike) {
+        const EagleImportResult r = importEagle(inPath);
+        if (!r.ok)
+            return emitError(QStringLiteral("E_EAGLE"), r.error);
+        QString error;
+        if (!NativeStore::save(*r.document, outPath, error))
+            return emitError(QStringLiteral("E_SAVE"), error);
+        QJsonObject result;
+        result[QStringLiteral("kind")] = r.kind;
+        result[QStringLiteral("imported")] = r.imported;
+        result[QStringLiteral("skipped")] = r.skipped;
+        QJsonArray skippedTypes;
+        for (const QString& t : r.skippedTypes)
+            skippedTypes.append(t);
+        result[QStringLiteral("skippedTypes")] = skippedTypes;
+        if (r.sheets > 0)
+            result[QStringLiteral("sheets")] = r.sheets;
+        result[QStringLiteral("savedTo")] = outPath;
+        QJsonArray layers;
+        for (const Layer& l : r.document->layers())
+            layers.append(l.name);
+        result[QStringLiteral("layers")] = layers;
+        return emitOk(result);
     }
 
 #ifdef VIKICAD_HAS_DXF

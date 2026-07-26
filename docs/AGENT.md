@@ -52,7 +52,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
-| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.stl`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
+| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.stl`, EAGLE `.brd`/`.sch`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj`, fab extensions (one layer, optional layer-name arg), directory = Gerber kit (§7d) |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
@@ -487,6 +487,19 @@ an assembly exploded across the scene).
   stderr noise. In the GUI, Save As offers DWG (and every other export):
   a non-VKD pick exports WITHOUT rebinding the working file — the open
   document stays the `.vkd`.
+- **EAGLE 6+ opens natively, viewing-grade.** `$CLI import old.brd
+  --save-as out.vkd` (or `.sch`; same dispatch in File>Open and the IPC
+  `open` verb). Boards arrive FLATTENED — packages baked at their element
+  positions on layers named and coloured like EAGLE's own table (mirrored
+  elements swap to the b-layers), tracks are wide polylines, pads/vias
+  drill-pierced solid hatches, pours their outline only (EAGLE never stores
+  the computed fill, so neither do we). Schematics resolve gates/symbols,
+  substitute `>NAME`/`>VALUE` and lay sheets SIDE BY SIDE with a 25 mm gap.
+  There is no EAGLE export and no going back: this is a one-way viewing
+  import, connectivity (contactrefs, classes, design rules) is not carried.
+  Three refusals by design, each naming the cure in its message: EAGLE ≤5
+  binaries (first byte 0x10 — resave as XML in EAGLE 6+), `.lbr` libraries,
+  and `.sch` files from other EDA tools (content-sniffed, not extension).
 - **An imported STL is a MESH, not a solid.** It arrives as one face carrying
   a triangulation and no surface — enough to view, measure, place
   (`MOVE3D`/`ROTATE3D`), section and re-export, but booleans, fillets and
