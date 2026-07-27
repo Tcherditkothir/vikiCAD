@@ -1450,3 +1450,43 @@ fichier, 2 cas .lbr dont ALRMP_RLC réel) ; gui-smoke **325 TOUT VERT**
 PARSEUR : vérifier le moteur sur un vrai fichier AVANT de conclure que
 seule la liste manque. Les deux archaïsmes étaient invisibles tant que le
 sniff d'extension écartait les fichiers.
+
+## 2026-07-26 (soir) : chantiers jaunes, SchLib en planche-contact et Visio dans Obsidian
+
+**Livré (1) : .SchLib Altium en planche-contact (plugin).** Nouveau
+`tools/python-altium/schlibgrid.py` (fichier à nous, à côté de la copie
+vendorisée) : lit la structure propre aux bibliothèques (un storage OLE
+par composant, stream Data) et réutilise les handlers de dessin
+d'altium.py. Le morceau dur : les broches y sont des records BINAIRES,
+pas du texte comme dans les SchDoc. Layout établi par sonde empirique et
+validé sur les **5778 broches du vault (0 échec)**, documenté en tête du
+script. Une cellule par composant ET par partie (« (2/4) » pour un quad
+op-amp), nom en gras + description en italique dessous, titres à
+l'échelle des cellules. Balayage réel : **257/257 .SchLib du vault
+rendus sans erreur**, contrôle visuel sur LM358 (SnapEDA), PIC24
+(import PADS), SS.SchLib (55 composants TecnoVE) et la bibliothèque PDM
+(multi-parties). Les .PcbLib restent exclus : binaires, aucun lecteur
+libre.
+
+**Livré (2) : Visio .vsd et métafichiers .emf/.wmf (plugin).** Chaîne
+LibreOffice headless (profil dédié dans le cache, conversions mises en
+FILE car LibreOffice n'accepte qu'une instance par profil) vers un PDF
+de travail, puis pdftocairo découpe une page SVG par page ; vue SVG
+partagée avec boutons de pages ◀ ▶ (instantanés, cache par page).
+Balayage réel : **90/90 fichiers du vault convertis** (44 .vsd + 46
+.emf/.wmf, 16 multi-pages jusqu'à 8 pages). Contrôles visuels : GRAFCET
+PIN1004 (4 pages, SFC complet lisible) et gabarit Eurocard VME 6U.
+Réglages : chemins soffice et pdftocairo (pdfinfo cherché en voisin).
+
+**Preuves.** Sondes empiriques avant le code (5778 broches, sémantique
+PARTCOUNT = max(1, PARTCOUNT-1, max OWNERPARTID) vérifiée sur les deux
+conventions d'écriture) ; build TypeScript propre ; corpus complets
+257/257 et 90/90 ; PNG de contrôle via LibreOffice (Firefox headless
+gèle sur cette machine, bogue snap connu).
+
+**Leçon.** Sur un format binaire non documenté, l'ordre des champs se
+prouve par les VALEURS LÉGALES : l'ordre inner/outer des symboles de
+broche n'était juste que dans un sens (clock=3 d'un bord, bulle=1 de
+l'autre) et le corpus entier fait office de test. Sonder d'abord, coder
+ensuite : les trois sondes ont coûté dix minutes et ont éliminé toute
+hypothèse fausse avant la première ligne du renderer.
