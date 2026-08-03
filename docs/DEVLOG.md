@@ -1490,3 +1490,28 @@ broche n'était juste que dans un sens (clock=3 d'un bord, bulle=1 de
 l'autre) et le corpus entier fait office de test. Sonder d'abord, coder
 ensuite : les trois sondes ont coûté dix minutes et ont éliminé toute
 hypothèse fausse avant la première ligne du renderer.
+
+## 2026-08-03 : vue 3D du plugin en Z-vers-le-haut
+
+**Livré.** Rapport de Lex : « le clic-glisse ne fonctionne pas toujours
+dans tous les sens » dans la vue 3D d'Obsidian, tous formats. Cause : les
+modèles CAO (STEP, STL, VKD, IGES) sont Z-vers-le-haut, mais la vue
+orbitait autour de l'axe Y (convention three.js) — le drag horizontal
+faisait culbuter la pièce au lieu de la faire pivoter, et près des pôles
+le drag vertical mourait d'un côté. Vérifié sur le cache réel : 4 des 6
+OBJ convertis sont des plaques posées dans le plan XY. Correctif :
+caméra en up=Z, point de vue de départ isométrique, éclairage réaligné —
+mêmes gestes que la vue 3D de vikiCAD (OCCT). Commit 726a36c côté
+plugin, tour souris validé.
+
+**Preuves.** Banc Node sans WebGL : vrais événements pointeur simulés
+sur OrbitControls (stub d'élément avec getRootNode, r185 écoute
+pointermove sur la racine). Avant : un drag horizontal change l'altitude
+de la pièce de 12,8 unités (culbute). Après : altitude invariante à
+1e-14 près, drag vertical incline normalement. 4/4.
+
+**Leçon.** Un vecteur de test symétrique peut prouver n'importe quoi :
+avec un offset x=z et un drag d'exactement 90 degrés, dz restait nul
+MÊME sur le mauvais axe — le premier banc était vert à tort d'un bord.
+Asymétriser les données de test (offset quelconque, angle non
+remarquable) avant de croire un invariant géométrique.
