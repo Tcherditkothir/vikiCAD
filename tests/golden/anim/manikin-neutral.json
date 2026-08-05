@@ -1,0 +1,28 @@
+{
+  "id": "manikin-neutral",
+  "schema_version": "1",
+  "name": "Mannequin stylisé neutre",
+  "chain": "humanoid-12",
+  "type": "rigid",
+  "height_m": 1.75,
+  "rigid": {
+    "segment_radius": {
+      "default": 0.026,
+      "spine": 0.062,
+      "neck": 0.018,
+      "thigh_l": 0.036, "thigh_r": 0.036,
+      "shin_l": 0.028, "shin_r": 0.028,
+      "upperarm_l": 0.028, "upperarm_r": 0.028,
+      "forearm_l": 0.024, "forearm_r": 0.024,
+      "foot_l": 0.022, "foot_r": 0.022
+    },
+    "head": { "radius": 0.063, "elongation": 1.22 },
+    "joint_style": "blend"
+  },
+  "material": {
+    "base_color": "#8FB5A8",
+    "accent_color": "#E8DCC8",
+    "roughness": 0.7,
+    "metallic": 0.0
+  }
+}

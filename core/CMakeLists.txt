@@ -63,6 +63,9 @@ add_library(vikicore STATIC
     solid/FeatureTree.cpp
     solid/FeatureParams.cpp
     solid/SubShape.cpp
+    anim/Chain.cpp
+    anim/AnimClip.cpp
+    anim/ForwardKinematics.cpp
     io/OcctMessages.cpp
     io/StepIo.cpp
     io/StlIo.cpp
