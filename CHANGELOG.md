@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Timeline dock (GUI half of the animation module).** Load a pose3d +
+  avatar (avatar selector from the sibling directory), play/scrub the
+  clip on the 3D view through a new non-pickable animation overlay posed
+  per frame via `SetLocalTransformation` (never a scene rebuild —
+  scrubbing back to a frame is pixel-EXACT), clickable keyframe markers,
+  light editing (shift a keyframe's time, adjust one joint's channels)
+  and pose3d re-export. Fully agent-drivable over IPC (`connect anim
+  load|frame|play|stop|clear|status`); gui-smoke gained a timeline phase
+  (334 checks green).
 - **Animation module: generic kinematic chains, animated GLB, looping
   WebP (`vikicad-cli anim render`).** New `core/anim/`: typed joints
   (ball/revolute/prismatic/fixed/free), sparse keyframes densified with

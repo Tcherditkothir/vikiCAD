@@ -1515,3 +1515,67 @@ avec un offset x=z et un drag d'exactement 90 degrés, dz restait nul
 MÊME sur le mauvais axe — le premier banc était vert à tort d'un bord.
 Asymétriser les données de test (offset quelconque, angle non
 remarquable) avant de croire un invariant géométrique.
+
+## 2026-08-05 — Module d'animation : chaînes cinématiques, GLB, WebP, CLI, timeline ✅
+
+**Demande de Lex.** Chantier intensif : un module d'animation GÉNÉRIQUE
+dans vikiCAD pour le pont GenMov3D (Moment_MYP → avatar 3D animé), au
+contrat d'interface `../GenMov3D/docs/CONTRAT-VIKICAD.md`. Exigence
+cadre : l'humanoïde n'est qu'une chaîne prédéfinie — le cœur doit servir
+autant les mécanismes techniques (pivot, glissière, vues éclatées) que le
+yoga. Ordre impératif : CLI d'abord (GenMov3D bloqué dessus), timeline
+GUI ensuite.
+
+**Livré (1) — core/anim.** Chaînes typées ball/revolute/prismatic/fixed/
+free (tri topologique, fractions de scale_reference → mm, butées par
+canal en avertissements jamais en clamp), pose3d v1 densifié par report
+de canaux, slerp quaternion (Euler extrinsèque XYZ), cinématique directe
+composée comme les placements d'assemblage STEP, racines TYPÉES composées
+avec root_pos/root_rot (un levier mono-pivot s'anime). Avatar v1 derrière
+l'interface AvatarProvider (couture du futur avatar skinné) ; mannequin
+rigide = capsules OCCT fusionnées + tête ellipsoïde + styles
+d'articulation. Écrivain clipToJson pour le réexport.
+
+**Livré (2) — sorties.** GLB binaire écrit à la main (QJson + conteneur),
+nœud de conversion Z-up mm → glTF Y-up mètres FACE +Z, canaux quaternion
+sign-alignés, pingpong baké sur la fenêtre de boucle ; relu par un
+lecteur INDÉPENDANT (cgltf 1.15 vendorisé, tests seulement). WebP animé
+natif (libwebpmux en flux, jamais ~300 Mo de trames en mémoire), modes
+pingpong/cycle/hold. Renderer offscreen dans une lib séparée
+(vikioffscreen — la visu reste hors de core) : fenêtre virtuelle,
+buffersOpaqueAlpha=false SONDÉ AVANT d'écrire la classe → fond alpha 0
+sans matting ; caméra orthographique FIXE cadrée sur l'union de toutes
+les trames, sol z=0 en bas (précision contrat du jour même : side par
+défaut). CLI `anim render` conforme : erreurs stderr ET JSON stdout,
+garde anti-traversée par le pattern d'id, plafond 300 s.
+
+**Livré (3) — timeline GUI.** Dock Timeline (patron AssemblyPanel) :
+chargement pose3d + avatar, sélecteur d'avatars, lecture/scrub avec
+marqueurs de keyframes cliquables, édition légère (t d'un keyframe,
+canaux d'une articulation), réexport ; overlay d'animation dans
+OcctViewWidget posé par SetLocalTransformation (premier usage du dépôt —
+jamais de rebuild de scène) ; verbe IPC `anim` pour le pilotage headless.
+
+**Preuves.** Suite 388 → 430 cas verts ; 15/15 poses pilotes réelles
+rendues (240 trames chacune, ~4,5 s/pose, WebP 0,4–1,2 Mo) ; GLB validé
+par cgltf_validate + déterminisme octet (GLB, WebP, trames) ;
+vérification VISUELLE des trames (l'Arbre, savasana couché, chien tête
+en bas) ; gui-smoke 334 checks dont scrub-retour exact au pixel ; CI
+GitHub verte (libwebp-dev ajouté, tests de rendu SKIP proprement sans
+écran). Signals CLI-PRET et GUI-TIMELINE-PRET posés dans le PROGRESS de
+GenMov3D ; deux points à trancher documentés au contrat (résolution du
+fichier chain, interprétation du breath).
+
+**Leçons.** (1) Le rendu peut être vert à tous les tests et FAUX à
+l'œil : le mannequin est sorti tête en bas (Image_PixMap::Row() compte
+déjà du HAUT — ma « correction » bottom-up l'inversait) puis dos à la
+caméra dans le GLB (Rx(−90) seul met up en Y mais la face en −Z ; il
+faut Ry(180)·Rx(−90) pour la convention glTF face +Z). REGARDER une
+trame et vérifier l'orientation par un invariant (pieds en bas) font
+partie des tests maintenant. (2) La revue adversariale AVANT le signal
+a payé : 18 constats confirmés dont la racine typée gelée — le cas
+levier/bras robot exigé par le contrat ne marchait pas alors que les 15
+poses humanoïdes passaient toutes. Les données de production ne couvrent
+jamais la généralisation promise. (3) Spec vivante : les limites
+anatomiques et la caméra du contrat ont changé PENDANT le chantier —
+relire les sources amont avant chaque étape, pas seulement au début.
