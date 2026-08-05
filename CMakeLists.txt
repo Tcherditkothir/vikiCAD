@@ -44,6 +44,7 @@ else()
 endif()
 
 add_subdirectory(core)
+add_subdirectory(offscreen)
 
 if(VIKICAD_BUILD_GUI)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)

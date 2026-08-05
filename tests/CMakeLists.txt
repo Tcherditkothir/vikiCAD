@@ -64,6 +64,7 @@ add_executable(vikicad-tests
     test_anim_fk.cpp
     test_anim_avatar.cpp
     test_webp_writer.cpp
+    test_offscreen_render.cpp
 )
 
 # Committed golden files (synthetic Gerber fixtures, ...).
@@ -82,8 +83,8 @@ if(VIKICAD_HAS_CGLTF)
     target_link_libraries(vikicad-tests PRIVATE cgltf)
 endif()
 
-target_link_libraries(vikicad-tests PRIVATE vikicore Catch2::Catch2WithMain
-    viki_warnings PkgConfig::WebPDemux)
+target_link_libraries(vikicad-tests PRIVATE vikicore vikioffscreen
+    Catch2::Catch2WithMain viki_warnings PkgConfig::WebPDemux)
 
 include(Catch)
 catch_discover_tests(vikicad-tests)
