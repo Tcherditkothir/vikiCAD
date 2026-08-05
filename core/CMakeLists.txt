@@ -66,6 +66,7 @@ add_library(vikicore STATIC
     anim/Chain.cpp
     anim/AnimClip.cpp
     anim/ForwardKinematics.cpp
+    anim/Avatar.cpp
     io/OcctMessages.cpp
     io/StepIo.cpp
     io/StlIo.cpp

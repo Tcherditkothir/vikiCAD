@@ -59,6 +59,7 @@ add_executable(vikicad-tests
     test_anim_chain.cpp
     test_anim_clip.cpp
     test_anim_fk.cpp
+    test_anim_avatar.cpp
 )
 
 # Committed golden files (synthetic Gerber fixtures, ...).
