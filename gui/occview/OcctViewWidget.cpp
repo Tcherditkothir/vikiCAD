@@ -250,6 +250,13 @@ void OcctViewWidget::refreshFrom(const Document& doc)
         m_view->FitAll(0.1, false);
         m_fittedOnce = true;
     }
+    // The Timeline overlay is not a document entity: RemoveAll above
+    // dropped its AIS objects, so re-display them (their next pose comes
+    // from the panel's timer).
+    if (!m_animParts.empty()) {
+        m_animAis.clear();
+        displayAnimParts();
+    }
     m_view->Redraw();
 }
 
@@ -1398,6 +1405,65 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         if (ok)
             emit chamferSelectedEdges(m_pickedSolid, d);
     }
+}
+
+// --- Animation overlay (Timeline panel) -------------------------------------
+
+void OcctViewWidget::showAnimation(const std::vector<AnimPartDisplay>& parts)
+{
+    initViewer();
+    if (m_view.IsNull())
+        return;
+    clearAnimation();
+    m_animParts = parts;
+    displayAnimParts();
+    m_view->Redraw();
+}
+
+void OcctViewWidget::displayAnimParts()
+{
+    for (const AnimPartDisplay& part : m_animParts) {
+        if (part.shape.IsNull())
+            continue;
+        Handle(AIS_Shape) ais = new AIS_Shape(part.shape);
+        ais->SetColor(Quantity_Color(((part.rgb >> 16) & 0xFF) / 255.0,
+                                     ((part.rgb >> 8) & 0xFF) / 255.0,
+                                     (part.rgb & 0xFF) / 255.0,
+                                     Quantity_TOC_sRGB));
+        // Display mode shaded, selection mode -1: the avatar is scenery,
+        // never a pick target (same trick as the command ghost).
+        m_context->Display(ais, AIS_Shaded, -1, false);
+        m_animAis.push_back({ais, part.joint});
+    }
+}
+
+void OcctViewWidget::poseAnimation(const std::vector<gp_Trsf>& world)
+{
+    if (m_view.IsNull() || m_animAis.empty())
+        return;
+    for (auto& entry : m_animAis) {
+        const int joint = entry.second;
+        if (joint >= 0 && static_cast<size_t>(joint) < world.size())
+            entry.first->SetLocalTransformation(
+                world[static_cast<size_t>(joint)]);
+    }
+    if (!m_animFitted) {
+        m_view->FitAll(0.1, false);
+        m_animFitted = true;
+    }
+    m_context->UpdateCurrentViewer();
+}
+
+void OcctViewWidget::clearAnimation()
+{
+    if (!m_context.IsNull())
+        for (auto& entry : m_animAis)
+            m_context->Remove(entry.first, false);
+    m_animAis.clear();
+    m_animParts.clear();
+    m_animFitted = false;
+    if (!m_view.IsNull())
+        m_view->Redraw();
 }
 
 } // namespace viki

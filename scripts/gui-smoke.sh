@@ -1257,6 +1257,37 @@ for pr in $lpc_probes; do
     else record FAIL "lpc: $name" "$pr (paint order broken?)"; fi
 done
 
+# ---- timeline anim phase ----------------------------------------------------
+# The Timeline dock drives core/anim in the live GUI through the `anim` IPC
+# verb: load a real pilot pose on the golden chain/avatar, scrub, and check
+# that (a) the state is right, (b) scrubbing MOVES the 3D render, and
+# (c) scrubbing back is pixel-identical — the overlay poses parts through
+# SetLocalTransformation, never a scene rebuild, so frame 0 must come back
+# EXACTLY.
+ANIMG="$ROOT/tests/golden/anim"
+if [[ -f "$ANIMG/pose3d/yog-vrksasana.json" ]]; then
+    anim_out="$(rpc anim load "$ANIMG/pose3d/yog-vrksasana.json" \
+        "$ANIMG/manikin-neutral.json" "$ANIMG/humanoid-12.json")"
+    assert_eq "anim: load ok" True "$(jget "$anim_out" "d['result'].get('loaded')")"
+    assert_eq "anim: 240 frames" 240 "$(jget "$anim_out" "d['result'].get('frames')")"
+    assert_eq "anim: 3 keyframes" 3 "$(jget "$anim_out" "d['result'].get('keyframes')")"
+    rpc anim frame 0 >/dev/null
+    shot "anim: screenshot frame 0" "$TMP/anim0.png"
+    rpc anim frame 75 >/dev/null
+    shot "anim: screenshot frame 75" "$TMP/anim75.png"
+    assert_ge "anim: scrub moves the render (tree pose forms)" \
+        "$(img_pixel_bp "$TMP/anim0.png" "$TMP/anim75.png")" "$DIFF_PIXELS_MIN"
+    rpc anim frame 0 >/dev/null
+    shot "anim: screenshot frame 0 again" "$TMP/anim0b.png"
+    assert_le "anim: scrub back is exact (incremental posing)" \
+        "$(img_hash_dist "$TMP/anim0.png" "$TMP/anim0b.png")" "0"
+    anim_out="$(rpc anim clear)"
+    anim_out="$(rpc anim status)"
+    assert_eq "anim: cleared" False "$(jget "$anim_out" "d['result'].get('loaded')")"
+else
+    record SKIP "anim: timeline phase" "golden anim fixtures absent"
+fi
+
 # ---- (5) OPTIONAL final stage: pixel diff vs gerbv on the real kits ---------
 # gerber-ref-diff.sh renders the 32 layers of the two reference kits with
 # both VikiCAD and gerbv and compares them (dhash + ink delta). ~12 s on

@@ -8,6 +8,7 @@ add_executable(vikicad
     panels/LayerPanel.cpp
     panels/PropertiesPanel.cpp
     panels/AssemblyPanel.cpp
+    panels/TimelinePanel.cpp
     panels/ToolPanels.cpp
     ipc/RpcServer.cpp
     occview/OcctViewWidget.cpp

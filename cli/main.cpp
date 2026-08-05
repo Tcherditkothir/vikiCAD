@@ -637,7 +637,7 @@ int cmdConnect(const QStringList& args)
         return emitError(QStringLiteral("E_ARGS"),
                          QStringLiteral("connect needs a method: ping|exec|query|open|"
                                         "save|screenshot|view3d|viewdir|pick3d|"
-                                        "export|insertstep|sketchface"));
+                                        "export|insertstep|sketchface|anim"));
     const QString method = args.first();
     QJsonObject params;
     if (method == QLatin1String("exec") && args.size() > 1)
@@ -667,6 +667,21 @@ int cmdConnect(const QStringList& args)
     else if (method == QLatin1String("pick3d") && args.size() > 2) {
         params[QStringLiteral("x")] = args[1].toInt();
         params[QStringLiteral("y")] = args[2].toInt();
+    }
+    // Timeline panel: `anim load POSE AVATAR [CHAIN]`, `anim frame N`,
+    // `anim play|stop|clear|status`.
+    else if (method == QLatin1String("anim") && args.size() > 1) {
+        params[QStringLiteral("action")] = args[1];
+        if (args[1] == QLatin1String("load")) {
+            if (args.size() > 2)
+                params[QStringLiteral("pose")] = args[2];
+            if (args.size() > 3)
+                params[QStringLiteral("avatar")] = args[3];
+            if (args.size() > 4)
+                params[QStringLiteral("chain")] = args[4];
+        } else if (args[1] == QLatin1String("frame") && args.size() > 2) {
+            params[QStringLiteral("frame")] = args[2].toInt();
+        }
     }
 
     QLocalSocket socket;

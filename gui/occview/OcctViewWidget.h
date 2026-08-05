@@ -22,6 +22,14 @@ namespace viki {
 
 class CommandProcessor;
 
+// One displayable piece of the Timeline panel's animated chain: a shape in
+// its joint's LOCAL frame, placed per frame by the joint's world transform.
+struct AnimPartDisplay {
+    TopoDS_Shape shape;
+    int joint = 0; // index into the world-transform vector
+    quint32 rgb = 0x8FB5A8;
+};
+
 // OCCT AIS 3D view (shaded solids). Rotate = left drag, pan = middle drag,
 // zoom = wheel. Rebuilt from the document on every activation.
 //
@@ -63,6 +71,16 @@ public:
     // Dump the 3D framebuffer to an image file (QWidget::grab can't capture
     // OCCT's native GL window). Used by the screenshot IPC in 3D mode.
     bool dumpToFile(const QString& path);
+
+    // --- Animation overlay (Timeline panel) ---------------------------------
+    // The animated avatar/mechanism is NOT a document entity: it rides on
+    // top of the scene (never pickable, survives refreshFrom rebuilds) and
+    // is posed per frame through SetLocalTransformation — the cheap
+    // location-only update, never a refreshFrom per frame.
+    void showAnimation(const std::vector<AnimPartDisplay>& parts);
+    void poseAnimation(const std::vector<gp_Trsf>& world);
+    void clearAnimation();
+    bool hasAnimation() const { return !m_animParts.empty(); }
 
     // The face last clicked (empty if none / a whole solid was picked).
     const TopoDS_Shape& pickedFace() const { return m_pickedFace; }
@@ -216,6 +234,12 @@ private:
     bool m_hoverValid = false;
     Vec2d m_hoverUv;
     EntityId m_hoverSolid = kInvalidEntityId;
+
+    // Animation overlay state (Timeline panel).
+    void displayAnimParts();
+    std::vector<AnimPartDisplay> m_animParts;
+    std::vector<std::pair<Handle(AIS_InteractiveObject), int>> m_animAis;
+    bool m_animFitted = false;
 };
 
 } // namespace viki

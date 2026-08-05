@@ -388,6 +388,35 @@ TEST_CASE("clip validation refuses broken inputs", "[anim]")
     }
 }
 
+TEST_CASE("clipToJson round-trips through clipFromJson", "[anim]")
+{
+    // The timeline's "re-export": dense keyframes out, same motion back.
+    const Chain chain = humanoid();
+    const ClipResult orig = loadClipFile(
+        QStringLiteral(VIKICAD_GOLDEN_DIR "/anim/pose3d/yog-vrksasana.json"),
+        chain);
+    REQUIRE(orig.ok);
+    const QJsonObject out = clipToJson(orig.clip, chain);
+    const ClipResult back = clipFromJson(out, chain);
+    INFO(back.error.toStdString());
+    REQUIRE(back.ok);
+    CHECK(back.clip.fps == orig.clip.fps);
+    CHECK(back.clip.loop == orig.clip.loop);
+    CHECK(back.clip.keys.size() == orig.clip.keys.size());
+    // Same motion: every joint origin matches at several sample times.
+    for (const double t : {0.0, 1.3, 2.5, 3.7}) {
+        const auto a =
+            worldTransforms(chain, orig.clip.sampleAt(t, false));
+        const auto b =
+            worldTransforms(chain, back.clip.sampleAt(t, false));
+        for (size_t j = 0; j < a.size(); ++j) {
+            const gp_XYZ pa = a[j].TranslationPart();
+            const gp_XYZ pb = b[j].TranslationPart();
+            CHECK(pa.IsEqual(pb, 1e-6));
+        }
+    }
+}
+
 TEST_CASE("breath closes exactly at a cycle loop seam", "[anim]")
 {
     // Review 2026-08-05: a sine on absolute time popped at the cycle seam

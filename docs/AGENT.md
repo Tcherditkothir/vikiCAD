@@ -62,6 +62,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `pick3d` | `$CLI connect pick3d 400 300` | click at physical view pixels; no coords = view centre; returns e.g. `"picked face 2 of solid #3"` |
 | `sketchface` | `$CLI connect sketchface` | start a sketch on the currently selected face (pick3d a face first) |
 | `insertstep` | `$CLI connect insertstep other.step` | additive STEP **or STL** import as an assembly component (the verb name predates STL) |
+| `anim` | `$CLI connect anim load pose.json avatar.json [chain.json]` | drive the Timeline dock: `load` (chain resolves like §8 unless given), `frame N` (scrub), `play` / `stop`, `clear`, `status` (JSON state: loaded/frames/frame/playing/keyframes) |
 
 Everything registered in the single CommandProcessor is available through
 BOTH channels — a command that works in `--exec` works in `connect exec`
@@ -940,3 +941,9 @@ vikicad-cli anim render --pose yog-vrksasana.json \
   GenMov3D pipeline flags on stderr).
 
 Every run is deterministic: same inputs, byte-identical GLB and WebP.
+
+The LIVE half is the Timeline dock (View > Timeline): load a pose3d +
+avatar, play/scrub in the 3D view, shift a keyframe's time, adjust one
+joint's channels at a keyframe, re-export the pose3d. Headless access via
+`connect anim ...` (table in section 1b) — gui-smoke's timeline phase is
+the reference script. Clips are capped at 300 s.

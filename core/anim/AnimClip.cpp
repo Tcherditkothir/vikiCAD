@@ -458,6 +458,105 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
     return res;
 }
 
+QJsonObject clipToJson(const AnimClip& clip, const Chain& chain)
+{
+    constexpr double kMmToMeters = 1.0 / 1000.0;
+    constexpr double kRadToDeg = 180.0 / M_PI;
+
+    QJsonObject obj;
+    obj.insert(QLatin1String("id"), clip.id);
+    obj.insert(QLatin1String("schema_version"), QStringLiteral("1"));
+    obj.insert(QLatin1String("chain"), clip.chainId);
+    if (!clip.nameFr.isEmpty())
+        obj.insert(QLatin1String("name_fr"), clip.nameFr);
+    if (!clip.nameEn.isEmpty())
+        obj.insert(QLatin1String("name_en"), clip.nameEn);
+    if (!clip.source.isEmpty())
+        obj.insert(QLatin1String("source"), clip.source);
+    obj.insert(QLatin1String("fps"), clip.fps);
+
+    QJsonArray keyframes;
+    for (const DenseKey& key : clip.keys) {
+        QJsonObject kf;
+        kf.insert(QLatin1String("t"), key.t);
+        QJsonArray rootPos;
+        rootPos.append(key.rootPosMm.X() * kMmToMeters);
+        rootPos.append(key.rootPosMm.Y() * kMmToMeters);
+        rootPos.append(key.rootPosMm.Z() * kMmToMeters);
+        kf.insert(QLatin1String("root_pos"), rootPos);
+        {
+            Standard_Real rx = 0, ry = 0, rz = 0;
+            key.rootRot.GetEulerAngles(gp_Extrinsic_XYZ, rx, ry, rz);
+            QJsonArray rootRot;
+            rootRot.append(rx * kRadToDeg);
+            rootRot.append(ry * kRadToDeg);
+            rootRot.append(rz * kRadToDeg);
+            kf.insert(QLatin1String("root_rot"), rootRot);
+        }
+        QJsonObject joints;
+        for (size_t j = 0; j < chain.joints.size(); ++j) {
+            const Joint& joint = chain.joints[j];
+            if (joint.parent < 0 && joint.type == JointType::Free)
+                continue; // driven by root_pos/root_rot
+            const JointChannel& ch = key.values[j];
+            switch (joint.type) {
+            case JointType::Ball: {
+                Standard_Real rx = 0, ry = 0, rz = 0;
+                ch.rot.GetEulerAngles(gp_Extrinsic_XYZ, rx, ry, rz);
+                QJsonArray a;
+                a.append(rx * kRadToDeg);
+                a.append(ry * kRadToDeg);
+                a.append(rz * kRadToDeg);
+                joints.insert(joint.name, a);
+                break;
+            }
+            case JointType::Revolute:
+                joints.insert(joint.name, ch.scalar * kRadToDeg);
+                break;
+            case JointType::Prismatic:
+                joints.insert(joint.name, ch.scalar * kMmToMeters);
+                break;
+            case JointType::Fixed:
+            case JointType::Free:
+                break;
+            }
+        }
+        if (!joints.isEmpty())
+            kf.insert(QLatin1String("joints"), joints);
+        keyframes.append(kf);
+    }
+    obj.insert(QLatin1String("keyframes"), keyframes);
+
+    QJsonObject loop;
+    switch (clip.loop) {
+    case LoopMode::PingPong:
+        loop.insert(QLatin1String("mode"), QStringLiteral("pingpong"));
+        break;
+    case LoopMode::Cycle:
+        loop.insert(QLatin1String("mode"), QStringLiteral("cycle"));
+        break;
+    case LoopMode::Hold:
+        loop.insert(QLatin1String("mode"), QStringLiteral("hold"));
+        break;
+    }
+    loop.insert(QLatin1String("start"), clip.loopStart);
+    loop.insert(QLatin1String("end"), clip.loopEnd);
+    obj.insert(QLatin1String("loop"), loop);
+
+    if (clip.hasBreath) {
+        QJsonObject breath;
+        breath.insert(QLatin1String("period_s"), clip.breathPeriodS);
+        breath.insert(QLatin1String("amplitude_deg"),
+                      clip.breathAmplitudeRad * kRadToDeg);
+        QJsonArray joints;
+        for (const int idx : clip.breathJoints)
+            joints.append(chain.joints[static_cast<size_t>(idx)].name);
+        breath.insert(QLatin1String("joints"), joints);
+        obj.insert(QLatin1String("breath"), breath);
+    }
+    return obj;
+}
+
 ClipResult loadClipFile(const QString& path, const Chain& chain)
 {
     QFile f(path);

@@ -103,5 +103,11 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain);
 // Read + parse a pose3d v1 file.
 ClipResult loadClipFile(const QString& path, const Chain& chain);
 
+// Serialize a clip back to pose3d v1 (the timeline's "re-export"). Emits
+// DENSE keyframes — every animated channel on every key — which is valid
+// v1 and samples identically to the sparse original; sparseness is an
+// authoring convenience, not information.
+QJsonObject clipToJson(const AnimClip& clip, const Chain& chain);
+
 } // namespace anim
 } // namespace viki

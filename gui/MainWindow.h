@@ -26,6 +26,7 @@ class OcctViewWidget;
 class LayerPanel;
 class PropertiesPanel;
 class AssemblyPanel;
+class TimelinePanel;
 class RpcServer;
 
 class MainWindow : public QMainWindow {
@@ -123,6 +124,7 @@ private:
     LayerPanel* m_layerPanel = nullptr;
     PropertiesPanel* m_propsPanel = nullptr;
     AssemblyPanel* m_assemblyPanel = nullptr;
+    TimelinePanel* m_timelinePanel = nullptr;
     QLabel* m_coordLabel = nullptr;
     QLabel* m_sketchLabel = nullptr; // "Sketch 'x' — SKETCH Close to finish"
     QPushButton* m_finishSketchBtn = nullptr; // corner of the tool tab strip

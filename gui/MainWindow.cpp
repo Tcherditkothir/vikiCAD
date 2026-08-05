@@ -56,6 +56,7 @@
 #include "panels/CommandBar.h"
 #include "panels/LayerPanel.h"
 #include "panels/PropertiesPanel.h"
+#include "panels/TimelinePanel.h"
 #include "solid/FeatureParams.h"
 #include "solid/SolidEntity.h"
 #include "solid/SolidOps.h"
@@ -177,6 +178,37 @@ MainWindow::MainWindow()
     connect(m_assemblyPanel, &AssemblyPanel::sketchActivated, this,
             [this] { setView3D(false); });
 
+    // Timeline dock (bottom, hidden by default — View menu shows it): the
+    // animation module's GUI half. It only samples core/anim clips; the 3D
+    // view displays the parts through its animation overlay.
+    m_timelinePanel = new TimelinePanel(this);
+    auto* timelineDock = new QDockWidget(QStringLiteral("Timeline"), this);
+    timelineDock->setObjectName(QStringLiteral("timelineDock"));
+    timelineDock->setWidget(m_timelinePanel);
+    timelineDock->setFeatures(QDockWidget::DockWidgetMovable |
+                              QDockWidget::DockWidgetFloatable |
+                              QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
+    timelineDock->hide();
+    connect(m_timelinePanel, &TimelinePanel::animationReady, this,
+            [this](const std::vector<AnimPartDisplay>& parts) {
+                setView3D(true); // builds the OCCT view if needed
+                if (m_occtView)
+                    m_occtView->showAnimation(parts);
+            });
+    connect(m_timelinePanel, &TimelinePanel::posed, this,
+            [this](const std::vector<gp_Trsf>& world) {
+                if (m_occtView)
+                    m_occtView->poseAnimation(world);
+            });
+    connect(m_timelinePanel, &TimelinePanel::animationCleared, this,
+            [this] {
+                if (m_occtView)
+                    m_occtView->clearAnimation();
+            });
+    connect(m_timelinePanel, &TimelinePanel::feedback, this,
+            [this](const QString& msg) { m_commandBar->appendHistory(msg); });
+
     // When a panel is torn off (floating) give it real window chrome so it can
     // be maximized / full-screened, not just a frameless floating box.
     const auto makeFloatMaximizable = [](QDockWidget* dock) {
@@ -199,6 +231,7 @@ MainWindow::MainWindow()
     viewMenu0->addAction(layerDock->toggleViewAction());
     viewMenu0->addAction(propsDock->toggleViewAction());
     viewMenu0->addAction(asmDock->toggleViewAction());
+    viewMenu0->addAction(timelineDock->toggleViewAction());
     viewMenu0->addAction(commandDock->toggleViewAction());
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->addAction(QStringLiteral("&New"), QKeySequence::New, this, &MainWindow::newFile);
@@ -1180,6 +1213,51 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         if (!shot.save(path))
             return {{QStringLiteral("error"), QStringLiteral("cannot write %1").arg(path)}};
         return {{QStringLiteral("ok"), true}, {QStringLiteral("savedTo"), path}};
+    }
+    if (method == QLatin1String("anim")) {
+        // Drive the Timeline panel headlessly (gui-smoke + agents):
+        //   anim load POSE AVATAR [CHAIN] / frame N / play / stop /
+        //   clear / status.
+        const QString action = params[QStringLiteral("action")].toString();
+        if (action == QLatin1String("load")) {
+            const bool ok = m_timelinePanel->loadFiles(
+                params[QStringLiteral("pose")].toString(),
+                params[QStringLiteral("avatar")].toString(),
+                params[QStringLiteral("chain")].toString());
+            QJsonObject reply = m_timelinePanel->statusJson();
+            reply.insert(QStringLiteral("ok"), ok);
+            if (!ok)
+                reply.insert(QStringLiteral("error"),
+                             QStringLiteral("load failed — see the "
+                                            "command-bar history"));
+            return reply;
+        }
+        if (action == QLatin1String("frame")) {
+            m_timelinePanel->seekFrame(
+                params[QStringLiteral("frame")].toInt());
+            QJsonObject reply = m_timelinePanel->statusJson();
+            reply.insert(QStringLiteral("ok"), true);
+            return reply;
+        }
+        if (action == QLatin1String("play")
+            || action == QLatin1String("stop")) {
+            m_timelinePanel->setPlaying(action == QLatin1String("play"));
+            QJsonObject reply = m_timelinePanel->statusJson();
+            reply.insert(QStringLiteral("ok"), true);
+            return reply;
+        }
+        if (action == QLatin1String("clear")) {
+            m_timelinePanel->clearAnimation();
+            return {{QStringLiteral("ok"), true}};
+        }
+        if (action == QLatin1String("status")) {
+            QJsonObject reply = m_timelinePanel->statusJson();
+            reply.insert(QStringLiteral("ok"), true);
+            return reply;
+        }
+        return {{QStringLiteral("error"),
+                 QStringLiteral("anim wants action load|frame|play|stop|"
+                                "clear|status")}};
     }
     return {{QStringLiteral("error"), QStringLiteral("unknown method: %1").arg(method)}};
 }
