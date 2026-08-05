@@ -171,6 +171,52 @@ TEST_CASE("revolute stop violations warn in degrees", "[anim]")
     CHECK(clip.warnings.first().contains(QStringLiteral("135.0 deg")));
 }
 
+TEST_CASE("a typed root joint animates (lever, robot base)", "[anim]")
+{
+    // Review 2026-08-05: the root's own channel used to be silently
+    // overwritten by root_pos/root_rot — a single-revolute lever never
+    // moved. The composition is place ∘ placeRot ∘ slide ∘ typedRot.
+    const char* leverJson = R"({
+        "id": "lever", "schema_version": "1", "scale_reference": 1.0,
+        "joints": [
+            { "name": "lever", "parent": null, "type": "revolute",
+              "axis": [0, 1, 0], "attach": [0.01, 0.02, 0.03],
+              "length": 0.1, "rest_direction": [1, 0, 0] }
+        ]})";
+    const ChainResult chain =
+        chainFromJson(QJsonDocument::fromJson(leverJson).object());
+    INFO(chain.error.toStdString());
+    REQUIRE(chain.ok);
+    // Non-free root: informational warning, even on a 1-joint chain.
+    REQUIRE(chain.warnings.size() == 1);
+
+    SECTION("the lever's own channel moves it")
+    {
+        const ClipResult clip = craneClip(chain.chain, R"({
+            "id":"swing","schema_version":"1","chain":"lever","fps":24,
+            "keyframes":[{"t":0,"joints":{"lever":90}}]})");
+        REQUIRE(clip.ok);
+        const auto world =
+            worldTransforms(chain.chain, clip.clip.sampleAt(0.0));
+        // Ry(+90): tip (100,0,0) -> (0,0,-100), from origin (10,20,30).
+        checkPnt(jointOrigin(world, 0), 10, 20, 30);
+        checkPnt(segmentEnd(chain.chain, world, 0), 10, 20, -70);
+    }
+    SECTION("root_rot composes BEFORE the lever's own rotation")
+    {
+        const ClipResult clip = craneClip(chain.chain, R"({
+            "id":"swing","schema_version":"1","chain":"lever","fps":24,
+            "keyframes":[{"t":0,"root_rot":[90,0,0],
+                          "joints":{"lever":90}}]})");
+        REQUIRE(clip.ok);
+        const auto world =
+            worldTransforms(chain.chain, clip.clip.sampleAt(0.0));
+        // R = Rx(90) ∘ Ry(90): tip (100,0,0) -Ry-> (0,0,-100)
+        // -Rx-> (0,100,0). Reversed composition would give (10,20,-70).
+        checkPnt(segmentEnd(chain.chain, world, 0), 10, 120, 30);
+    }
+}
+
 TEST_CASE("fixed joints refuse pose values", "[anim]")
 {
     const Chain chain = crane();

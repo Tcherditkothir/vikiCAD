@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 #include <gp_QuaternionSLerp.hxx>
 
@@ -16,6 +17,27 @@ namespace {
 
 constexpr double kMetersToMm = 1000.0;
 constexpr double kDegToRad = M_PI / 180.0;
+
+// LESSONS: every multiplicative input deserves a numbered cap, refused
+// BEFORE the work. duration x fps x 2 (pingpong) bounds the frame count;
+// 300 s at the schema's 60 fps ceiling is 36 000 frames — already minutes
+// of rendering, and far beyond any pose loop.
+constexpr double kMaxClipSeconds = 300.0;
+
+// Defensive ceiling for programmatic (non-parsed) clips; unreachable
+// through clipFromJson thanks to kMaxClipSeconds.
+constexpr size_t kMaxFrameCount = 200000;
+
+// QJsonValue::toDouble() silently reads strings as 0.0 — every element of
+// a numeric array must really be a number or a generator glitch becomes a
+// silently wrong pose with exit code 0.
+bool allNumbers(const QJsonArray& a)
+{
+    for (const QJsonValue& v : a)
+        if (!v.isDouble())
+            return false;
+    return true;
+}
 
 ClipResult fail(const QString& message)
 {
@@ -106,8 +128,21 @@ PoseSample AnimClip::sampleAt(double t, bool applyBreath) const
     }
 
     if (applyBreath && hasBreath && breathAmplitudeRad > 0.0) {
-        const double delta =
-            breathAmplitudeRad * std::sin(2.0 * M_PI * t / breathPeriodS);
+        // Cycle loops jump straight from the end frame back to the start:
+        // a sine on absolute time pops at the seam whenever the window is
+        // not a multiple of the period. Fold the phase onto a whole number
+        // of periods per loop so the oscillation closes exactly.
+        double phase = 2.0 * M_PI * t / breathPeriodS;
+        if (loop == LoopMode::Cycle) {
+            const double window = loopEnd - loopStart;
+            if (window > 1e-9) {
+                const int cycles = std::max(
+                    1, static_cast<int>(
+                           std::llround(window / breathPeriodS)));
+                phase = 2.0 * M_PI * cycles * (t - loopStart) / window;
+            }
+        }
+        const double delta = breathAmplitudeRad * std::sin(phase);
         for (const int idx : breathJoints) {
             JointChannel& ch = out.values[static_cast<size_t>(idx)];
             gp_Quaternion extra;
@@ -131,8 +166,10 @@ std::vector<double> AnimClip::frameTimes() const
         times.push_back(end);
         return times;
     }
-    const int n = std::max(
-        1, static_cast<int>(std::llround((end - start) * fps)));
+    const long long wanted = std::llround((end - start) * fps);
+    if (wanted > static_cast<long long>(kMaxFrameCount))
+        return times; // empty — callers refuse an empty frame list
+    const int n = std::max(1, static_cast<int>(wanted));
     switch (loop) {
     case LoopMode::Hold:
         for (int i = 0; i < n; ++i)
@@ -166,8 +203,12 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
     ClipResult res;
     AnimClip& clip = res.clip;
     clip.id = obj.value(QLatin1String("id")).toString();
-    if (clip.id.isEmpty())
-        return fail(QStringLiteral("pose3d: missing \"id\""));
+    // Schema pattern, enforced: the id names the output files, so this is
+    // also the guard against ../ traversal out of --out.
+    static const QRegularExpression kIdPattern(
+        QStringLiteral("^[a-z0-9-]+$"));
+    if (!kIdPattern.match(clip.id).hasMatch())
+        return fail(QStringLiteral("pose3d: \"id\" must match [a-z0-9-]+"));
     clip.chainId = obj.value(QLatin1String("chain")).toString();
     if (clip.chainId != chain.id)
         return fail(QStringLiteral("pose3d \"%1\" animates chain \"%2\" but "
@@ -223,7 +264,7 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
         const QJsonValue rp = kf.value(QLatin1String("root_pos"));
         if (rp.isArray()) {
             const QJsonArray a = rp.toArray();
-            if (a.size() != 3)
+            if (a.size() != 3 || !allNumbers(a))
                 return fail(QStringLiteral("pose3d: root_pos must have 3 "
                                            "numbers (t=%1)")
                                 .arg(key.t));
@@ -239,7 +280,7 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
         const QJsonValue rr = kf.value(QLatin1String("root_rot"));
         if (rr.isArray()) {
             const QJsonArray a = rr.toArray();
-            if (a.size() != 3)
+            if (a.size() != 3 || !allNumbers(a))
                 return fail(QStringLiteral("pose3d: root_rot must have 3 "
                                            "numbers (t=%1)")
                                 .arg(key.t));
@@ -266,10 +307,12 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
                 switch (joint.type) {
                 case JointType::Ball: {
                     if (!it.value().isArray()
-                        || it.value().toArray().size() != 3)
+                        || it.value().toArray().size() != 3
+                        || !allNumbers(it.value().toArray()))
                         return fail(QStringLiteral(
                                         "pose3d: joint \"%1\" is a ball and "
-                                        "needs [rx, ry, rz] deg (t=%2)")
+                                        "needs [rx, ry, rz] numbers, deg "
+                                        "(t=%2)")
                                         .arg(it.key())
                                         .arg(key.t));
                     const QJsonArray a = it.value().toArray();
@@ -337,6 +380,12 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
         cur = key;
     }
 
+    if (clip.duration() > kMaxClipSeconds)
+        return fail(QStringLiteral("pose3d: last keyframe at %1 s exceeds "
+                                   "the %2 s cap")
+                        .arg(clip.duration())
+                        .arg(kMaxClipSeconds));
+
     clip.loopEnd = clip.duration();
     const QJsonValue loopVal = obj.value(QLatin1String("loop"));
     if (loopVal.isObject()) {
@@ -351,6 +400,12 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
         else
             return fail(QStringLiteral("pose3d: loop.mode must be pingpong, "
                                        "cycle or hold"));
+        if ((lo.contains(QLatin1String("start"))
+             && !lo.value(QLatin1String("start")).isDouble())
+            || (lo.contains(QLatin1String("end"))
+                && !lo.value(QLatin1String("end")).isDouble()))
+            return fail(QStringLiteral("pose3d: loop.start/loop.end must "
+                                       "be numbers"));
         clip.loopStart = lo.value(QLatin1String("start")).toDouble(0.0);
         clip.loopEnd =
             lo.value(QLatin1String("end")).toDouble(clip.duration());

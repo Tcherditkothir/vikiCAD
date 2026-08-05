@@ -82,12 +82,26 @@ TEST_CASE("manikin + vrksasana exports a valid animated GLB", "[anim]")
     CHECK(glb.data->nodes_count == 27);
     REQUIRE(glb.data->animations_count == 1);
 
-    // The fix-up node carries the Z-up-mm -> Y-up-m conversion.
+    // The fix-up node carries the Z-up-mm -> Y-up-m conversion with the
+    // avatar FACING glTF +Z (review 2026-08-05: a bare Rx(-90) kept the
+    // up axis right but showed the manikin's back). Quaternion
+    // (0, √.5, √.5, 0) = Ry(180)·Rx(-90).
     const cgltf_node& fix = glb.data->nodes[0];
     CHECK(fix.has_scale);
     CHECK(fix.scale[0] == Approx(0.001));
     CHECK(fix.has_rotation);
-    CHECK(fix.rotation[0] == Approx(-std::sqrt(0.5)).margin(1e-6));
+    CHECK(fix.rotation[0] == Approx(0.0).margin(1e-6));
+    CHECK(fix.rotation[1] == Approx(std::sqrt(0.5)).margin(1e-6));
+    CHECK(fix.rotation[2] == Approx(std::sqrt(0.5)).margin(1e-6));
+    CHECK(fix.rotation[3] == Approx(0.0).margin(1e-6));
+    // Sanity of that quaternion: our front +Y -> glTF front +Z, our up
+    // +Z -> glTF up +Y.
+    const gp_Quaternion q(fix.rotation[0], fix.rotation[1],
+                          fix.rotation[2], fix.rotation[3]);
+    const gp_Vec front = q.Multiply(gp_Vec(0, 1, 0));
+    CHECK(front.Z() == Approx(1.0).margin(1e-9));
+    const gp_Vec up = q.Multiply(gp_Vec(0, 0, 1));
+    CHECK(up.Y() == Approx(1.0).margin(1e-9));
 
     // vrksasana loops pingpong over 4 s: the baked way back stretches the
     // sampler input to 8 s.
@@ -134,6 +148,104 @@ TEST_CASE("GLB export is byte-deterministic", "[anim]")
     REQUIRE(a.open(QIODevice::ReadOnly));
     REQUIRE(b.open(QIODevice::ReadOnly));
     CHECK(a.readAll() == b.readAll());
+}
+
+TEST_CASE("pingpong bakes the LOOP WINDOW, not the whole clip", "[anim]")
+{
+    // Review 2026-08-05: the GLB used to mirror the full clip while the
+    // WebP honoured loop.start/loop.end — the two contractual outputs
+    // told different stories. Keys at 0/2/4 s, window [1, 3]: one GLB
+    // playthrough must span 2 x (3-1) = 4 s starting at 0.
+    const AvatarResult avatar =
+        loadAvatarFile(goldenPath("manikin-neutral.json"));
+    REQUIRE(avatar.ok);
+    const ChainResult chain =
+        loadChainFile(goldenPath("humanoid-12.json"), avatar.spec.heightM);
+    REQUIRE(chain.ok);
+    const char* poseJson = R"({
+        "id":"windowed","schema_version":"1","chain":"humanoid-12",
+        "fps":24,
+        "keyframes":[{"t":0},{"t":2,"joints":{"neck":[0,0,40]}},
+                     {"t":4,"joints":{"neck":[0,0,0]}}],
+        "loop":{"mode":"pingpong","start":1,"end":3}})";
+    const ClipResult clip = clipFromJson(
+        QJsonDocument::fromJson(poseJson).object(), chain.chain);
+    REQUIRE(clip.ok);
+    const RigidAvatarProvider provider(avatar.spec);
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("w.glb"));
+    REQUIRE(exportGlb(chain.chain, clip.clip, provider, avatar.spec, path)
+                .ok);
+
+    Loaded glb;
+    parseAndValidate(path, glb);
+    REQUIRE(glb.data->animations_count == 1);
+    const cgltf_accessor* input =
+        glb.data->animations[0].samplers[0].input;
+    REQUIRE(input != nullptr);
+    CHECK(input->has_min);
+    CHECK(input->min[0] == Approx(0.0).margin(1e-4));
+    CHECK(input->has_max);
+    CHECK(input->max[0] == Approx(4.0).margin(1e-4));
+    // Window boundary samples + the interior key at t=2, mirrored:
+    // [0, 1, 2, 3, 4] relative -> 5 input times.
+    CHECK(input->count == 5u);
+}
+
+TEST_CASE("a typed root joint gets composed animation channels", "[anim]")
+{
+    // The lever case from the review: a single revolute root must move in
+    // the GLB too (rotation channel with non-identity quaternions).
+    const char* leverJson = R"({
+        "id": "lever", "schema_version": "1", "scale_reference": 1.0,
+        "joints": [
+            { "name": "lever", "parent": null, "type": "revolute",
+              "axis": [0, 1, 0], "attach": [0.01, 0.02, 0.03],
+              "length": 0.1, "rest_direction": [1, 0, 0] }
+        ]})";
+    const ChainResult chain =
+        chainFromJson(QJsonDocument::fromJson(leverJson).object());
+    REQUIRE(chain.ok);
+    const char* poseJson = R"({
+        "id":"swing","schema_version":"1","chain":"lever","fps":24,
+        "keyframes":[{"t":0,"joints":{"lever":0}},
+                     {"t":1,"joints":{"lever":80}}]})";
+    const ClipResult clip = clipFromJson(
+        QJsonDocument::fromJson(poseJson).object(), chain.chain);
+    REQUIRE(clip.ok);
+
+    AvatarSpec spec;
+    spec.id = QStringLiteral("stub");
+    spec.chainId = QStringLiteral("lever");
+    spec.segmentRadiusFrac.insert(QStringLiteral("default"), 0.01);
+    const RigidAvatarProvider provider(spec);
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("lever.glb"));
+    REQUIRE(exportGlb(chain.chain, clip.clip, provider, spec, path).ok);
+
+    Loaded glb;
+    parseAndValidate(path, glb);
+    REQUIRE(glb.data->animations_count == 1);
+    const cgltf_animation& anim = glb.data->animations[0];
+    const cgltf_accessor* rotOut = nullptr;
+    for (cgltf_size i = 0; i < anim.channels_count; ++i)
+        if (anim.channels[i].target_path
+            == cgltf_animation_path_type_rotation)
+            rotOut = anim.channels[i].sampler->output;
+    REQUIRE(rotOut != nullptr);
+    REQUIRE(rotOut->count == 2u);
+    cgltf_float first[4] = {0, 0, 0, 0};
+    cgltf_float last[4] = {0, 0, 0, 0};
+    REQUIRE(cgltf_accessor_read_float(rotOut, 0, first, 4));
+    REQUIRE(cgltf_accessor_read_float(rotOut, 1, last, 4));
+    // Key 0: identity. Key 1: 80 deg about +Y -> y = sin(40 deg).
+    CHECK(first[3] == Approx(1.0).margin(1e-6));
+    CHECK(last[1]
+          == Approx(std::sin(40.0 * M_PI / 180.0)).margin(1e-5));
 }
 
 TEST_CASE("channels at rest are skipped", "[anim]")

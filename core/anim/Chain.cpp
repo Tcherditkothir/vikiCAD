@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 
 namespace viki {
 namespace anim {
@@ -76,10 +77,18 @@ ChainResult chainFromJson(const QJsonObject& obj,
     ChainResult res;
     Chain& chain = res.chain;
     chain.id = obj.value(QLatin1String("id")).toString();
-    if (chain.id.isEmpty())
-        return fail(QStringLiteral("chain: missing \"id\""));
+    // The schema pattern doubles as a path-traversal guard: ids end up in
+    // output file names.
+    static const QRegularExpression kIdPattern(
+        QStringLiteral("^[a-z0-9-]+$"));
+    if (!kIdPattern.match(chain.id).hasMatch())
+        return fail(QStringLiteral("chain: \"id\" must match [a-z0-9-]+"));
     chain.name = obj.value(QLatin1String("name")).toString();
 
+    if (obj.contains(QLatin1String("scale_reference"))
+        && !obj.value(QLatin1String("scale_reference")).isDouble())
+        return fail(QStringLiteral("chain: scale_reference must be a "
+                                   "number"));
     double scaleM = obj.value(QLatin1String("scale_reference")).toDouble(1.0);
     if (scaleOverrideM)
         scaleM = *scaleOverrideM;
@@ -145,6 +154,11 @@ ChainResult chainFromJson(const QJsonObject& obj,
             return fail(QStringLiteral("chain: joint \"%1\": %2")
                             .arg(j.name, err));
 
+        if (jo.contains(QLatin1String("length"))
+            && !jo.value(QLatin1String("length")).isDouble())
+            return fail(QStringLiteral("chain: joint \"%1\" length must be "
+                                       "a number")
+                            .arg(j.name));
         const double lengthFrac = jo.value(QLatin1String("length")).toDouble(0);
         if (lengthFrac < 0)
             return fail(QStringLiteral("chain: joint \"%1\" has a negative "
@@ -222,16 +236,13 @@ ChainResult chainFromJson(const QJsonObject& obj,
         return fail(QStringLiteral("chain: expected exactly one root joint "
                                    "(parent null), found %1")
                         .arg(rootCount));
-    if (parsed.size() > 1) {
-        for (size_t i = 0; i < parsed.size(); ++i) {
-            if (parentIdx[i] == -1 && parsed[i].type == JointType::Free)
-                continue;
-            if (parentIdx[i] == -1 && parsed[i].type != JointType::Free)
-                res.warnings.append(
-                    QStringLiteral("chain: root joint \"%1\" is not of type "
-                                   "\"free\"; root_pos/root_rot still apply")
-                        .arg(parsed[i].name));
-        }
+    for (size_t i = 0; i < parsed.size(); ++i) {
+        if (parentIdx[i] == -1 && parsed[i].type != JointType::Free)
+            res.warnings.append(
+                QStringLiteral("chain: root joint \"%1\" is not of type "
+                               "\"free\"; root_pos/root_rot compose with "
+                               "its own channel")
+                    .arg(parsed[i].name));
     }
     for (size_t i = 0; i < parsed.size(); ++i) {
         if (parentIdx[i] != -1 && parsed[i].type == JointType::Free)

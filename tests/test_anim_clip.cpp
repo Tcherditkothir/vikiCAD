@@ -353,4 +353,67 @@ TEST_CASE("clip validation refuses broken inputs", "[anim]")
         CHECK_FALSE(r.ok);
         CHECK(r.error.contains(QStringLiteral("non-increasing")));
     }
+    SECTION("quoted numbers in a ball array are refused, not read as 0")
+    {
+        const ClipResult r = parseClip(chain, R"({
+            "id":"x","schema_version":"1","chain":"humanoid-12","fps":24,
+            "keyframes":[{"t":0,"joints":{"spine":["90",0,0]}}]})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("numbers")));
+    }
+    SECTION("id with path characters is refused (traversal guard)")
+    {
+        const ClipResult r = parseClip(chain, R"({
+            "id":"../evil","schema_version":"1","chain":"humanoid-12",
+            "fps":24,"keyframes":[{"t":0}]})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("id")));
+    }
+    SECTION("clips beyond the 300 s cap are refused")
+    {
+        const ClipResult r = parseClip(chain, R"({
+            "id":"x","schema_version":"1","chain":"humanoid-12","fps":24,
+            "keyframes":[{"t":0},{"t":301}]})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("300")));
+    }
+    SECTION("loop bounds of the wrong JSON type are refused")
+    {
+        const ClipResult r = parseClip(chain, R"({
+            "id":"x","schema_version":"1","chain":"humanoid-12","fps":24,
+            "keyframes":[{"t":0},{"t":1}],
+            "loop":{"mode":"cycle","start":"0.5"}})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("loop.start")));
+    }
+}
+
+TEST_CASE("breath closes exactly at a cycle loop seam", "[anim]")
+{
+    // Review 2026-08-05: a sine on absolute time popped at the cycle seam
+    // whenever the window was not a multiple of the period. The phase now
+    // folds onto a whole number of periods per loop.
+    const Chain chain = humanoid();
+    const ClipResult res = parseClip(chain, R"({
+        "id":"seam","schema_version":"1","chain":"humanoid-12","fps":24,
+        "keyframes":[{"t":0},{"t":3,"joints":{"neck":[0,0,10]}}],
+        "loop":{"mode":"cycle","start":0,"end":3},
+        "breath":{"period_s":4,"amplitude_deg":2,"joints":["spine"]}})");
+    REQUIRE(res.ok);
+    const int spine = chain.indexOf(QStringLiteral("spine"));
+    const PoseSample atStart = res.clip.sampleAt(0.0, true);
+    const PoseSample atEnd = res.clip.sampleAt(3.0, true);
+    // The spine holds its keyframed value at both ends of the window, so
+    // any difference would be breath phase — there must be none.
+    const gp_Vec vs = atStart.values[spine].rot.Multiply(gp_Vec(0, 0, 1));
+    const gp_Vec ve = atEnd.values[spine].rot.Multiply(gp_Vec(0, 0, 1));
+    CHECK(vs.X() == Approx(ve.X()).margin(1e-9));
+    CHECK(vs.Y() == Approx(ve.Y()).margin(1e-9));
+    CHECK(vs.Z() == Approx(ve.Z()).margin(1e-9));
+    // And the oscillation still exists inside the window (peak at 1/4 of
+    // the folded period = 0.75 s for one cycle over 3 s).
+    const PoseSample mid = res.clip.sampleAt(0.75, true);
+    const PoseSample midPlain = res.clip.sampleAt(0.75, false);
+    CHECK_FALSE(
+        mid.values[spine].rot.IsEqual(midPlain.values[spine].rot));
 }

@@ -722,9 +722,14 @@ int cmdAnim(const QStringList& argsIn)
     for (int i = 0; i < args.size(); ++i) {
         const QString& a = args[i];
         const auto value = [&](const char* opt) -> QString {
-            if (++i >= args.size())
-                return QString();
             Q_UNUSED(opt);
+            // A following "--flag" is a MISSING value, not a value: without
+            // this check `--pose --no-breath` silently ate the flag.
+            if (++i >= args.size()
+                || args[i].startsWith(QLatin1String("--"))) {
+                i = args.size(); // trips the "needs a value" guard below
+                return QString();
+            }
             return args[i];
         };
         if (a == QLatin1String("--pose")) {
@@ -785,6 +790,10 @@ int cmdAnim(const QStringList& argsIn)
                                             "png (got \"%1\")")
                                  .arg(fmt));
     }
+    if (!wantGlb && !wantWebp && !wantPng)
+        return animError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("--formats selected no output at "
+                                        "all"));
     anim::CameraView camera = anim::CameraView::Side;
     if (cameraName == QLatin1String("front"))
         camera = anim::CameraView::Front;

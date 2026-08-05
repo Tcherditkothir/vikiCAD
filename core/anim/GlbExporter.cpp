@@ -302,11 +302,16 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
     {
         QJsonObject fix;
         fix.insert(QLatin1String("name"), QStringLiteral("zup_mm_to_gltf"));
-        QJsonArray rot; // -90 deg about X as (x, y, z, w)
-        rot.append(-std::sqrt(0.5));
-        rot.append(0.0);
+        // Ry(180) * Rx(-90) as (x, y, z, w): our up +Z lands on glTF +Y
+        // AND our front +Y lands on glTF +Z (the spec's forward-facing
+        // convention; +X becomes -X = the spec's "right"). A bare Rx(-90)
+        // keeps up correct but shows the avatar's BACK to a spec-abiding
+        // viewer.
+        QJsonArray rot;
         rot.append(0.0);
         rot.append(std::sqrt(0.5));
+        rot.append(std::sqrt(0.5));
+        rot.append(0.0);
         fix.insert(QLatin1String("rotation"), rot);
         fix.insert(QLatin1String("scale"),
                    vec3Json(0.001, 0.001, 0.001));
@@ -348,23 +353,44 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
     }
 
     // ---- Animation ------------------------------------------------------
-    // Key order: authored keys, plus the mirrored way back for pingpong.
-    std::vector<double> times;
-    std::vector<int> keyOrder;
-    const int keyCount = static_cast<int>(clip.keys.size());
-    for (int k = 0; k < keyCount; ++k) {
-        times.push_back(clip.keys[static_cast<size_t>(k)].t);
-        keyOrder.push_back(k);
-    }
-    if (clip.loop == LoopMode::PingPong && keyCount > 1) {
-        const double dur = clip.duration();
-        for (int k = keyCount - 2; k >= 0; --k) {
-            times.push_back(2.0 * dur
-                            - clip.keys[static_cast<size_t>(k)].t);
-            keyOrder.push_back(k);
+    // Baked key list: the authored keys for hold/cycle; for pingpong the
+    // LOOP WINDOW (boundary samples + interior keys, times shifted to
+    // start at 0) followed by its mirror — one GLB playthrough is exactly
+    // one loop period, the same content the WebP loops over. The authored
+    // window rides in extras.loop for consumers that want the raw clip.
+    std::vector<DenseKey> baked;
+    if (clip.loop == LoopMode::PingPong && clip.keys.size() > 1) {
+        const double start = clip.loopStart;
+        const double end = clip.loopEnd;
+        const auto sampleKey = [&clip](double t) {
+            const PoseSample s = clip.sampleAt(t, false);
+            DenseKey k;
+            k.t = t;
+            k.rootPosMm = s.rootPosMm;
+            k.rootRot = s.rootRot;
+            k.values = s.values;
+            return k;
+        };
+        baked.push_back(sampleKey(start));
+        for (const DenseKey& key : clip.keys)
+            if (key.t > start + 1e-9 && key.t < end - 1e-9)
+                baked.push_back(key);
+        baked.push_back(sampleKey(end));
+        for (DenseKey& key : baked)
+            key.t -= start;
+        const double window = end - start;
+        for (size_t k = baked.size() - 1; k-- > 0;) {
+            DenseKey mirrored = baked[k];
+            mirrored.t = 2.0 * window - mirrored.t;
+            baked.push_back(mirrored);
         }
+    } else {
+        baked = clip.keys;
     }
-    std::vector<float> timesF(times.begin(), times.end());
+    std::vector<float> timesF;
+    timesF.reserve(baked.size());
+    for (const DenseKey& key : baked)
+        timesF.push_back(static_cast<float>(key.t));
     const int timeView =
         bin.addView(timesF.data(),
                     static_cast<qsizetype>(timesF.size() * sizeof(float)),
@@ -478,11 +504,33 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
         const Joint& joint = chain.joints[static_cast<size_t>(j)];
         bool animated = false;
         if (j == 0) {
+            // A glTF node carries ONE translation and ONE rotation, so the
+            // root placement and the root's own typed channel compose here
+            // exactly like worldTransforms does:
+            //   T = root_pos + R_root(slide),  R = root_rot * typed.
             std::vector<gp_Vec> pos;
             std::vector<gp_Quaternion> rot;
-            for (const int k : keyOrder) {
-                pos.push_back(clip.keys[static_cast<size_t>(k)].rootPosMm);
-                rot.push_back(clip.keys[static_cast<size_t>(k)].rootRot);
+            for (const DenseKey& key : baked) {
+                const JointChannel& ch = key.values[0];
+                gp_Quaternion typedRot;
+                gp_Vec slide(0, 0, 0);
+                switch (joint.type) {
+                case JointType::Ball:
+                    typedRot = ch.rot;
+                    break;
+                case JointType::Revolute:
+                    typedRot.SetVectorAndAngle(joint.axis, ch.scalar);
+                    break;
+                case JointType::Prismatic:
+                    slide = joint.axis * ch.scalar;
+                    break;
+                case JointType::Fixed:
+                case JointType::Free:
+                    break;
+                }
+                pos.push_back(key.rootPosMm
+                              + key.rootRot.Multiply(slide));
+                rot.push_back(key.rootRot * typedRot);
             }
             addTranslationChannel(j, pos);
             addRotationChannel(j, rot);
@@ -494,10 +542,9 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
                     allRest = false;
             if (!allRest) {
                 std::vector<gp_Quaternion> rot;
-                for (const int k : keyOrder)
-                    rot.push_back(clip.keys[static_cast<size_t>(k)]
-                                      .values[static_cast<size_t>(j)]
-                                      .rot);
+                for (const DenseKey& key : baked)
+                    rot.push_back(
+                        key.values[static_cast<size_t>(j)].rot);
                 addRotationChannel(j, rot);
                 animated = true;
             }
@@ -510,13 +557,11 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
                     allRest = false;
             if (!allRest) {
                 std::vector<gp_Quaternion> rot;
-                for (const int k : keyOrder) {
+                for (const DenseKey& key : baked) {
                     gp_Quaternion q;
                     q.SetVectorAndAngle(
                         joint.axis,
-                        clip.keys[static_cast<size_t>(k)]
-                            .values[static_cast<size_t>(j)]
-                            .scalar);
+                        key.values[static_cast<size_t>(j)].scalar);
                     rot.push_back(q);
                 }
                 addRotationChannel(j, rot);
@@ -531,12 +576,11 @@ GlbResult exportGlb(const Chain& chain, const AnimClip& clip,
                     allRest = false;
             if (!allRest) {
                 std::vector<gp_Vec> pos;
-                for (const int k : keyOrder)
+                for (const DenseKey& key : baked)
                     pos.push_back(
                         joint.attachMm
                         + joint.axis
-                              * clip.keys[static_cast<size_t>(k)]
-                                    .values[static_cast<size_t>(j)]
+                              * key.values[static_cast<size_t>(j)]
                                     .scalar);
                 addTranslationChannel(j, pos);
                 animated = true;

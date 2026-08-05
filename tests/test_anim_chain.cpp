@@ -172,6 +172,28 @@ TEST_CASE("chain validation refuses broken inputs", "[anim]")
         CHECK_FALSE(r.ok);
         CHECK(r.error.contains(QStringLiteral("free")));
     }
+    SECTION("id with path characters is refused")
+    {
+        const ChainResult r = parse(R"({"id":"../up","schema_version":"1",
+            "joints":[{"name":"a","parent":null,"type":"free"}]})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("id")));
+    }
+    SECTION("quoted numbers refuse instead of reading as defaults")
+    {
+        const ChainResult r = parse(R"({"id":"x","schema_version":"1",
+            "scale_reference": "1.75",
+            "joints":[{"name":"a","parent":null,"type":"free"}]})");
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("scale_reference")));
+
+        const ChainResult r2 = parse(R"({"id":"x","schema_version":"1",
+            "joints":[{"name":"a","parent":null,"type":"free"},
+                      {"name":"b","parent":"a","type":"fixed",
+                       "length":"0.2","rest_direction":[0,0,1]}]})");
+        CHECK_FALSE(r2.ok);
+        CHECK(r2.error.contains(QStringLiteral("length")));
+    }
 }
 
 TEST_CASE("non-free root parses with a warning", "[anim]")

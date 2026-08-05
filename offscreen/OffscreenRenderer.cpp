@@ -5,6 +5,8 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <Aspect_DisplayConnection.hxx>
+#include <Aspect_TypeOfDeflection.hxx>
+#include <Prs3d_Drawer.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_BufferType.hxx>
@@ -136,6 +138,17 @@ RenderClipResult OffscreenRenderer::renderClip(
         result.error = QStringLiteral("the clip has no frames");
         return result;
     }
+    // Numbered cap, refused before any allocation (LESSONS rule). The
+    // parse-side 300 s clip cap keeps CLI inputs far below this; the cap
+    // here guards programmatic callers.
+    constexpr size_t kMaxFrames = 40000;
+    if (times.size() > kMaxFrames) {
+        result.error = QStringLiteral("clip yields %1 frames, the cap is "
+                                      "%2")
+                           .arg(times.size())
+                           .arg(kMaxFrames);
+        return result;
+    }
 
     // ---- Scene: one AIS shape per avatar part, joint-local geometry ----
     struct PartHandle {
@@ -155,6 +168,12 @@ RenderClipResult OffscreenRenderer::renderClip(
             h.ais = new AIS_Shape(part.shape);
             h.ais->SetColor(part.accent ? accent : base);
             h.ais->Attributes()->SetIsoOnPlane(false);
+            // Honour options.deflectionMm: absolute chordal deviation for
+            // the display tessellation (the default is relative and can
+            // facet small parts visibly).
+            h.ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
+            h.ais->Attributes()->SetMaximalChordialDeviation(
+                options.deflectionMm > 0 ? options.deflectionMm : 0.8);
             BRepBndLib::Add(part.shape, h.localBox);
             handles.push_back(h);
         }
@@ -245,7 +264,7 @@ RenderClipResult OffscreenRenderer::renderClip(
                     dst[x * 4 + 2] =
                         static_cast<uchar>(c.GetRGB().Blue() * 255.0 + 0.5);
                     dst[x * 4 + 3] =
-                        static_cast<uchar>(c.Alpha() * 255.0 + 0.5);
+                        static_cast<uchar>(c.Alpha() * 255.0f + 0.5f);
                 }
             }
         }
