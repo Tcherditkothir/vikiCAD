@@ -71,6 +71,13 @@ if(VIKICAD_HAS_DXF)
                    test_dwg_export.cpp)
 endif()
 
+# GLB round-trip through the INDEPENDENT vendored reader (cgltf); the
+# exporter itself builds without it.
+if(VIKICAD_HAS_CGLTF)
+    target_sources(vikicad-tests PRIVATE test_anim_glb.cpp)
+    target_link_libraries(vikicad-tests PRIVATE cgltf)
+endif()
+
 target_link_libraries(vikicad-tests PRIVATE vikicore Catch2::Catch2WithMain viki_warnings)
 
 include(Catch)

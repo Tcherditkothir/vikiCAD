@@ -32,6 +32,17 @@ else()
     message(WARNING "third_party/libdxfrw/src not found — building without DXF support")
 endif()
 
+# cgltf is only an INDEPENDENT reader for the GLB round-trip tests; the
+# GLB exporter itself has no third-party dependency, so a missing folder
+# only drops those tests.
+set(VIKICAD_HAS_CGLTF OFF)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf/cgltf.h")
+    add_subdirectory(third_party/cgltf)
+    set(VIKICAD_HAS_CGLTF ON)
+else()
+    message(WARNING "third_party/cgltf not found — GLB round-trip tests disabled")
+endif()
+
 add_subdirectory(core)
 
 if(VIKICAD_BUILD_GUI)
