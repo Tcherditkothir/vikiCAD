@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Animation module: generic kinematic chains, animated GLB, looping
+  WebP (`vikicad-cli anim render`).** New `core/anim/`: typed joints
+  (ball/revolute/prismatic/fixed/free), sparse keyframes densified with
+  carry-forward, quaternion slerp, forward kinematics, per-channel joint
+  stops that warn without clamping. Avatars dress a chain through the
+  `AvatarProvider` seam (rigid = fused OCCT capsules + ellipsoid head; a
+  skinned provider can plug in later). Exports an animated binary glTF
+  (hand-rolled writer, validated in tests by an independent vendored
+  reader, cgltf 1.15) and an animated transparent WebP (libwebpmux,
+  streaming encoder), both byte-deterministic. Offscreen rendering lives
+  in a new `vikioffscreen` lib (virtual window + RGBA dump, background at
+  alpha 0) so visualization stays out of vikicore. Proven on the 15 real
+  GenMov3D pilot poses: 15/15 render, 240 frames each in ~4.5 s, zero
+  warnings, WebP 0.4-1.2 MB per loop.
 - **Aperture macros with variables and arithmetic (RS-274X).** `%AM` bodies
   using `$n` variables, assignments and expressions (`+ - x /`, parentheses,
   unary minus) now parse: the macro is bound at `%ADD` time into a private,

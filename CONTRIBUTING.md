@@ -9,7 +9,7 @@ sudo apt install build-essential cmake ninja-build qt6-base-dev \
     libocct-foundation-dev libocct-modeling-algorithms-dev \
     libocct-modeling-data-dev libocct-data-exchange-dev \
     libocct-visualization-dev libocct-ocaf-dev \
-    catch2 libzstd-dev libsqlite3-dev
+    catch2 libzstd-dev libsqlite3-dev libwebp-dev
 ```
 
 Debug build (the default developer workflow):

@@ -30,6 +30,7 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 | `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`, fab extensions `.gtl`...`.gko`/`.gbr`/`.txt` for one layer — §7d; a DIRECTORY target exports the whole Gerber kit) |
 | `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg`, `.step` and `.stl`) |
 | script | `$CLI new --run script.vks --save-as out.vkd` — a `.vks` file, one input line per row (AutoCAD `.scr` semantics) |
+| `anim` | `$CLI anim render --pose p.json --avatar a.json --out DIR` — animated GLB + transparent looping WebP of a kinematic chain (§8; CLI-native, not a CommandProcessor command) |
 
 `--exec` runs ONE complete command per flag, in order, left to right; the
 first failure aborts with `E_EXEC`. `--run` feeds a script file where a
@@ -901,3 +902,41 @@ Exported Gerber headers are silent for old consumers: X2 metadata rides in
 Altium's comment form (`G04 #@! TF.GenerationSoftware,...*`), and a
 regions-only layer (keepout zone) still defines ONE unused aperture so
 pre-X2 sniffers (gerbv) recognize RS-274X instead of warning "RS-274D".
+
+## 8. Animated kinematic chains headless: `anim render`
+
+The animation module (`core/anim/`) drives a GENERIC kinematic chain —
+typed joints `ball` / `revolute` (hinge) / `prismatic` (slider) / `fixed` /
+`free` (root) — so the same command animates a humanoid, a robot arm or an
+exploded assembly. Inputs are three JSON files (GenMov3D v1 schemas):
+a *chain* (topology, rest pose, joint stops), a *pose3d* (sparse keyframes
+of LOCAL rotations, carried forward when unspecified, slerp between keys,
+loop block `pingpong|cycle|hold`, optional ignorable `breath`), and an
+*avatar* (how the chain looks; `rigid` = parametric capsules).
+
+```sh
+vikicad-cli anim render --pose yog-vrksasana.json \
+    --avatar manikin-neutral.json --out out/ \
+    [--chain humanoid-12.json] [--fps 30] [--size 512x640] \
+    [--formats glb,webp,png] [--camera side|front|three-quarter] \
+    [--no-breath]
+```
+
+- Outputs in `--out`: `<pose-id>.glb` (Y-up metres, one animation, loop
+  metadata in `extras`), `<pose-id>.webp` (transparent looping animation;
+  `hold` plays once and freezes) and `<pose-id>-f0000.png`... when `png`
+  is requested. Default formats: `glb,webp`.
+- The chain file resolves next to the pose file, then `../chains/<chain
+  id>.json`, unless `--chain` says otherwise. The avatar's `height_m`
+  rescales the whole chain.
+- Camera is FIXED for the whole clip (framed over the union of every
+  frame, floor z=0 at the bottom); default `side` = eye on +X, the Y-Z
+  silhouette. Rendering needs a reachable display (GLX); without one the
+  command fails with a clear message — GLB export still works, it never
+  renders.
+- Joint values beyond the declared stops render AS AUTHORED and come back
+  in `result.warnings`; nothing is clamped silently.
+- Errors are the usual JSON on stdout AND a plain message on stderr (the
+  GenMov3D pipeline flags on stderr).
+
+Every run is deterministic: same inputs, byte-identical GLB and WebP.
