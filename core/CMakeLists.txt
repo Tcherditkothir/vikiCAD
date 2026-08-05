@@ -1,4 +1,7 @@
 find_package(SQLite3 REQUIRED)
+find_package(PkgConfig REQUIRED)
+# WebPAnimEncoder for the animation module's .webp loops (libwebp-dev).
+pkg_check_modules(WebPMux REQUIRED IMPORTED_TARGET libwebpmux libwebp)
 
 add_library(vikicore STATIC
     Version.cpp
@@ -79,6 +82,7 @@ add_library(vikicore STATIC
     io/ExcellonWriter.cpp
     io/GerberKit.cpp
     io/GerberKitWriter.cpp
+    io/WebpAnimWriter.cpp
 )
 
 if(VIKICAD_HAS_DXF)
@@ -103,6 +107,7 @@ target_link_libraries(vikicore
     PRIVATE
         viki_warnings
         SQLite::SQLite3
+        PkgConfig::WebPMux
 )
 target_include_directories(vikicore SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 

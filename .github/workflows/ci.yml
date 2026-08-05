@@ -26,6 +26,7 @@ jobs:
             libocct-modeling-data-dev libocct-data-exchange-dev \
             libocct-visualization-dev libocct-ocaf-dev \
             catch2 libzstd-dev libsqlite3-dev \
+            libwebp-dev pkg-config \
             fontconfig fonts-dejavu-core
 
       - uses: actions/checkout@v5
