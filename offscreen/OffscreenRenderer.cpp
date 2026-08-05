@@ -225,8 +225,11 @@ RenderClipResult OffscreenRenderer::renderClip(
                      QImage::Format_RGBA8888);
         const bool rgba = pix.Format() == Image_Format_RGBA;
         for (int y = 0; y < options.height; ++y) {
-            const Standard_Size srcRow = static_cast<Standard_Size>(
-                pix.IsTopDown() ? y : (options.height - 1 - y));
+            // Row()/PixelColor() count from the visual TOP whatever the
+            // underlying storage order (the top-row pointer inside
+            // Image_PixMap absorbs GL's bottom-up buffer) — compensating
+            // for IsTopDown() here flips the avatar on its head.
+            const Standard_Size srcRow = static_cast<Standard_Size>(y);
             uchar* dst = image.scanLine(y);
             if (rgba) {
                 std::memcpy(dst, pix.Row(srcRow),

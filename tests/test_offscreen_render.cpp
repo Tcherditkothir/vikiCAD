@@ -85,6 +85,19 @@ TEST_CASE("offscreen frames have alpha background and opaque body",
             if (qAlpha(first.pixel(x, y)) > 200)
                 ++opaque;
     CHECK(opaque > 100);
+
+    // Orientation guard: the manikin STANDS — feet on the floor z=0 pinned
+    // near the bottom edge, head up. A vertically flipped frame buffer
+    // (the bug this catches) puts the lowest opaque row near the top.
+    int lowestOpaque = -1;
+    for (int y = first.height() - 1; y >= 0 && lowestOpaque < 0; --y)
+        for (int x = 0; x < first.width(); ++x)
+            if (qAlpha(first.pixel(x, y)) > 200) {
+                lowestOpaque = y;
+                break;
+            }
+    REQUIRE(lowestOpaque > 0);
+    CHECK(lowestOpaque > (first.height() * 3) / 4);
 }
 
 TEST_CASE("offscreen rendering is deterministic across runs",

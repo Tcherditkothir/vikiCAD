@@ -1,5 +1,6 @@
 #include <cstdio>
 
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocalSocket>
@@ -7,6 +8,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
+
+#include "OffscreenRenderer.h"
+#include "anim/AnimClip.h"
+#include "anim/Avatar.h"
+#include "anim/Chain.h"
+#include "anim/GlbExporter.h"
+#include "io/WebpAnimWriter.h"
 
 #include "Version.h"
 #include "cmd/CommandProcessor.h"
@@ -87,6 +95,13 @@ int printUsage(FILE* out)
         "  vikicad-cli import IN.stl  --save-as OUT.vkd   (mesh, ASCII or "
         "binary)\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
+        "  vikicad-cli anim render --pose POSE.json --avatar AVATAR.json --out DIR\n"
+        "              [--chain CHAIN.json] [--fps N] [--size LxH]\n"
+        "              [--formats glb,webp,png] [--camera side|front|three-quarter]\n"
+        "              [--no-breath]\n"
+        "              (animated GLB + transparent looping WebP of a GenMov3D\n"
+        "               pose3d; the chain file resolves next to the pose or in\n"
+        "               ../chains/<id>.json unless --chain says otherwise)\n"
         "All output is JSON on stdout.\n");
     return out == stdout ? 0 : 2;
 }
@@ -680,6 +695,277 @@ int cmdConnect(const QStringList& args)
     return emitOk(resp[QStringLiteral("result")].toObject());
 }
 
+// The GenMov3D contract wants a clear message on stderr on failure (its
+// pipeline raises flags from it); the repo convention wants the JSON error
+// on stdout. Serve both.
+int animError(const QString& code, const QString& message)
+{
+    std::fprintf(stderr, "%s\n", message.toUtf8().constData());
+    return emitError(code, message);
+}
+
+int cmdAnim(const QStringList& argsIn)
+{
+    QStringList args = argsIn;
+    if (args.isEmpty() || args.first() != QLatin1String("render"))
+        return animError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("anim: only \"anim render\" exists "
+                                        "(see --help)"));
+    args.removeFirst();
+
+    QString posePath, avatarPath, outDir, chainPath;
+    QString formats = QStringLiteral("glb,webp");
+    QString cameraName = QStringLiteral("side");
+    int fpsOverride = 0;
+    int width = 512, height = 640;
+    bool breath = true;
+    for (int i = 0; i < args.size(); ++i) {
+        const QString& a = args[i];
+        const auto value = [&](const char* opt) -> QString {
+            if (++i >= args.size())
+                return QString();
+            Q_UNUSED(opt);
+            return args[i];
+        };
+        if (a == QLatin1String("--pose")) {
+            posePath = value("--pose");
+        } else if (a == QLatin1String("--avatar")) {
+            avatarPath = value("--avatar");
+        } else if (a == QLatin1String("--out")) {
+            outDir = value("--out");
+        } else if (a == QLatin1String("--chain")) {
+            chainPath = value("--chain");
+        } else if (a == QLatin1String("--fps")) {
+            fpsOverride = value("--fps").toInt();
+            if (fpsOverride < 12 || fpsOverride > 60)
+                return animError(QStringLiteral("E_ARGS"),
+                                 QStringLiteral("--fps must be an integer "
+                                                "in [12, 60]"));
+        } else if (a == QLatin1String("--size")) {
+            const QStringList parts =
+                value("--size").split(QLatin1Char('x'));
+            width = parts.value(0).toInt();
+            height = parts.value(1).toInt();
+            if (parts.size() != 2 || width < 16 || height < 16
+                || width > 4096 || height > 4096)
+                return animError(QStringLiteral("E_ARGS"),
+                                 QStringLiteral("--size wants LxH between "
+                                                "16x16 and 4096x4096"));
+        } else if (a == QLatin1String("--formats")) {
+            formats = value("--formats");
+        } else if (a == QLatin1String("--camera")) {
+            cameraName = value("--camera");
+        } else if (a == QLatin1String("--no-breath")) {
+            breath = false;
+        } else {
+            return animError(QStringLiteral("E_ARGS"),
+                             QStringLiteral("unknown option: %1").arg(a));
+        }
+        if (i >= args.size())
+            return animError(QStringLiteral("E_ARGS"),
+                             QStringLiteral("%1 needs a value").arg(a));
+    }
+    if (posePath.isEmpty() || avatarPath.isEmpty() || outDir.isEmpty())
+        return animError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("anim render needs --pose, "
+                                        "--avatar and --out"));
+
+    bool wantGlb = false, wantWebp = false, wantPng = false;
+    for (const QString& f : formats.split(QLatin1Char(','))) {
+        const QString fmt = f.trimmed().toLower();
+        if (fmt == QLatin1String("glb"))
+            wantGlb = true;
+        else if (fmt == QLatin1String("webp"))
+            wantWebp = true;
+        else if (fmt == QLatin1String("png"))
+            wantPng = true;
+        else if (!fmt.isEmpty())
+            return animError(QStringLiteral("E_ARGS"),
+                             QStringLiteral("--formats accepts glb, webp, "
+                                            "png (got \"%1\")")
+                                 .arg(fmt));
+    }
+    anim::CameraView camera = anim::CameraView::Side;
+    if (cameraName == QLatin1String("front"))
+        camera = anim::CameraView::Front;
+    else if (cameraName == QLatin1String("three-quarter"))
+        camera = anim::CameraView::ThreeQuarter;
+    else if (cameraName != QLatin1String("side"))
+        return animError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("--camera accepts side, front or "
+                                        "three-quarter"));
+
+    // Avatar first: its height_m rescales the chain.
+    const anim::AvatarResult avatarRes = anim::loadAvatarFile(avatarPath);
+    if (!avatarRes.ok)
+        return animError(QStringLiteral("E_ANIM"), avatarRes.error);
+
+    // Peek the pose file for the chain id, then resolve the chain file.
+    QFile poseFile(posePath);
+    if (!poseFile.open(QIODevice::ReadOnly))
+        return animError(QStringLiteral("E_ANIM"),
+                         QStringLiteral("pose3d: cannot read %1")
+                             .arg(posePath));
+    QJsonParseError perr{};
+    const QJsonDocument poseDoc =
+        QJsonDocument::fromJson(poseFile.readAll(), &perr);
+    if (!poseDoc.isObject())
+        return animError(QStringLiteral("E_ANIM"),
+                         QStringLiteral("pose3d: %1: invalid JSON (%2)")
+                             .arg(posePath, perr.errorString()));
+    const QString chainId =
+        poseDoc.object().value(QLatin1String("chain")).toString();
+    if (chainPath.isEmpty()) {
+        const QDir poseDir = QFileInfo(posePath).dir();
+        const QStringList candidates = {
+            poseDir.filePath(chainId + QStringLiteral(".json")),
+            poseDir.filePath(QStringLiteral("../chains/") + chainId
+                             + QStringLiteral(".json")),
+        };
+        for (const QString& c : candidates)
+            if (QFileInfo::exists(c)) {
+                chainPath = c;
+                break;
+            }
+        if (chainPath.isEmpty())
+            return animError(
+                QStringLiteral("E_ANIM"),
+                QStringLiteral("chain \"%1\" not found (tried %2) — pass "
+                               "--chain FILE")
+                    .arg(chainId,
+                         candidates.join(QStringLiteral(", "))));
+    }
+    const anim::ChainResult chainRes =
+        anim::loadChainFile(chainPath, avatarRes.spec.heightM);
+    if (!chainRes.ok)
+        return animError(QStringLiteral("E_ANIM"), chainRes.error);
+    if (avatarRes.spec.chainId != chainRes.chain.id)
+        return animError(
+            QStringLiteral("E_ANIM"),
+            QStringLiteral("avatar \"%1\" dresses chain \"%2\" but the "
+                           "chain file is \"%3\"")
+                .arg(avatarRes.spec.id, avatarRes.spec.chainId,
+                     chainRes.chain.id));
+
+    const anim::ClipResult clipRes =
+        anim::clipFromJson(poseDoc.object(), chainRes.chain);
+    if (!clipRes.ok)
+        return animError(QStringLiteral("E_ANIM"), clipRes.error);
+    anim::AnimClip clip = clipRes.clip;
+    if (fpsOverride > 0)
+        clip.fps = fpsOverride;
+
+    anim::ProviderResult provider =
+        anim::makeAvatarProvider(avatarRes.spec);
+    if (!provider.ok)
+        return animError(QStringLiteral("E_ANIM"), provider.error);
+
+    if (!QDir().mkpath(outDir))
+        return animError(QStringLiteral("E_ANIM"),
+                         QStringLiteral("cannot create output directory "
+                                        "%1")
+                             .arg(outDir));
+    const QDir out(outDir);
+
+    QJsonArray warnings;
+    for (const QString& w :
+         chainRes.warnings + avatarRes.warnings + clipRes.warnings)
+        warnings.append(w);
+
+    QJsonObject result;
+    result.insert(QStringLiteral("id"), clip.id);
+    result.insert(QStringLiteral("fps"), clip.fps);
+    result.insert(QStringLiteral("durationS"), clip.duration());
+    result.insert(QStringLiteral("camera"), cameraName);
+
+    if (wantGlb) {
+        const QString glbPath =
+            out.filePath(clip.id + QStringLiteral(".glb"));
+        const anim::GlbResult glb =
+            anim::exportGlb(chainRes.chain, clip, *provider.provider,
+                            avatarRes.spec, glbPath);
+        if (!glb.ok)
+            return animError(QStringLiteral("E_ANIM"), glb.error);
+        result.insert(QStringLiteral("glb"), glbPath);
+        result.insert(QStringLiteral("glbBytes"),
+                      static_cast<double>(glb.bytes));
+        result.insert(QStringLiteral("triangles"), glb.triangles);
+    }
+
+    if (wantWebp || wantPng) {
+        anim::OffscreenRenderer renderer;
+        if (!renderer.valid())
+            return animError(
+                QStringLiteral("E_ANIM"),
+                QStringLiteral("offscreen rendering needs a reachable "
+                               "display (%1)")
+                    .arg(renderer.initError()));
+        anim::RenderOptions options;
+        options.width = width;
+        options.height = height;
+        options.camera = camera;
+        options.applyBreath = breath;
+
+        const int loopCount =
+            (clip.loop == anim::LoopMode::Hold) ? 1 : 0;
+        std::unique_ptr<WebpAnimStream> webp;
+        if (wantWebp)
+            webp = std::make_unique<WebpAnimStream>(width, height,
+                                                    loopCount);
+        int pngCount = 0;
+        QString sinkError;
+        const auto sink = [&](int frame, const QImage& image) {
+            if (wantPng) {
+                const QString pngPath = out.filePath(
+                    clip.id
+                    + QStringLiteral("-f%1.png")
+                          .arg(frame, 4, 10, QLatin1Char('0')));
+                if (!image.save(pngPath)) {
+                    sinkError = QStringLiteral("cannot write %1")
+                                    .arg(pngPath);
+                    return false;
+                }
+                ++pngCount;
+            }
+            if (webp) {
+                const int ts =
+                    qRound(frame * 1000.0 / clip.fps);
+                if (!webp->addFrame(image, ts)) {
+                    sinkError = webp->error();
+                    return false;
+                }
+            }
+            return true;
+        };
+        const anim::RenderClipResult rendered =
+            renderer.renderClip(chainRes.chain, clip, *provider.provider,
+                                avatarRes.spec, options, sink);
+        if (!sinkError.isEmpty())
+            return animError(QStringLiteral("E_ANIM"), sinkError);
+        if (!rendered.ok)
+            return animError(QStringLiteral("E_ANIM"), rendered.error);
+        result.insert(QStringLiteral("frameCount"), rendered.frames);
+        if (wantPng)
+            result.insert(QStringLiteral("pngs"), pngCount);
+        if (webp) {
+            const QString webpPath =
+                out.filePath(clip.id + QStringLiteral(".webp"));
+            const WebpAnimResult assembled = webp->finish(
+                webpPath,
+                qRound(rendered.frames * 1000.0 / clip.fps));
+            if (!assembled.ok)
+                return animError(QStringLiteral("E_ANIM"),
+                                 assembled.error);
+            result.insert(QStringLiteral("webp"), webpPath);
+            result.insert(QStringLiteral("webpBytes"),
+                          static_cast<double>(assembled.bytes));
+        }
+    }
+
+    result.insert(QStringLiteral("warnings"), warnings);
+    return emitOk(result);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -712,6 +998,8 @@ int main(int argc, char** argv)
         return cmdExport(args);
     if (verb == QLatin1String("connect"))
         return cmdConnect(args);
+    if (verb == QLatin1String("anim"))
+        return cmdAnim(args);
 
     return emitError(QStringLiteral("E_UNKNOWN_VERB"),
                      QStringLiteral("unknown verb: %1").arg(verb));
