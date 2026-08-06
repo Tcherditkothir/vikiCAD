@@ -381,6 +381,57 @@ TEST_CASE("sculpted flatten squashes feet, sculpted head seats deeper",
     CHECK(head->accent);
 }
 
+TEST_CASE("humanoid-14 hands: flattened mittens continue the forearm",
+          "[anim]")
+{
+    const ChainResult chain14 =
+        loadChainFile(goldenPath("humanoid-14.json"));
+    REQUIRE(chain14.ok);
+    const AvatarResult avatar =
+        loadAvatarFile(goldenPath("manikin-sculpte-mains.json"));
+    INFO(avatar.error.toStdString());
+    REQUIRE(avatar.ok);
+    CHECK(avatarChainWarnings(avatar.spec, chain14.chain).isEmpty());
+    const RigidAvatarProvider provider(avatar.spec);
+
+    const int handL = chain14.chain.indexOf(QStringLiteral("hand_l"));
+    REQUIRE(handL >= 0);
+    const auto parts = provider.partsForJoint(chain14.chain, handL);
+    const AvatarPart* mitten = nullptr;
+    for (const auto& p : parts)
+        if (p.name == QStringLiteral("hand_l"))
+            mitten = &p;
+    REQUIRE(mitten != nullptr);
+    CHECK(hasSolid(mitten->shape));
+
+    // rest_direction is -Z, so the flatten axis rule squashes local Y:
+    // the palm is wider (X) than thick (Y).
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    Bnd_Box tight;
+    BRepBndLib::AddOptimal(mitten->shape, tight);
+    tight.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    CHECK((ymax - ymin) / (xmax - xmin) == Approx(0.60).margin(0.05));
+    // The mitten spans the hand segment plus its rounded caps.
+    CHECK(zmin < -0.052 * 1750.0);
+
+    // The forearm tapers to the HAND's radius (matched wrist), not to a
+    // leaf taper: its distal end cap follows the child radius rule.
+    const int forearmL =
+        chain14.chain.indexOf(QStringLiteral("forearm_l"));
+    const auto armParts = provider.partsForJoint(chain14.chain, forearmL);
+    const AvatarPart* arm = nullptr;
+    for (const auto& p : armParts)
+        if (p.name == QStringLiteral("forearm_l"))
+            arm = &p;
+    REQUIRE(arm != nullptr);
+    Bnd_Box armBox;
+    BRepBndLib::AddOptimal(arm->shape, armBox);
+    armBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    const double rHand = 0.020 * 1750.0;
+    const double len = 0.16 * 1750.0;
+    CHECK(zmin == Approx(-(len + 0.88 * rHand)).margin(0.25 * rHand));
+}
+
 TEST_CASE("sculpt fields referencing missing joints warn against the "
           "chain", "[anim]")
 {

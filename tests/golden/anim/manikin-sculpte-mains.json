@@ -1,0 +1,39 @@
+{
+  "id": "manikin-sculpte-mains",
+  "schema_version": "1",
+  "name": "Mannequin sculpté avec mains (humanoid-14)",
+  "chain": "humanoid-14",
+  "type": "rigid",
+  "height_m": 1.75,
+  "_note": "Déclinaison humanoid-14 de manikin-sculpte (2026-08-05, session vikicad) : mêmes proportions + mains mitaines (fuselées, aplaties dans le plan de la paume). Champs d'extension v2 : voir SCHEMA-AVATAR-V2-DEMANDE au contrat.",
+  "rigid": {
+    "segment_radius": {
+      "default": 0.026,
+      "spine": 0.062,
+      "neck": 0.022,
+      "thigh_l": 0.036, "thigh_r": 0.036,
+      "shin_l": 0.028, "shin_r": 0.028,
+      "upperarm_l": 0.028, "upperarm_r": 0.028,
+      "forearm_l": 0.024, "forearm_r": 0.024,
+      "hand_l": 0.020, "hand_r": 0.020,
+      "foot_l": 0.022, "foot_r": 0.022
+    },
+    "head": { "radius": 0.061, "elongation": 1.22 },
+    "joint_style": "blend",
+    "build": "sculpted",
+    "sculpt": {
+      "taper": { "default": 0.62, "neck": 1.0, "hand_l": 0.68, "hand_r": 0.68, "foot_l": 0.85, "foot_r": 0.85 },
+      "bulge": 1.06,
+      "torso": { "joint": "spine", "hip": 0.061, "waist": 0.058, "chest": 0.064, "shoulder": 0.078, "depth": 0.62 },
+      "pelvis": { "joint": "pelvis", "width": 0.075, "depth": 0.042, "drop": 0.058 },
+      "flatten": { "foot_l": 0.70, "foot_r": 0.70, "hand_l": 0.60, "hand_r": 0.60 }
+    }
+  },
+  "presentation": { "ground_shadow": 0.35 },
+  "material": {
+    "base_color": "#8FB5A8",
+    "accent_color": "#E8DCC8",
+    "roughness": 0.7,
+    "metallic": 0.0
+  }
+}

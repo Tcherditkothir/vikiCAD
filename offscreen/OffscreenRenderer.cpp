@@ -277,15 +277,36 @@ RenderClipResult OffscreenRenderer::renderClip(
     // while the frame alpha stays partial. Static across frames (the
     // footprint covers every frame), removed with the rest of the scene.
     if (avatar.groundShadow > 0.0) {
-        double xmin, ymin, zmin, xmax, ymax, zmax;
-        unionBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        double xmin, ymin, zmin, zmaxScene, xmax, ymax;
+        unionBox.Get(xmin, ymin, zmin, xmax, ymax, zmaxScene);
+        const double sceneMax =
+            std::max({xmax - xmin, ymax - ymin, zmaxScene - zmin});
+        // Anchor the blob under the SUPPORTS: union of the parts that come
+        // near the floor over the whole animation (downward dog: feet and
+        // wrists, not the centroid — an off-centre shadow reads as a
+        // floating figure). Fallback: the whole footprint.
+        Bnd_Box contactBox;
+        const double contactThreshold =
+            zmin + std::max(20.0, 0.05 * sceneMax);
+        for (const auto& world : frameTransforms)
+            for (const PartHandle& h : handles) {
+                const Bnd_Box b = h.localBox.Transformed(
+                    world[static_cast<size_t>(h.joint)]);
+                double bx0, by0, bz0, bx1, by1, bz1;
+                b.Get(bx0, by0, bz0, bx1, by1, bz1);
+                if (bz0 <= contactThreshold)
+                    contactBox.Add(b);
+            }
+        if (!contactBox.IsVoid()) {
+            double czMin, czMax;
+            contactBox.Get(xmin, ymin, czMin, xmax, ymax, czMax);
+        }
         const double hx = std::max(2.0, 0.56 * (xmax - xmin));
         const double hy = std::max(2.0, 0.56 * (ymax - ymin));
         // Thickness follows the LARGEST scene extent (a standing figure's
         // height), not the footprint: seen edge-on from the side camera a
         // footprint-scaled lens degenerates to a sub-pixel line.
-        const double hz = std::max(
-            2.0, 0.012 * std::max({xmax - xmin, ymax - ymin, zmax - zmin}));
+        const double hz = std::max(2.0, 0.012 * sceneMax);
         TopoDS_Shape blob;
         try {
             blob = BRepPrimAPI_MakeSphere(1.0).Shape();

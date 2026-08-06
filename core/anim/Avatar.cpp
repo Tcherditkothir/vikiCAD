@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -17,6 +18,7 @@
 #include <Geom_BSplineCurve.hxx>
 #include <TColgp_Array1OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Elips.hxx>
@@ -93,22 +95,22 @@ gp_Trsf zToDirection(const gp_Dir& dir)
     return t;
 }
 
-// Fusiform limb: ONE solid of revolution around the segment axis — rounded
-// proximal cap at the joint pivot, slight mid swell, taper to the distal
-// radius, rounded distal cap at the child pivot. No booleans: robust, fast
-// to tessellate, G1-smooth by construction.
+// Fusiform limb: a revolved tapering TUBE (slight mid swell, proximal to
+// distal radius) closed by an explicit hemisphere cap at each pivot, the
+// three solids in one compound. The profile never touches the revolution
+// axis — a pole on an approximated profile folds into a visible crater at
+// the segment ends (the panel's "anneau creux") — and the sphere caps
+// round both ends exactly. No booleans: robust, fast to tessellate.
 TopoDS_Shape makeFusiform(double rProx, double rDist, double lenMm,
                           double bulge, const gp_Dir& dir)
 {
     const double rMid = bulge * (0.60 * rProx + 0.40 * rDist);
     const std::vector<std::pair<double, double>> guide = {
-        {-0.88 * rProx, 0.0},
-        {-0.58 * rProx, 0.76 * rProx},
-        {0.12 * lenMm, rProx},
+        {0.0, rProx},
+        {0.15 * lenMm, rProx * (1.0 + 0.3 * (bulge - 1.0))},
         {0.40 * lenMm, rMid},
         {0.80 * lenMm, 1.02 * rDist},
-        {lenMm + 0.58 * rDist, 0.76 * rDist},
-        {lenMm + 0.88 * rDist, 0.0},
+        {lenMm, rDist},
     };
     try {
         TColgp_Array1OfPnt pts(1, static_cast<Standard_Integer>(guide.size()));
@@ -116,22 +118,41 @@ TopoDS_Shape makeFusiform(double rProx, double rDist, double lenMm,
             pts.SetValue(static_cast<Standard_Integer>(i + 1),
                          gp_Pnt(guide[i].second, 0.0, guide[i].first));
         Handle(Geom_BSplineCurve) curve =
-            GeomAPI_PointsToBSpline(pts, 3, 8, GeomAbs_C2, 0.05).Curve();
+            GeomAPI_PointsToBSpline(pts, 3, 3, GeomAbs_C2, 0.05).Curve();
         if (curve.IsNull())
             return TopoDS_Shape();
         const TopoDS_Edge profile = BRepBuilderAPI_MakeEdge(curve).Edge();
-        const TopoDS_Edge closing = BRepBuilderAPI_MakeEdge(
-            gp_Pnt(0, 0, guide.back().first),
-            gp_Pnt(0, 0, guide.front().first)).Edge();
-        BRepBuilderAPI_MakeWire wire(profile, closing);
+        const TopoDS_Edge radialBottom = BRepBuilderAPI_MakeEdge(
+            gp_Pnt(0, 0, 0), gp_Pnt(rProx, 0, 0)).Edge();
+        const TopoDS_Edge radialTop = BRepBuilderAPI_MakeEdge(
+            gp_Pnt(rDist, 0, lenMm), gp_Pnt(0, 0, lenMm)).Edge();
+        const TopoDS_Edge axis = BRepBuilderAPI_MakeEdge(
+            gp_Pnt(0, 0, lenMm), gp_Pnt(0, 0, 0)).Edge();
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(radialBottom);
+        wire.Add(profile);
+        wire.Add(radialTop);
+        wire.Add(axis);
         const TopoDS_Face face =
             BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
-        TopoDS_Shape solid =
+        const TopoDS_Shape tube =
             BRepPrimAPI_MakeRevol(face, gp_Ax1(gp_Pnt(0, 0, 0),
                                                gp_Dir(0, 0, 1))).Shape();
-        if (solid.IsNull() || !hasSolid(solid))
+        if (tube.IsNull() || !hasSolid(tube))
             return TopoDS_Shape();
-        return BRepBuilderAPI_Transform(solid, zToDirection(dir), true)
+        const TopoDS_Shape capProx =
+            BRepPrimAPI_MakeSphere(gp_Pnt(0, 0, 0), rProx).Shape();
+        const TopoDS_Shape capDist =
+            BRepPrimAPI_MakeSphere(gp_Pnt(0, 0, lenMm), rDist).Shape();
+        if (capProx.IsNull() || capDist.IsNull())
+            return TopoDS_Shape();
+        TopoDS_Compound limb;
+        BRep_Builder builder;
+        builder.MakeCompound(limb);
+        builder.Add(limb, tube);
+        builder.Add(limb, capProx);
+        builder.Add(limb, capDist);
+        return BRepBuilderAPI_Transform(limb, zToDirection(dir), true)
             .Shape();
     } catch (...) {
     }
@@ -191,12 +212,17 @@ TopoDS_Shape makeTorsoLoft(const TorsoSculpt& torso, double scaleMm,
         const int kSamples = 48;
         const double t0 = profile->FirstParameter();
         const double t1 = profile->LastParameter();
+        const double topZ = (lenMm / scaleMm + 0.030) * scaleMm;
         for (int i = 0; i <= kSamples; ++i) {
             const gp_Pnt p = profile->Value(
                 t0 + (t1 - t0) * static_cast<double>(i) / kSamples);
             const double w = std::max(p.X(), 1.0); // never a degenerate wire
+            // Clamp to the guide's span: the cubic fit overshoots ~20 mm
+            // past the top and the tip pokes out of the back when the
+            // trunk flexes (the panel's "amorce de queue").
+            const double z = std::clamp(p.Z(), 0.0, topZ);
             const gp_Elips ellipse(
-                gp_Ax2(gp_Pnt(0, 0, p.Z()), gp_Dir(0, 0, 1),
+                gp_Ax2(gp_Pnt(0, 0, z), gp_Dir(0, 0, 1),
                        gp_Dir(1, 0, 0)),
                 w, w * torso.depth);
             const TopoDS_Edge e = BRepBuilderAPI_MakeEdge(ellipse).Edge();
@@ -695,12 +721,15 @@ std::vector<AvatarPart> RigidAvatarProvider::sculptedParts(
                     continue; // on-axis (e.g. the neck): the loft covers it
                 const double rc =
                     m_spec.radiusFracFor(child.name) * chain.scaleMm;
+                // Seated slightly BELOW the attach point: centred on it the
+                // sphere crests above the shoulder line and reads as an
+                // epaulette (panel, bien-être lens).
                 AvatarPart cap;
                 cap.shape =
-                    BRepPrimAPI_MakeSphere(gp_Pnt(child.attachMm.X(),
-                                                  child.attachMm.Y(),
-                                                  child.attachMm.Z()),
-                                           rc * 1.35)
+                    BRepPrimAPI_MakeSphere(
+                        gp_Pnt(child.attachMm.X(), child.attachMm.Y(),
+                               child.attachMm.Z() - 0.35 * rc),
+                        rc * 1.28)
                         .Shape();
                 cap.name = child.name + QStringLiteral("_deltoid");
                 if (!cap.shape.IsNull())
@@ -731,15 +760,17 @@ std::vector<AvatarPart> RigidAvatarProvider::sculptedParts(
 
         // Torso pivot sphere: bridges the hip fold. The hem lifts off the
         // pelvis when the trunk flexes ~90° (downward dog); only a SPHERE
-        // is rotation-invariant at a pivot, sized to the hem half-depth so
-        // it fills the sagittal gap without ballooning the waist.
+        // is rotation-invariant at a pivot, sized just under the hem
+        // half-depth so it fills the sagittal gap without bulging at the
+        // crotch (panel: "renflement type couche").
         if (isTorso && m_spec.jointStyle != JointStyle::None
             && joint.parent >= 0) {
             AvatarPart ball;
             ball.shape =
                 BRepPrimAPI_MakeSphere(
                     gp_Pnt(0, 0, 0),
-                    sculpt.torso->hip * sculpt.torso->depth * chain.scaleMm)
+                    0.90 * sculpt.torso->hip * sculpt.torso->depth
+                        * chain.scaleMm)
                     .Shape();
             ball.name = joint.name + QStringLiteral("_joint");
             if (!ball.shape.IsNull())
