@@ -210,10 +210,21 @@ ClipResult clipFromJson(const QJsonObject& obj, const Chain& chain)
     if (!kIdPattern.match(clip.id).hasMatch())
         return fail(QStringLiteral("pose3d: \"id\" must match [a-z0-9-]+"));
     clip.chainId = obj.value(QLatin1String("chain")).toString();
-    if (clip.chainId != chain.id)
-        return fail(QStringLiteral("pose3d \"%1\" animates chain \"%2\" but "
-                                   "chain \"%3\" was loaded")
-                        .arg(clip.id, clip.chainId, chain.id));
+    if (clip.chainId != chain.id) {
+        // A superset chain may declare (accepts_pose_chains) that it also
+        // renders poses of an ancestor chain: its extra joints stay at
+        // rest. That is how humanoid-14 plays the humanoid-12 pose bank
+        // with neutral hands. Anything else is a hard mismatch.
+        if (!chain.acceptsPoseChains.contains(clip.chainId))
+            return fail(
+                QStringLiteral("pose3d \"%1\" animates chain \"%2\" but "
+                               "chain \"%3\" was loaded")
+                    .arg(clip.id, clip.chainId, chain.id));
+        res.warnings.append(
+            QStringLiteral("pose3d \"%1\" targets chain \"%2\"; rendering "
+                           "on \"%3\" with its extra joints at rest")
+                .arg(clip.id, clip.chainId, chain.id));
+    }
     clip.nameFr = obj.value(QLatin1String("name_fr")).toString();
     clip.nameEn = obj.value(QLatin1String("name_en")).toString();
     clip.source = obj.value(QLatin1String("source")).toString();

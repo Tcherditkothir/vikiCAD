@@ -85,6 +85,27 @@ ChainResult chainFromJson(const QJsonObject& obj,
         return fail(QStringLiteral("chain: \"id\" must match [a-z0-9-]+"));
     chain.name = obj.value(QLatin1String("name")).toString();
 
+    // Extension field (tolerated by schema v1, documented in the GenMov3D
+    // contract): pose3d files written for one of the LISTED chains load on
+    // this chain too — its extra joints stay at rest. This is how
+    // humanoid-14 renders the existing humanoid-12 pose bank with neutral
+    // hands.
+    const QJsonValue acceptsVal =
+        obj.value(QLatin1String("accepts_pose_chains"));
+    if (acceptsVal.isArray()) {
+        for (const QJsonValue& v : acceptsVal.toArray()) {
+            const QString id = v.toString();
+            if (!kIdPattern.match(id).hasMatch())
+                return fail(QStringLiteral(
+                    "chain: accepts_pose_chains entries must match "
+                    "[a-z0-9-]+"));
+            chain.acceptsPoseChains.append(id);
+        }
+    } else if (!acceptsVal.isUndefined() && !acceptsVal.isNull()) {
+        return fail(QStringLiteral(
+            "chain: accepts_pose_chains must be an array of chain ids"));
+    }
+
     if (obj.contains(QLatin1String("scale_reference"))
         && !obj.value(QLatin1String("scale_reference")).isDouble())
         return fail(QStringLiteral("chain: scale_reference must be a "

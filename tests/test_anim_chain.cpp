@@ -52,7 +52,7 @@ TEST_CASE("humanoid-12 golden chain parses", "[anim]")
     const int neck = c.indexOf(QStringLiteral("neck"));
     REQUIRE(neck >= 0);
     CHECK(c.joints[neck].attachMm.Z() == Approx(0.300 * 1750.0));
-    CHECK(c.joints[neck].lengthMm == Approx(0.220 * 1750.0));
+    CHECK(c.joints[neck].lengthMm == Approx(0.095 * 1750.0));
     const int ual = c.indexOf(QStringLiteral("upperarm_l"));
     REQUIRE(ual >= 0);
     CHECK(c.joints[ual].attachMm.X() == Approx(-0.100 * 1750.0));
@@ -71,6 +71,52 @@ TEST_CASE("humanoid-12 golden chain parses", "[anim]")
     const auto lim = c.joints[shin].limits.value(QStringLiteral("x"));
     CHECK(lim.min == Approx(-155.0 * M_PI / 180.0));
     CHECK(lim.max == Approx(0.0));
+}
+
+TEST_CASE("humanoid-14 golden chain parses with hands", "[anim]")
+{
+    const ChainResult res = loadChainFile(goldenPath("humanoid-14.json"));
+    INFO(res.error.toStdString());
+    REQUIRE(res.ok);
+    const Chain& c = res.chain;
+    CHECK(c.id == QStringLiteral("humanoid-14"));
+    REQUIRE(c.joints.size() == 15); // humanoid-12's 13 + two hands
+    CHECK(c.acceptsPoseChains
+          == QStringList{QStringLiteral("humanoid-12")});
+
+    // Hands hang off the forearms, ~0.09 m, wrist stops in radians.
+    const int handL = c.indexOf(QStringLiteral("hand_l"));
+    REQUIRE(handL >= 0);
+    const Joint& hand = c.joints[static_cast<size_t>(handL)];
+    CHECK(c.joints[static_cast<size_t>(hand.parent)].name
+          == QStringLiteral("forearm_l"));
+    CHECK(hand.lengthMm == Approx(0.052 * 1750.0)); // 91 mm
+    CHECK(hand.attachMm.Z() == Approx(-0.160 * 1750.0));
+    const auto flex = hand.limits.value(QStringLiteral("x"));
+    CHECK(flex.min == Approx(-70.0 * M_PI / 180.0));
+    CHECK(flex.max == Approx(80.0 * M_PI / 180.0));
+
+    // The first 13 joints match humanoid-12 exactly (backward compat).
+    const ChainResult h12 = loadChainFile(goldenPath("humanoid-12.json"));
+    REQUIRE(h12.ok);
+    for (const Joint& j : h12.chain.joints) {
+        const int idx = c.indexOf(j.name);
+        REQUIRE(idx >= 0);
+        const Joint& j14 = c.joints[static_cast<size_t>(idx)];
+        CHECK(j14.lengthMm == Approx(j.lengthMm));
+        CHECK(j14.attachMm.Z() == Approx(j.attachMm.Z()).margin(1e-9));
+        CHECK(j14.attachMm.X() == Approx(j.attachMm.X()).margin(1e-9));
+    }
+}
+
+TEST_CASE("accepts_pose_chains refuses malformed entries", "[anim]")
+{
+    const ChainResult r = parse(R"({
+        "id":"x","schema_version":"1","scale_reference":1.0,
+        "accepts_pose_chains":["OK-NOT-lowercase!"],
+        "joints":[{"name":"a","parent":null,"type":"free"}]})");
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.contains(QStringLiteral("accepts_pose_chains")));
 }
 
 TEST_CASE("avatar height_m override rescales the chain", "[anim]")

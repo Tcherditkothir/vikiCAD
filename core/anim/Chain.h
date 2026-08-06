@@ -55,6 +55,10 @@ struct Joint {
 struct Chain {
     QString id;
     QString name;
+    // accepts_pose_chains extension field: ids of chains whose pose3d
+    // files this chain also renders (superset chains — humanoid-14 lists
+    // humanoid-12; the extra joints stay at rest, with a warning).
+    QStringList acceptsPoseChains;
     double scaleMm = 1000.0; // scale_reference (or avatar override), in mm
     // Topologically ordered at parse time: a joint's parent always has a
     // smaller index. Index 0 is the root.

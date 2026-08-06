@@ -40,6 +40,46 @@ gp_Vec rotate(const gp_Quaternion& q, const gp_Vec& v)
 
 } // namespace
 
+TEST_CASE("a humanoid-12 pose renders on humanoid-14 with hands at rest",
+          "[anim]")
+{
+    // humanoid-14 declares accepts_pose_chains: ["humanoid-12"] — the
+    // existing pose bank keeps rendering, the two extra wrists stay at
+    // rest, and the mismatch is announced as a warning, never silent.
+    const ChainResult h14 = loadChainFile(
+        QStringLiteral(VIKICAD_GOLDEN_DIR "/anim/humanoid-14.json"));
+    REQUIRE(h14.ok);
+    const ClipResult res = parseClip(h14.chain, R"({
+        "id":"compat","schema_version":"1","chain":"humanoid-12","fps":24,
+        "keyframes":[
+            {"t":0, "joints":{"forearm_l":[40,0,0]}},
+            {"t":1, "joints":{"forearm_l":[90,0,0]}}]})");
+    INFO(res.error.toStdString());
+    REQUIRE(res.ok);
+    REQUIRE(res.warnings.size() == 1);
+    CHECK(res.warnings[0].contains(QStringLiteral("humanoid-14")));
+
+    // The keyed elbow moves, the wrist quaternion stays identity.
+    const PoseSample mid = res.clip.sampleAt(0.5, false);
+    const int hand = h14.chain.indexOf(QStringLiteral("hand_l"));
+    const int forearm = h14.chain.indexOf(QStringLiteral("forearm_l"));
+    REQUIRE(hand >= 0);
+    const gp_Vec restZ =
+        rotate(mid.values[static_cast<size_t>(hand)].rot, gp_Vec(0, 0, 1));
+    CHECK(restZ.Z() == Approx(1.0).margin(1e-9)); // identity: hand at rest
+    const gp_Vec bentZ = rotate(
+        mid.values[static_cast<size_t>(forearm)].rot, gp_Vec(0, 0, 1));
+    CHECK(bentZ.Z() < 0.9); // the elbow really is keyed
+
+    // On a chain that does NOT declare compatibility, the mismatch stays
+    // a hard error.
+    const Chain h12 = humanoid();
+    const ClipResult refuse = parseClip(h12, R"({
+        "id":"compat","schema_version":"1","chain":"humanoid-14","fps":24,
+        "keyframes":[{"t":0,"joints":{}}]})");
+    CHECK_FALSE(refuse.ok);
+}
+
 TEST_CASE("euler XYZ is extrinsic, X applied first", "[anim]")
 {
     const Chain chain = humanoid();
@@ -267,8 +307,10 @@ TEST_CASE("all 15 pilot poses parse, sample and solve", "[anim]")
     // real production inputs of the pipeline, not synthetic fixtures.
     const Chain chain = humanoid();
     QDir dir(QStringLiteral(VIKICAD_GOLDEN_DIR "/anim/pose3d"));
+    // yog-* only: the folder also hosts local fixtures on other chains
+    // (hand-demo.json targets humanoid-14).
     const QStringList files =
-        dir.entryList(QStringList() << QStringLiteral("*.json"),
+        dir.entryList(QStringList() << QStringLiteral("yog-*.json"),
                       QDir::Files, QDir::Name);
     REQUIRE(files.size() == 15);
     for (const QString& f : files) {

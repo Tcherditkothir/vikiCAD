@@ -6,18 +6,25 @@
 #include <AIS_Shape.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_TypeOfDeflection.hxx>
-#include <Prs3d_Drawer.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_BufferType.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <Graphic3d_MaterialAspect.hxx>
 #include <Image_AlienPixMap.hxx>
 #include <OpenGl_GraphicDriver.hxx>
+#include <Prs3d_Drawer.hxx>
 #include <Quantity_Color.hxx>
+#include <V3d_AmbientLight.hxx>
+#include <V3d_DirectionalLight.hxx>
 #include <V3d_ImageDumpOptions.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <Xw_Window.hxx>
+#include <gp_GTrsf.hxx>
 
 #include "anim/ForwardKinematics.h"
 #include "io/OcctMessages.h"
@@ -49,12 +56,27 @@ gp_Dir eyeDirection(CameraView view)
     }
 }
 
+// Soft studio material derived from the avatar's PBR numbers: the raster
+// keeps Phong (the probe showed OCCT's PBR mode flattens volumes without
+// an environment and renders translucency opaque), the GLB carries the
+// real metallic-roughness for downstream viewers.
+Graphic3d_MaterialAspect softMaterial(double roughness, double metallic)
+{
+    Graphic3d_MaterialAspect mat(Graphic3d_NameOfMaterial_UserDefined);
+    const double gloss = 1.0 - roughness;
+    const double spec = 0.05 + 0.28 * gloss * gloss + 0.25 * metallic;
+    mat.SetSpecularColor(Quantity_Color(spec, spec, spec, Quantity_TOC_RGB));
+    mat.SetShininess(std::clamp(0.06 + 0.7 * gloss, 0.05, 1.0));
+    return mat;
+}
+
 } // namespace
 
 struct OffscreenRenderer::Impl {
     Handle(V3d_Viewer) viewer;
     Handle(V3d_View) view;
     Handle(AIS_InteractiveContext) context;
+    std::vector<Handle(V3d_Light)> lights; // per-clip rig, camera-relative
     bool initFailed = false;
     QString initError;
 };
@@ -75,8 +97,9 @@ OffscreenRenderer::OffscreenRenderer() : m_impl(std::make_unique<Impl>())
             throw Standard_Failure("no GL context");
 
         m_impl->viewer = new V3d_Viewer(driver);
-        m_impl->viewer->SetDefaultLights();
-        m_impl->viewer->SetLightOn();
+        // No default lights: renderClip installs a camera-relative
+        // three-point rig (key + fill + ambient) per clip — the default
+        // headlight flattens the volumes.
         m_impl->context = new AIS_InteractiveContext(m_impl->viewer);
         m_impl->view = m_impl->viewer->CreateView();
         // Never mapped: ToPixMap renders into its own FBO at the requested
@@ -86,6 +109,9 @@ OffscreenRenderer::OffscreenRenderer() : m_impl(std::make_unique<Impl>())
         window->SetVirtual(true);
         m_impl->view->SetWindow(window);
         m_impl->view->SetBackgroundColor(Quantity_NOC_BLACK);
+        // Per-pixel shading: the probe showed Gouraud/default washing out
+        // the modelling and OCCT's PBR mode needing an environment map.
+        m_impl->view->SetShadingModel(Graphic3d_TypeOfShadingModel_Phong);
         m_impl->view->MustBeResized();
     } catch (const Standard_Failure& e) {
         m_impl->initFailed = true;
@@ -150,6 +176,35 @@ RenderClipResult OffscreenRenderer::renderClip(
         return result;
     }
 
+    // ---- Lights: camera-relative three-point rig ---------------------
+    // Key from above the camera's left shoulder, weak fill from its right,
+    // low ambient to open the shadows. Fixed per clip, so frames stay
+    // byte-deterministic; the modelling follows whichever camera is asked.
+    const gp_Dir eye = eyeDirection(options.camera);
+    {
+        for (const Handle(V3d_Light)& light : m_impl->lights)
+            m_impl->viewer->DelLight(light);
+        m_impl->lights.clear();
+        const gp_Vec e(eye);
+        const gp_Vec up(0, 0, 1);
+        gp_Vec right = e.Crossed(up);
+        right.Normalize(); // never vertical: the three cameras are lateral
+        const gp_Vec keyFrom = e * 1.0 + up * 0.85 - right * 0.5;
+        Handle(V3d_DirectionalLight) key =
+            new V3d_DirectionalLight(gp_Dir(keyFrom.Reversed()));
+        key->SetIntensity(1.05f);
+        const gp_Vec fillFrom = e * 1.0 - up * 0.10 + right * 0.9;
+        Handle(V3d_DirectionalLight) fill =
+            new V3d_DirectionalLight(gp_Dir(fillFrom.Reversed()));
+        fill->SetIntensity(0.40f);
+        Handle(V3d_AmbientLight) ambient = new V3d_AmbientLight();
+        ambient->SetIntensity(0.42f);
+        m_impl->lights = {key, fill, ambient};
+        for (const Handle(V3d_Light)& light : m_impl->lights)
+            m_impl->viewer->AddLight(light);
+        m_impl->viewer->SetLightOn();
+    }
+
     // ---- Scene: one AIS shape per avatar part, joint-local geometry ----
     struct PartHandle {
         int joint = 0;
@@ -159,6 +214,8 @@ RenderClipResult OffscreenRenderer::renderClip(
     std::vector<PartHandle> handles;
     const Quantity_Color base = fromRgb24(avatar.baseColor);
     const Quantity_Color accent = fromRgb24(avatar.accentColor);
+    const Graphic3d_MaterialAspect material =
+        softMaterial(avatar.roughness, avatar.metallic);
     for (int j = 0; j < static_cast<int>(chain.joints.size()); ++j) {
         for (const AvatarPart& part : provider.partsForJoint(chain, j)) {
             if (part.shape.IsNull())
@@ -166,6 +223,7 @@ RenderClipResult OffscreenRenderer::renderClip(
             PartHandle h;
             h.joint = j;
             h.ais = new AIS_Shape(part.shape);
+            h.ais->SetMaterial(material); // before SetColor: colour wins
             h.ais->SetColor(part.accent ? accent : base);
             h.ais->Attributes()->SetIsoOnPlane(false);
             // Honour options.deflectionMm: absolute chordal deviation for
@@ -174,7 +232,11 @@ RenderClipResult OffscreenRenderer::renderClip(
             h.ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
             h.ais->Attributes()->SetMaximalChordialDeviation(
                 options.deflectionMm > 0 ? options.deflectionMm : 0.8);
-            BRepBndLib::Add(part.shape, h.localBox);
+            // AddOptimal, not Add: the sculpted parts are B-spline solids
+            // and the fast bbox hulls their CONTROL points, which overshoot
+            // the surface by hundreds of mm — the union box then dwarfs the
+            // avatar and FitAll frames it small and off-centre.
+            BRepBndLib::AddOptimal(part.shape, h.localBox);
             handles.push_back(h);
         }
     }
@@ -209,7 +271,54 @@ RenderClipResult OffscreenRenderer::renderClip(
                         std::max(zmax, 1e-3));
     }
 
-    const gp_Dir eye = eyeDirection(options.camera);
+    // ---- Ground shadow (avatar presentation.ground_shadow > 0) ----------
+    // A squashed dark translucent ellipsoid at z=0 under the animation
+    // footprint: composites as a soft contact shadow over any background
+    // while the frame alpha stays partial. Static across frames (the
+    // footprint covers every frame), removed with the rest of the scene.
+    if (avatar.groundShadow > 0.0) {
+        double xmin, ymin, zmin, xmax, ymax, zmax;
+        unionBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        const double hx = std::max(2.0, 0.56 * (xmax - xmin));
+        const double hy = std::max(2.0, 0.56 * (ymax - ymin));
+        // Thickness follows the LARGEST scene extent (a standing figure's
+        // height), not the footprint: seen edge-on from the side camera a
+        // footprint-scaled lens degenerates to a sub-pixel line.
+        const double hz = std::max(
+            2.0, 0.012 * std::max({xmax - xmin, ymax - ymin, zmax - zmin}));
+        TopoDS_Shape blob;
+        try {
+            blob = BRepPrimAPI_MakeSphere(1.0).Shape();
+            if (!blob.IsNull()) {
+                gp_GTrsf stretch;
+                stretch.SetValue(1, 1, hx);
+                stretch.SetValue(2, 2, hy);
+                stretch.SetValue(3, 3, hz);
+                blob = BRepBuilderAPI_GTransform(blob, stretch, true)
+                           .Shape();
+            }
+            if (!blob.IsNull()) {
+                gp_Trsf move;
+                move.SetTranslation(gp_Vec(0.5 * (xmin + xmax),
+                                           0.5 * (ymin + ymax), 0.0));
+                blob = BRepBuilderAPI_Transform(blob, move, true).Shape();
+            }
+        } catch (...) {
+            blob.Nullify(); // a lost shadow never loses the render
+        }
+        if (!blob.IsNull()) {
+            Handle(AIS_Shape) shadow = new AIS_Shape(blob);
+            shadow->SetColor(
+                Quantity_Color(0.05, 0.05, 0.06, Quantity_TOC_sRGB));
+            shadow->SetTransparency(1.0 - avatar.groundShadow);
+            shadow->Attributes()->SetIsoOnPlane(false);
+            m_impl->context->Display(shadow, 1, -1, false);
+            Bnd_Box shadowBox;
+            BRepBndLib::Add(blob, shadowBox);
+            unionBox.Add(shadowBox);
+        }
+    }
+
     m_impl->view->SetProj(eye.X(), eye.Y(), eye.Z());
     m_impl->view->SetUp(0, 0, 1);
     m_impl->view->Camera()->SetProjectionType(

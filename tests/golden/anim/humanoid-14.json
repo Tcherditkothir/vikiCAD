@@ -1,8 +1,10 @@
 {
-  "id": "humanoid-12",
+  "id": "humanoid-14",
   "schema_version": "1",
-  "name": "Humanoïde 12 segments (mappé sur le v0 Moment_MYP)",
+  "name": "Humanoïde 14 segments (humanoid-12 + mains)",
   "scale_reference": 1.75,
+  "accepts_pose_chains": ["humanoid-12"],
+  "_note": "Copie de GenMov3D data/chains/humanoid-14.json (2026-08-05) — resynchroniser si l'original bouge. Les 12 premiers segments sont IDENTIQUES à humanoid-12 ; s'y ajoutent hand_l et hand_r (~0,09 m). accepts_pose_chains déclare qu'un pose3d humanoid-12 se rend sur cette chaîne tel quel, mains au repos.",
   "joints": [
     {
       "name": "pelvis",
@@ -138,6 +140,37 @@
       }
     },
     {
+      "name": "hand_l",
+      "parent": "forearm_l",
+      "type": "ball",
+      "attach": [
+        0,
+        0,
+        -0.16
+      ],
+      "rest_direction": [
+        0,
+        0,
+        -1
+      ],
+      "length": 0.052,
+      "limits_deg": {
+        "x": [
+          -70,
+          80
+        ],
+        "y": [
+          -30,
+          30
+        ],
+        "z": [
+          -20,
+          20
+        ]
+      },
+      "_note": "poignet : x positif = flexion palmaire (80 deg), negatif = extension dorsale (70 deg) ; y = deviation radiale/ulnaire stylisee +/-30 ; z faible, la pronation vit dans forearm.z"
+    },
+    {
       "name": "upperarm_r",
       "parent": "spine",
       "type": "ball",
@@ -196,6 +229,37 @@
           90
         ]
       }
+    },
+    {
+      "name": "hand_r",
+      "parent": "forearm_r",
+      "type": "ball",
+      "attach": [
+        0,
+        0,
+        -0.16
+      ],
+      "rest_direction": [
+        0,
+        0,
+        -1
+      ],
+      "length": 0.052,
+      "limits_deg": {
+        "x": [
+          -70,
+          80
+        ],
+        "y": [
+          -30,
+          30
+        ],
+        "z": [
+          -20,
+          20
+        ]
+      },
+      "_note": "poignet : x positif = flexion palmaire (80 deg), negatif = extension dorsale (70 deg) ; y = deviation radiale/ulnaire stylisee +/-30 ; z faible, la pronation vit dans forearm.z"
     },
     {
       "name": "thigh_l",

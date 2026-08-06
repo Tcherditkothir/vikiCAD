@@ -296,8 +296,8 @@ bool TimelinePanel::loadFiles(const QString& posePath,
     m_avatarPath = avatarPath;
     m_chainPath = resolvedChain;
     m_loaded = true;
-    for (const QString& w :
-         chain.warnings + avatar.warnings + clip.warnings)
+    for (const QString& w : chain.warnings + avatar.warnings + clip.warnings
+             + anim::avatarChainWarnings(avatar.spec, chain.chain))
         Q_EMIT feedback(QStringLiteral("timeline: %1").arg(w));
 
     rebuildAvatarCombo();

@@ -1,0 +1,39 @@
+{
+  "id": "hand-demo",
+  "schema_version": "1",
+  "chain": "humanoid-14",
+  "name_fr": "Démonstration des poignets (fixture vikicad, pas une pose GenMov3D)",
+  "fps": 24,
+  "keyframes": [
+    {
+      "t": 0,
+      "joints": {
+        "upperarm_l": [30, 0, 0],
+        "upperarm_r": [30, 0, 0],
+        "forearm_l": [20, 0, 0],
+        "forearm_r": [20, 0, 0],
+        "hand_l": [0, 0, 0],
+        "hand_r": [0, 0, 0]
+      }
+    },
+    {
+      "t": 2,
+      "joints": {
+        "forearm_l": [150, 0, 0],
+        "forearm_r": [150, 0, 0],
+        "hand_l": [60, 0, 0],
+        "hand_r": [-50, 0, 0]
+      }
+    },
+    {
+      "t": 4,
+      "joints": {
+        "forearm_l": [90, 0, 0],
+        "forearm_r": [90, 0, 0],
+        "hand_l": [0, 25, 0],
+        "hand_r": [0, -25, 0]
+      }
+    }
+  ],
+  "loop": { "mode": "pingpong", "start": 0, "end": 4 }
+}

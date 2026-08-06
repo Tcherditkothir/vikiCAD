@@ -892,8 +892,9 @@ int cmdAnim(const QStringList& argsIn)
     const QDir out(outDir);
 
     QJsonArray warnings;
-    for (const QString& w :
-         chainRes.warnings + avatarRes.warnings + clipRes.warnings)
+    for (const QString& w : chainRes.warnings + avatarRes.warnings
+             + clipRes.warnings
+             + anim::avatarChainWarnings(avatarRes.spec, chainRes.chain))
         warnings.append(w);
 
     QJsonObject result;
