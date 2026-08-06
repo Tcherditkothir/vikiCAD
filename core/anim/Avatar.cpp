@@ -174,6 +174,12 @@ TopoDS_Shape makeTorsoLoft(const TorsoSculpt& torso, double scaleMm,
     // (approximated B-spline — a smooth loft straight through near-equal
     // sections oscillates: wasp waist + flared skirt out of thin air),
     // then a dense RULED loft of ellipses sampled on that profile.
+    // The dome's axial run scales with the JOINT length (capped at the
+    // humanoid's 0.030 * scale): fixed scale-fraction offsets on a short
+    // torso joint cluster the guide axially and the cubic fit oscillates
+    // radially into a razor-edged flange (review, generic-mechanism case).
+    const double domeRun =
+        std::min(0.030, 0.10 * lenMm / scaleMm);
     const std::vector<Section> guide = {
         {0.0, torso.hip},
         {0.20 * lenMm / scaleMm, 0.5 * (torso.hip + torso.waist)},
@@ -184,8 +190,8 @@ TopoDS_Shape makeTorsoLoft(const TorsoSculpt& torso, double scaleMm,
         // Domed top: curve well past the shoulder line down to a near-point
         // — a wide flat top ellipse reads as a lampshade crease.
         {0.985 * lenMm / scaleMm, 0.74 * torso.shoulder},
-        {lenMm / scaleMm + 0.018, 0.38 * torso.shoulder},
-        {lenMm / scaleMm + 0.030, 0.10 * torso.shoulder},
+        {lenMm / scaleMm + 0.6 * domeRun, 0.38 * torso.shoulder},
+        {lenMm / scaleMm + domeRun, 0.10 * torso.shoulder},
     };
     try {
         TColgp_Array1OfPnt pts(1, static_cast<Standard_Integer>(guide.size()));
@@ -212,14 +218,19 @@ TopoDS_Shape makeTorsoLoft(const TorsoSculpt& torso, double scaleMm,
         const int kSamples = 48;
         const double t0 = profile->FirstParameter();
         const double t1 = profile->LastParameter();
-        const double topZ = (lenMm / scaleMm + 0.030) * scaleMm;
+        const double topZ = (lenMm / scaleMm + domeRun) * scaleMm;
+        double maxGuideW = 0.0;
+        for (const Section& s : guide)
+            maxGuideW = std::max(maxGuideW, s.halfWidth * scaleMm);
         for (int i = 0; i <= kSamples; ++i) {
             const gp_Pnt p = profile->Value(
                 t0 + (t1 - t0) * static_cast<double>(i) / kSamples);
-            const double w = std::max(p.X(), 1.0); // never a degenerate wire
-            // Clamp to the guide's span: the cubic fit overshoots ~20 mm
-            // past the top and the tip pokes out of the back when the
-            // trunk flexes (the panel's "amorce de queue").
+            // Clamp BOTH axes to the guide's span: the cubic fit
+            // overshoots past the top (tail nub when the trunk flexes) and
+            // can oscillate radially on short joints (razor flange wider
+            // than the shoulder line).
+            const double w =
+                std::clamp(p.X(), 1.0, 1.03 * maxGuideW);
             const double z = std::clamp(p.Z(), 0.0, topZ);
             const gp_Elips ellipse(
                 gp_Ax2(gp_Pnt(0, 0, z), gp_Dir(0, 0, 1),
@@ -370,8 +381,13 @@ AvatarResult avatarFromJson(const QJsonObject& obj)
 
         // Extension fields (schema v1 tolerates extra properties; proposed
         // for v2 — contract entry SCHEMA-AVATAR-V2-DEMANDE).
-        const QString build = rigid.value(QLatin1String("build"))
-                                  .toString(QStringLiteral("capsule"));
+        const QJsonValue buildVal = rigid.value(QLatin1String("build"));
+        if (!buildVal.isUndefined() && !buildVal.isNull()
+            && !buildVal.isString())
+            return fail(QStringLiteral(
+                "avatar: rigid.build must be a string")); // no silent
+                                                          // capsule fallback
+        const QString build = buildVal.toString(QStringLiteral("capsule"));
         if (build == QLatin1String("capsule"))
             spec.build = RigidBuild::Capsule;
         else if (build == QLatin1String("sculpted"))
@@ -414,6 +430,10 @@ AvatarResult avatarFromJson(const QJsonObject& obj)
                         "avatar: sculpt.bulge must be in [0.5, 2]"));
             }
             const QJsonValue torsoVal = sculpt.value(QLatin1String("torso"));
+            if (!torsoVal.isUndefined() && !torsoVal.isNull()
+                && !torsoVal.isObject())
+                return fail(QStringLiteral(
+                    "avatar: sculpt.torso must be an object"));
             if (torsoVal.isObject()) {
                 const QJsonObject t = torsoVal.toObject();
                 TorsoSculpt torso;
@@ -449,6 +469,10 @@ AvatarResult avatarFromJson(const QJsonObject& obj)
             }
             const QJsonValue pelvisVal =
                 sculpt.value(QLatin1String("pelvis"));
+            if (!pelvisVal.isUndefined() && !pelvisVal.isNull()
+                && !pelvisVal.isObject())
+                return fail(QStringLiteral(
+                    "avatar: sculpt.pelvis must be an object"));
             if (pelvisVal.isObject()) {
                 const QJsonObject p = pelvisVal.toObject();
                 PelvisSculpt pelvis;
@@ -479,6 +503,10 @@ AvatarResult avatarFromJson(const QJsonObject& obj)
             }
             const QJsonValue flattenVal =
                 sculpt.value(QLatin1String("flatten"));
+            if (!flattenVal.isUndefined() && !flattenVal.isNull()
+                && !flattenVal.isObject())
+                return fail(QStringLiteral(
+                    "avatar: sculpt.flatten must be an object"));
             if (flattenVal.isObject()) {
                 const QJsonObject flatten = flattenVal.toObject();
                 for (auto it = flatten.begin(); it != flatten.end(); ++it) {
@@ -712,23 +740,29 @@ std::vector<AvatarPart> RigidAvatarProvider::sculptedParts(
         if (isTorso && !solid.IsNull()) {
             // Deltoid caps: one sphere per off-axis limb attached to the
             // torso, carried BY the torso (a shoulder does not rotate with
-            // the arm). Generic: any limb hanging off a trunk gets one.
+            // the arm). Generic: on-axis and seating are both measured
+            // against the torso's rest_direction, not a hardcoded ±Z (a
+            // horizontal trunk grew a parasitic ball on its colinear
+            // child, review finding).
+            const gp_Vec axis(dir);
             for (const Joint& child : chain.joints) {
                 if (child.parent != index || child.lengthMm <= 1e-6)
                     continue;
-                if (std::abs(child.attachMm.X()) < 1e-6
-                    && std::abs(child.attachMm.Y()) < 1e-6)
+                const gp_Vec attach = child.attachMm;
+                const gp_Vec perp =
+                    attach - axis * attach.Dot(axis);
+                if (perp.Magnitude() < 1e-6)
                     continue; // on-axis (e.g. the neck): the loft covers it
                 const double rc =
                     m_spec.radiusFracFor(child.name) * chain.scaleMm;
-                // Seated slightly BELOW the attach point: centred on it the
-                // sphere crests above the shoulder line and reads as an
-                // epaulette (panel, bien-être lens).
+                // Seated slightly toward the trunk root along its axis:
+                // centred on the attach the sphere crests above the
+                // shoulder line and reads as an epaulette (panel).
+                const gp_Vec center = attach - axis * (0.35 * rc);
                 AvatarPart cap;
                 cap.shape =
                     BRepPrimAPI_MakeSphere(
-                        gp_Pnt(child.attachMm.X(), child.attachMm.Y(),
-                               child.attachMm.Z() - 0.35 * rc),
+                        gp_Pnt(center.X(), center.Y(), center.Z()),
                         rc * 1.28)
                         .Shape();
                 cap.name = child.name + QStringLiteral("_deltoid");
@@ -825,10 +859,20 @@ QStringList avatarChainWarnings(const AvatarSpec& spec, const Chain& chain)
         || spec.build != RigidBuild::Sculpted)
         return warnings;
     const SculptParams& sculpt = spec.sculpt;
-    if (sculpt.torso && chain.indexOf(sculpt.torso->joint) < 0)
-        warnings.append(QStringLiteral("avatar: sculpt.torso.joint \"%1\" "
-                                       "is not a joint of chain \"%2\"")
-                            .arg(sculpt.torso->joint, chain.id));
+    if (sculpt.torso) {
+        const int torsoIdx = chain.indexOf(sculpt.torso->joint);
+        if (torsoIdx < 0)
+            warnings.append(
+                QStringLiteral("avatar: sculpt.torso.joint \"%1\" is not a "
+                               "joint of chain \"%2\"")
+                    .arg(sculpt.torso->joint, chain.id));
+        else if (chain.joints[static_cast<size_t>(torsoIdx)].lengthMm
+                 <= 1e-6)
+            warnings.append(
+                QStringLiteral("avatar: sculpt.torso.joint \"%1\" has zero "
+                               "length — no trunk will be drawn")
+                    .arg(sculpt.torso->joint));
+    }
     if (sculpt.pelvis && chain.indexOf(sculpt.pelvis->joint) < 0)
         warnings.append(QStringLiteral("avatar: sculpt.pelvis.joint \"%1\" "
                                        "is not a joint of chain \"%2\"")

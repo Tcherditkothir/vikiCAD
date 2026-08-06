@@ -78,6 +78,15 @@ TEST_CASE("a humanoid-12 pose renders on humanoid-14 with hands at rest",
         "id":"compat","schema_version":"1","chain":"humanoid-14","fps":24,
         "keyframes":[{"t":0,"joints":{}}]})");
     CHECK_FALSE(refuse.ok);
+
+    // Re-export declares the chain it was edited against: the dense
+    // keyframes include the wrists, which humanoid-12 does not have.
+    const QJsonObject out = clipToJson(res.clip, h14.chain);
+    CHECK(out.value(QLatin1String("chain")).toString()
+          == QStringLiteral("humanoid-14"));
+    const ClipResult reload = clipFromJson(out, h14.chain);
+    REQUIRE(reload.ok);
+    CHECK(reload.warnings.isEmpty()); // no mismatch anymore: ids agree
 }
 
 TEST_CASE("euler XYZ is extrinsic, X applied first", "[anim]")

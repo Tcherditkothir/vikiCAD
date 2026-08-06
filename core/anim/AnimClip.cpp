@@ -477,7 +477,11 @@ QJsonObject clipToJson(const AnimClip& clip, const Chain& chain)
     QJsonObject obj;
     obj.insert(QLatin1String("id"), clip.id);
     obj.insert(QLatin1String("schema_version"), QStringLiteral("1"));
-    obj.insert(QLatin1String("chain"), clip.chainId);
+    // The chain we EXPORT AGAINST, not the clip's original target: the
+    // dense keyframes cover every joint of `chain`, so a humanoid-12 clip
+    // edited on humanoid-14 (accepts_pose_chains) must declare
+    // humanoid-14 — its wrist channels do not exist on humanoid-12.
+    obj.insert(QLatin1String("chain"), chain.id);
     if (!clip.nameFr.isEmpty())
         obj.insert(QLatin1String("name_fr"), clip.nameFr);
     if (!clip.nameEn.isEmpty())

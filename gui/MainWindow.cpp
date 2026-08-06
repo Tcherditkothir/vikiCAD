@@ -1226,6 +1226,9 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                 params[QStringLiteral("chain")].toString());
             QJsonObject reply = m_timelinePanel->statusJson();
             reply.insert(QStringLiteral("ok"), ok);
+            reply.insert(QStringLiteral("warnings"),
+                         QJsonArray::fromStringList(
+                             m_timelinePanel->lastLoadWarnings()));
             if (!ok)
                 reply.insert(QStringLiteral("error"),
                              QStringLiteral("load failed — see the "

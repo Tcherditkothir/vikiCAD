@@ -122,6 +122,48 @@ TEST_CASE("manikin + vrksasana exports a valid animated GLB", "[anim]")
     CHECK(foundRotation);
 }
 
+TEST_CASE("sculpted avatar with hands exports a valid GLB", "[anim]")
+{
+    // The sculpted build emits COMPOUND parts (fusiform tube + two cap
+    // spheres) plus torso loft, pelvis blob, deltoids and knuckles: the
+    // exporter's face walk must tessellate all of them and cgltf must
+    // still validate the result (review coverage gap).
+    const AvatarResult avatar =
+        loadAvatarFile(goldenPath("manikin-sculpte-mains.json"));
+    REQUIRE(avatar.ok);
+    const ChainResult chain =
+        loadChainFile(goldenPath("humanoid-14.json"), avatar.spec.heightM);
+    REQUIRE(chain.ok);
+    const ClipResult clip = loadClipFile(
+        goldenPath("pose3d/hand-demo.json"), chain.chain);
+    REQUIRE(clip.ok);
+    const RigidAvatarProvider provider(avatar.spec);
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("hands.glb"));
+    const GlbResult res = exportGlb(chain.chain, clip.clip, provider,
+                                    avatar.spec, path);
+    INFO(res.error.toStdString());
+    REQUIRE(res.ok);
+    // 14 limb parts + torso extras (2 deltoids, pivot sphere, pelvis
+    // blob, head) + knuckles: well past the capsule build's 13 meshes.
+    CHECK(res.meshes > 20);
+    CHECK(res.triangles > 5000);
+
+    Loaded glb;
+    parseAndValidate(path, glb);
+    // Both mittens exist as named nodes and the wrists are animated.
+    bool handNode = false;
+    for (cgltf_size i = 0; i < glb.data->nodes_count; ++i)
+        if (glb.data->nodes[i].name
+            && QString::fromUtf8(glb.data->nodes[i].name)
+                   .contains(QStringLiteral("hand_l")))
+            handNode = true;
+    CHECK(handNode);
+    REQUIRE(glb.data->animations_count == 1);
+}
+
 TEST_CASE("GLB export is byte-deterministic", "[anim]")
 {
     const AvatarResult avatar =

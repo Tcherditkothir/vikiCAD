@@ -446,6 +446,13 @@ TEST_CASE("sculpt fields referencing missing joints warn against the "
     CHECK(warnings[0].contains(QStringLiteral("trunk")));
     CHECK(warnings[1].contains(QStringLiteral("tail")));
 
+    // A zero-length torso joint draws NO trunk: never silently (review).
+    spec.sculpt.torso->joint = QStringLiteral("pelvis"); // length 0
+    spec.sculpt.flatten.clear();
+    const QStringList zeroLen = avatarChainWarnings(spec, chain);
+    REQUIRE(zeroLen.size() == 1);
+    CHECK(zeroLen[0].contains(QStringLiteral("zero length")));
+
     // The capsule build has no sculpt fields to check.
     CHECK(avatarChainWarnings(manikin(), chain).isEmpty());
 }
@@ -511,6 +518,36 @@ TEST_CASE("avatar validation refuses broken inputs", "[anim]")
                      "sculpt":{"taper":{"neck":"0.7"}}}})");
         const AvatarResult r = avatarFromJson(doc.object());
         CHECK_FALSE(r.ok);
+    }
+    SECTION("rigid.build of a non-string type")
+    {
+        // toString() would silently fall back to "capsule" — refused
+        // instead (review finding: no silent fallback).
+        const QJsonDocument doc = QJsonDocument::fromJson(R"({
+            "id":"x","schema_version":"1","chain":"c","type":"rigid",
+            "rigid":{"segment_radius":{"default":0.03},"build":42}})");
+        const AvatarResult r = avatarFromJson(doc.object());
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.contains(QStringLiteral("build")));
+    }
+    SECTION("sculpt sub-blocks of a non-object type")
+    {
+        // A mis-typed torso/pelvis/flatten used to be silently IGNORED
+        // (review finding) — the whole block must refuse instead.
+        for (const char* json :
+             {R"({"id":"x","schema_version":"1","chain":"c","type":"rigid",
+                "rigid":{"segment_radius":{"default":0.03},
+                "build":"sculpted","sculpt":{"torso":1}}})",
+              R"({"id":"x","schema_version":"1","chain":"c","type":"rigid",
+                "rigid":{"segment_radius":{"default":0.03},
+                "build":"sculpted","sculpt":{"pelvis":[1,2]}}})",
+              R"({"id":"x","schema_version":"1","chain":"c","type":"rigid",
+                "rigid":{"segment_radius":{"default":0.03},
+                "build":"sculpted","sculpt":{"flatten":"feet"}}})"}) {
+            const QJsonDocument doc = QJsonDocument::fromJson(json);
+            const AvatarResult r = avatarFromJson(doc.object());
+            CHECK_FALSE(r.ok);
+        }
     }
     SECTION("sculpt.torso.depth above 1")
     {

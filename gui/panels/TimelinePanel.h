@@ -51,6 +51,10 @@ public:
 
     // State for the `anim status` IPC verb (and gui-smoke).
     QJsonObject statusJson() const;
+    // Warnings from the last loadFiles (chain/avatar/clip parses + the
+    // superset-chain compat notice): surfaced in the `anim load` IPC reply
+    // so headless callers see them, not only the command-bar history.
+    QStringList lastLoadWarnings() const { return m_lastLoadWarnings; }
 
 signals:
     // A new chain+avatar is ready: the host switches to 3D and hands the
@@ -85,6 +89,7 @@ private:
     anim::AvatarSpec m_avatar;
     std::unique_ptr<anim::AvatarProvider> m_provider;
     bool m_loaded = false;
+    QStringList m_lastLoadWarnings;
     QString m_posePath, m_avatarPath, m_chainPath;
 
     std::vector<double> m_frameTimes;

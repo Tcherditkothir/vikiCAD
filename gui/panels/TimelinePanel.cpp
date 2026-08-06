@@ -219,6 +219,7 @@ bool TimelinePanel::loadFiles(const QString& posePath,
                               const QString& avatarPath,
                               const QString& chainPath)
 {
+    m_lastLoadWarnings.clear();
     const anim::AvatarResult avatar = anim::loadAvatarFile(avatarPath);
     if (!avatar.ok) {
         Q_EMIT feedback(QStringLiteral("timeline: %1").arg(avatar.error));
@@ -296,8 +297,12 @@ bool TimelinePanel::loadFiles(const QString& posePath,
     m_avatarPath = avatarPath;
     m_chainPath = resolvedChain;
     m_loaded = true;
-    for (const QString& w : chain.warnings + avatar.warnings + clip.warnings
-             + anim::avatarChainWarnings(avatar.spec, chain.chain))
+    // Kept for the IPC load reply too: headless callers (gui-smoke,
+    // agents) must see the superset-chain compat warning, not only the
+    // command-bar history.
+    m_lastLoadWarnings = chain.warnings + avatar.warnings + clip.warnings
+        + anim::avatarChainWarnings(avatar.spec, chain.chain);
+    for (const QString& w : m_lastLoadWarnings)
         Q_EMIT feedback(QStringLiteral("timeline: %1").arg(w));
 
     rebuildAvatarCombo();
