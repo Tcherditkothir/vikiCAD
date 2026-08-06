@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Sculpted avatar build, studio lighting, hands (aesthetic worksite).**
+  The rigid manikin gains a `build: "sculpted"` mode (schema-v1-tolerated
+  extension fields, proposed for v2): limbs are single revolved fusiform
+  solids closed by hemisphere caps (tapering to the child joint's radius
+  so bent knees/elbows stay continuous at any angle), the torso is an
+  elliptic loft (smoothed cubic profile, dense ruled sections — shoulders
+  melt into deltoid caps, marked waist, sculpted pelvis blob on the
+  root), knuckle spheres bridge every articulation, and per-joint
+  taper/flatten maps shape feet and hands. The offscreen renderer moves
+  to per-pixel shading with a camera-relative three-point light rig,
+  material derived from the avatar's roughness/metallic, and an optional
+  translucent contact shadow anchored under the animation's supports
+  (`presentation.ground_shadow`). A new `humanoid-14` chain adds ~9 cm
+  wrist-articulated mitten hands; its `accepts_pose_chains` extension
+  lets the existing humanoid-12 pose bank render unchanged with hands at
+  rest (explicit warning, surfaced in the CLI JSON and the `anim load`
+  IPC reply). Contract CLI unchanged; byte determinism kept; ~2.4 s per
+  240-frame pose; heaviest GLB 1.24 MB. Three selectable avatar variants
+  shipped to GenMov3D with a 4x5 comparison sheet; the sage `sculpte`
+  variant won a three-lens judge panel, and an adversarial review
+  (6 finders + refuters) confirmed 6 defects, all fixed (bounded torso
+  loft on short generic joints, direction-agnostic deltoids, strict
+  extension parsing with no silent fallbacks, edit-chain re-export).
 - **Timeline dock (GUI half of the animation module).** Load a pose3d +
   avatar (avatar selector from the sibling directory), play/scrub the
   clip on the 3D view through a new non-pickable animation overlay posed

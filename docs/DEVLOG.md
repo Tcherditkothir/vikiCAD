@@ -1579,3 +1579,70 @@ poses humanoïdes passaient toutes. Les données de production ne couvrent
 jamais la généralisation promise. (3) Spec vivante : les limites
 anatomiques et la caméra du contrat ont changé PENDANT le chantier —
 relire les sources amont avant chaque étape, pas seulement au début.
+
+## 2026-08-05 (bis) — chantier esthétique + mains : mannequin sculpté, éclairage studio, humanoid-14
+
+**Demande.** VikiCAD gagne un volet artistique : remplacer le mannequin
+« saucisses raccordées » par un mannequin galbé digne d'une app de
+bien-être (torse lofté, congés aux articulations, membres fuselés,
+matériau doux, éclairage qui module, ombre au sol), produire 3 variantes
+sélectionnables + planche comparative, et ajouter le segment main
+(chaîne humanoid-14, ~0,09 m, butées réalistes) sans toucher
+humanoid-12, aux schémas ni aux pose3d existants. Interface CLI du
+contrat inchangée, déterminisme octet, < 10 s/posture.
+
+**Livré (1) — build « sculpted » (core/anim/Avatar).** Champs
+d'extension tolérés v1 (proposés pour v2 au contrat,
+SCHEMA-AVATAR-V2-DEMANDE) : membres = tubes de révolution fuselés
+(profil B-spline approximé degré 3) FERMÉS par calottes hémisphériques
+en compound — le rayon distal suit l'enfant, un genou plié à 150° reste
+un volume continu (rotule sphérique au pivot en renfort) ; torse = loft
+d'ellipses sur profil lissé (48 sections réglées ; épaules bombées +
+calottes deltoïdes aux attaches de bras, taille, ourlet rentré dans le
+blob de bassin) ; taper/flatten par articulation (pieds, mains).
+
+**Livré (2) — rendu (offscreen).** Rig 3 lumières relatif à la caméra +
+shading Phong par pixel (le PBR d'OCCT sans IBL aplatit et rend la
+transparence opaque — sondé avant de coder), matériau dérivé de
+roughness/metallic, ombre de contact translucide ancrée sous les APPUIS
+de l'animation (presentation.ground_shadow), cadrage AddOptimal (les
+enveloppes de points de contrôle B-spline gonflaient l'unionBox : figure
+minuscule poussée hors cadre).
+
+**Livré (3) — mains (humanoid-14).** Chaîne 14 = 12 segments identiques
++ hand_l/hand_r (~0,09 m, flexion palmaire 80°/extension 70°/déviation
+±30°) ; avatar mitaines aplaties ; rétrocompat par accepts_pose_chains
+(champ d'extension de chaîne) : le banc humanoid-12 se rend tel quel sur
+la 14, mains au repos, avertissement partout (JSON CLI + réponse IPC) ;
+clipToJson déclare la chaîne d'ÉDITION (un clip 12 édité sur la 14 porte
+des canaux de poignets que la 12 ne peut pas charger).
+
+**Livré (4) — variantes et jugement.** 3 avatars dans GenMov3D
+(sculpte sauge / athletique argile rosé / doux bleu-gris) + planche 4×5
+(docs/planches/planche-avatars-2026-08-05.png) ; panel de 3 juges à
+lentilles distinctes (lisibilité / bien-être / flexion) : manikin-sculpte
+retenu 24/30, et ses constats concrets (embouts en cratère, épaulettes,
+ombre au centroïde) tous corrigés avant signal.
+
+**Preuves.** Suite 442 → 444 cas verts ; gui-smoke 334 ; 15/15 poses du
+banc sans avertissement, ~2,4 s/posture (240 trames), GLB max 1,24 Mo
+(47,6 k triangles, plafond 1,5 Mo tenu), déterminisme octet ; revue
+adversariale 6 finders/réfuteurs : 6 confirmés corrigés (collerette
+rasoir du loft sur joint court générique, deltoïdes codés ±Z, replis
+silencieux de parsing, torse longueur nulle muet, avertissements absents
+de la réponse IPC), 5 réfutés avec preuves ; signaux AVATAR-BEAU-PRET et
+HAND-PRET posés.
+
+**Leçons.** (1) Les lofts B-spline ont DEUX pathologies opposées : le
+lisse oscille (taille de guêpe, jupe, tente explosée), le réglé facette ;
+la recette stable = profil APPROXIMÉ bas degré puis loft réglé dense
+échantillonné dessus — et borner les DEUX axes de l'échantillon, pas
+seulement Z. (2) Un pôle de révolution sur profil approximé se replie en
+cratère : ne jamais fermer un solide par le pôle du profil, fermer par
+une calotte sphérique explicite. (3) Le panel de juges esthétiques à
+lentilles distinctes voit ce que l'auteur ne voit plus (l'ombre au
+centroïde « faisait flotter » le mannequin — évident une fois dit) ; la
+revue adversariale ensuite attrape ce que le panel ne cherche pas (la
+généralisation aux mécanismes, encore elle). (4) Piège mesuré : comparer
+des largeurs de silhouette en comptant les pixels opaques d'une RANGÉE
+entière mélange bras et torse — mesurer la bande contiguë centrale.

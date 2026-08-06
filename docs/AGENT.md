@@ -947,3 +947,23 @@ avatar, play/scrub in the 3D view, shift a keyframe's time, adjust one
 joint's channels at a keyframe, re-export the pose3d. Headless access via
 `connect anim ...` (table in section 1b) — gui-smoke's timeline phase is
 the reference script. Clips are capped at 300 s.
+
+Avatar extension fields (tolerated by schema v1, proposed for v2 — the
+full field list lives in the GenMov3D contract, entry
+SCHEMA-AVATAR-V2-DEMANDE):
+
+- `rigid.build`: `"capsule"` (default, historic look) or `"sculpted"` —
+  revolved fusiform limbs with hemisphere end caps, elliptic torso loft
+  with deltoid caps, pelvis blob, knuckle spheres; parameters under
+  `rigid.sculpt` (per-joint `taper`/`flatten` maps, `bulge`, `torso`,
+  `pelvis`). Mis-typed extension blocks REFUSE the file, never a silent
+  capsule fallback.
+- `presentation.ground_shadow` (0..1): translucent contact-shadow blob at
+  z=0 under the animation's supports in rendered frames (never in the
+  GLB). Adds partial-alpha pixels at the bottom of the frame.
+- A chain may declare `accepts_pose_chains: ["<id>"...]`: pose3d files of
+  those chains render on it with the extra joints at rest — the warning
+  comes back in the CLI JSON and in the `anim load` IPC reply, and a
+  re-export from the Timeline declares the chain it was EDITED on.
+  `humanoid-14` (hands) accepts `humanoid-12` this way; pass the superset
+  chain explicitly (`--chain` / third `anim load` argument).
