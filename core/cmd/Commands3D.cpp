@@ -1206,12 +1206,35 @@ private:
         ctx.doc().commitTransaction();
 
         for (const auto& [id, r] : converted) {
+            // Report the body count, not just "solid"/"shell" (issue #8): a
+            // concatenated mesh sews into SEVERAL closed shells, and saying
+            // "open shell" for that read as a failure when nothing was wrong.
+            QString bodies;
+            if (r.solids > 0)
+                bodies = QStringLiteral("%1 closed solid%2")
+                             .arg(r.solids)
+                             .arg(r.solids == 1 ? QString() : QStringLiteral("s"));
+            if (r.openShells > 0) {
+                if (!bodies.isEmpty())
+                    bodies += QStringLiteral(", ");
+                bodies += QStringLiteral("%1 open shell%2")
+                              .arg(r.openShells)
+                              .arg(r.openShells == 1 ? QString()
+                                                     : QStringLiteral("s"));
+            }
             ctx.info(QStringLiteral("solid %1: %2 triangles sewn into %3 faces (%4)")
                          .arg(id)
                          .arg(r.triangles)
                          .arg(r.faces)
-                         .arg(r.closed ? QStringLiteral("closed solid")
-                                       : QStringLiteral("open shell")));
+                         .arg(bodies));
+            // Say it out loud when the winding had to be turned around: the
+            // caller asked for a positive volume, and silently "fixing" it hides
+            // that the source mesh was inside-out.
+            if (r.reoriented > 0)
+                ctx.info(QStringLiteral("  %1 shell(s) had inward-facing "
+                                        "normals — reoriented so the volume "
+                                        "comes out positive")
+                             .arg(r.reoriented));
             if (!r.warning.isEmpty())
                 ctx.info(QStringLiteral("  %1").arg(r.warning));
         }

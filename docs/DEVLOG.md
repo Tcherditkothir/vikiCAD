@@ -4,6 +4,537 @@ Journal de développement. Une entrée par session de travail significative ; un
 
 ---
 
+## 2026-09-24 (bis) — Issue GitHub #13 : SWEEP perdait la moitié du tube à un coude franc
+
+Constat de l'agent dessinateur : ses tubes le long d'une polyline 3D (marqueurs
+anatomiques, ~45 segments) sortaient à ~150 % du volume nominal et Ø 4,2 mm au
+lieu de 2,8. Il accusait `Manifold.rotate([gx, gy, gz])` de composer des
+rotations d'axes au lieu d'une rotation A L'AXE (cross-product), et demandait
+la note documentaire + le contournement par `Manifold.transform(m)` avec base
+orthonormale.
+
+**Vérifié d'abord, des deux côtés, avec la vraie bibliothèque** (le venv
+`~/.venvs/mesh` porte manifold3d 3.5.3 + trimesh + numpy) : l'accusation est
+FONDÉE. La docstring du wrapper dit de son propre `rotate(v: Doublex3)` :
+« *[X, Y, Z] rotation in degrees … From the global reference frame, a model
+will be rotated in x-y-z order* » — c'est un EULER x-y-z, pas un axe-angle. Le
+vecteur de Rodrigues `axe × angle` n'aligne donc que si la rotation se trouve
+être mono-axe. Mesuré (axe du cylindre retrouvé par covariance du maillage, sur
+`cylinder(20, 1.4, 1.4, 32, center=True)`) : **0,0000° d'erreur** pour toutes
+les directions du plan YZ (le cas « facile », qui masque le piège), mais
+**1,78° / 3,90° / 6,09° / 6,71°** pour des directions obliques quelconques —
+contre **≤ 0,0043°** par `transform(m)` à base manuelle. À 6,7° sur un segment
+de 50 mm, le disque de bout se déplace latéralement de `50·sin(6,7°) ≈ 5,8 mm`,
+soit plus d'un demi-rayon : ce sont les « renflements aux coudes », et le
+~150 % de volume livré. La note demandée est écrite (AGENT.md §7, tableau des
+erreurs mesurées + le patron `transform` en 8 lignes de numpy).
+
+**Et le bug de VikiCAD, trouvé en reproduisant son besoin avec nos moyens
+natifs** — puisque la réponse utile à son besoin reste SWEEP, pas manifold3d.
+Le tube natif d'un CHEMIN DROIT est exact (`volume=307.9` pour un r=1,4 sur
+50 mm : π·r²·L au chiffre près), et un chemin en ARC l'est aussi (242,0 pour un
+nominal de 241,8). Mais une `PLINE` à **coude franc** — le cas même du
+rapporteur — rendait `volume=153.9` au lieu de 307.9 : **exactement la moitié**,
+une jambe sur deux, en répondant `ok:true` comme un succès normal. Balayage des
+longueurs de jambes : 25+25 → 153,9 ; 25+50 → 153,9 ; 50+25 → 307,9. Le solide
+OCCT est pourtant **valide et sa coque fermée** (`BRepCheck_Analyzer` OK) —
+seul le volume dénonce la perte.
+
+**Cause racine (sonde OCCT de 10 lignes, liée directement, zéro build du
+projet) :** `BRepOffsetAPI_MakePipe` sur une spine dont la direction CASSE
+construit une forme valide qui ne contient que la PREMIÈRE jambe. Mesuré côte
+à côte sur la même géométrie (disque r=1,4 le long de `0,0 → 0,25 → 25,25`) :
+`MakePipe` global → 153,938 (50,0 %) ; `MakePipe` par jambe tangent-continue +
+`BRepAlgoAPI_Fuse` → 307,091 (99,7 %) ; les trois modes de
+`MakePipeShell` → pires (71,9 % / 71,2 % / 33,3 %, et `TopAbs_SOLID` absent,
+coque ouverte). Sur une jambe droite ou un arc, les deux voies donnent
+exactement pareil (100 %) : le découpage ne dégrade rien.
+
+**Correctif :** `sweepProfile` découpe la spine en jambes **tangent-continues
+maximales** (`tangentLegs`, tangente d'arête par arête à 1e-6), sweep une jambe
+à la fois — chaque profil étant réorienté sur la tangente ET le point de départ
+DE SA jambe, pour couvrir le coude — puis fusionne. Résultats mesurés : coude
+90° **304,2/307,9 (98,8 %)**, escalier 4 jambes × 12 mm **284,6/295,6 (96,3 %)**,
+escalier 3 jambes × 25 mm **454,5/461,8 (98,4 %)**, chemin droit 307,9 et arc
+242,0 inchangés. Le léger déficit des coudes est normal (l'angle est taillé,
+pas rempli). Le tube est désormais **watertight** (coude : 8 faces, 14 arêtes,
+arête ellipse au pli) là où il ne l'était pas.
+
+**Pourquoi `requireSolid` n'a rien vu :** il ne rejette que le volume NUL
+(`> 1e-12`). Un volume PARTIEL — la moitié d'un tube — passe tous les gardes.
+C'est la classe « un résultat plausible mais faux », la plus coûteuse : elle
+voyage loin. Le critère de détection est documenté (un tube à ~50 % de π·r²·L
+= le sweep s'est arrêté au premier coude).
+
+**Preuves :** `tests/test_sweep_loft.cpp` (+3 cas tag `[issue13]`, 15
+assertions) — coude 2 jambes (volume > 95 % du nominal + coque unique fermée),
+escalier 4 jambes, et un arc (non-régression). **Vérifié dans les deux sens :
+les cas coude/escalier ÉCHOUENT sans le correctif, avec exactement les volumes
+du bug (153,938 et 147,781)**, et passent avec. Suite complète **473 cas /
+9 289 assertions, 0 échec** (5 skips GL sans display) ; `gui-smoke.sh` **ALL
+GREEN (378 checks)** avec 6 nouvelles assertions `elbow:`. Docs : AGENT.md §7
+(deux entrées : SWEEP coudé + `Manifold.rotate` vs `transform`), LESSONS.md.
+
+---
+
+## 2026-09-24 — Issue GitHub #12 : une commande qui s'annule en silence répondait ok:true
+
+Constat de l'agent dessinateur (scene SNC PSY1014) : ses tubes de sillons
+(r ~1,4 mm, courbe de 85 mm) sortaient en disques de 100 mm sur 1,4 mm
+d'épaisseur, 30-60x trop gros, et seule la vérification numérique l'a
+attrapé. Le rapport accusait l'ordre des arguments du wrapper Python
+`manifold3d` (`Manifold.cylinder(height, radius_low, ...)` — la HAUTEUR
+d'abord, le rayon ensuite), et demandait soit un avertissement dans
+AGENT.md, soit une commande utilitaire TUBE.
+
+**Vérifié d'abord : VikiCAD n'a rien à voir avec manifold3d** — aucune
+dépendance, aucun script Python dans le dépôt. Le piège est dans le
+générateur maison de l'agent, hors du logiciel. Mais en reproduisant son
+besoin (un tube de rayon 1,4 le long de 85 mm) avec les moyens natifs, un
+second piège est apparu, celui-là BIEN à nous : `SWEEP 1 2` — le profil et
+le chemin sur une seule ligne — répondait `{"ok":true}` avec un document
+INTACT et ZÉRO message. La commande s'était annulée en silence.
+
+**Cause racine :** le glouton `EntitySet` (AGENT.md §2 règle 5) avale tous
+les tokens numériques de la ligne et les donne au PREMIER stage de
+sélection ; le second stage (le chemin) meurt de faim, reçoit un Finish
+implicite et retourne `Step::cancelled()`. `drive()` traitait alors
+l'annulation comme un succès (`{true, {}, false, {}}`) — indistinguable
+d'une réussite pour un appelant headless. Le refus explicite existait déjà
+pour le cas VOISIN (issue #2 : un token non-numérique au mauvais moment),
+mais pas pour la famine d'un stage. Mesuré ensuite commande par commande :
+**trois** tombaient dans le silence — `SWEEP` (profil→chemin),
+`EXTRUDE … CUT` (cible→profils) et `PATTERN3D` — tandis que `MATE`,
+`SPLITFACE` et `CHAMFEREDGES` consommaient leurs ids autrement (pas de
+second stage affamé) et que `LOFT` refusait déjà en nommant sa cause.
+
+**Correctif (garde de mode strict, dans `CommandProcessor`) :** `drive()`
+retient désormais OÙ une commande s'est annulée (son nom + le prompt
+courant) ; si elle s'annule sans avoir laissé UN SEUL message et qu'on est
+en mode strict (headless : `--exec`, `--run`, IPC `exec`), `submit()`
+transforme le faux succès en erreur nommée :
+
+```
+SWEEP cancelled itself with nothing done and no explanation (waiting at
+"Select path:"). If one line fed it two selection stages at once, give
+each stage its own line — a .vks script (AGENT.md §2 rule 5).
+```
+
+Deux garde-fous voulus : **le mode interactif reste muet** (en GUI, une
+annulation EST la réponse de l'utilisateur — un Échap ne doit pas lever de
+dialogue) ; et **une commande qui s'est expliquée est laissée tranquille**
+(LOFT refuse déjà en nommant sa cause — le garde ne réécrit pas son
+diagnostic).
+
+**Ce qui a été répondu au demandeur, en plus du correctif :** la note
+demandée est dans AGENT.md (§7 gotchas — l'ordre `cylinder(height, radius)`
+de manifold3d, la mesure des disques 100 mm/1,4 mm, la même famille de
+piège ailleurs), ET la vraie réponse à son besoin — **SWEEP natif construit
+le tube directement** : `CIRCLE` pour la section + `LINE`/`ARC`/`PLINE`
+pour l'épine + un script `.vks` de deux lignes, sans STL, sans MESH2SOLID,
+sans bibliothèque tierce. Vérifié : r=1,4 sur 50 mm donne
+`volume=307.9 mm3` — exactement pi·r²·L — et un chemin COURBE donne
+`773.8 mm3` pour l'arc de 125,66 mm, encore pi·r²·L. Le critère de
+détection est écrit dans le guide : un tube dont le volume s'effondre et
+dont la bbox explose est un DISQUE.
+
+**Preuves :** `tests/test_silent_cancel.cpp` (6 cas, tag `[issue12]`, 29
+assertions) — refus bruyant du une-ligne, construction du tube par le
+script documenté (volume pi·r²·L), forme `SWEEP <chemin>` après
+pré-sélection toujours bonne, `EXTRUDE CUT` sur une ligne désormais refusé,
+commande bavarde (LOFT) non réécrite, mode interactif muet. Suite complète
+**470/470 après commit** (464 avant + les 6 cas) ; `gui-smoke.sh` **ALL
+GREEN (373 checks)** avec les phases `silent cancel:` (4) + `tube:` (5).
+Docs : AGENT.md §2 règle 5, §7 gotchas (deux entrées), LESSONS.md.
+
+## 2026-09-24 — Issue GitHub #9 : les PRODUCT du STEP perdent leur nom quand le nom vit au top-level du JSON
+
+Constat v4 PSY1014 (vivi-dessinateur) : l'export STEP du .vkd assemblé par
+SQL (112 solides) ne nommait que 27 PRODUCT ; les 85 solides ajoutés par le
+script tombaient en `SOLID`/`SHELL`/`COMPOUND` génériques, alors que
+`query entities` affichait bien un `component` pour les 112.
+
+**Cause racine (lue dans les DEUX bouts du format, puis prouvée sur les
+fichiers) :** le champ `component` d'un solide vit CANONIQUEMENT dans
+`geom.component` (c'est `SolidEntity::geomToJson` qui l'écrit là, et
+`geomFromJson` qui le relit de là). Le script qui a assemblé le v4 a posé
+le nom des nouvelles entités au TOP level de l'entité JSON, à côté de
+`color` — emplacement que la lecture ignore : `geomFromJson` écrase
+`component` par le `geom.component` ABSENT (= vide). L'entité vit donc
+sans nom ; le writer STEP (qui lit `solid->component`, rien d'autre)
+tombe sur vide, et l'auto-naming XCAF d'AddShape estampille
+`SOLID`/`SHELL`/`COMPOUND`. Preuve par position : les 27 noms du fichier
+exporté égalent EXACTEMENT l'ensemble des `geom.component` du document
+(noms hérités des STEPs d'origine : `neocortex-decim`, `fornix-wt`...),
+pas les `component` top-level — et `DESCRIBE 34` (champ VIVANT) n'affiche
+rien là où `query entities` (JSON brut avec l'extra bag) montre un nom.
+L'issue pensait « le writer ne s'en sert pas » ; le champ n'arrivait
+jamais à l'entité.
+
+**Correctif : tolérance de lecture, pas de changement au writer.**
+`Entity::fromJson` appelle maintenant un second pass `postFromJson(obj)`
+(hook virtuel, no-op par défaut) avec l'objet RACINE ;
+`SolidEntity::postFromJson` adopte le `component` top-level SEULEMENT si
+le champ canonique est revenu vide — quand les deux niveaux portent un
+nom, `geom.component` gagne (les fichiers v3 gardent leur verdict). Le
+premier `save` converge le fichier (le nom migre dans `geom.component`).
+Aucun changement au writer STEP ni au schéma : un nom au top-level reste
+aussi dans l'extra bag, inoffensif.
+
+**Preuves :** `tests/test_solid_component.cpp` (5 cas) — survie du nom
+top-level au load, canonicalité de `geom.component` quand les deux
+niveaux coexistent, anonymat préservé, round-trip .vkd avec hot-patch
+SQLite à l'identique du script PSY1014 (puis convergence au re-save), et
+export STEP dont le PRODUCT porte le nom (jamais `PRODUCT('SOLID'`).
+Sur le FICHIER RÉEL snc-psy1014-v4.vkd : avant = 27 noms / 85 génériques ;
+après = 112 PRODUCT, 112 uniques, 0 générique (extrait + comparaison
+JSON dans le livrable inter-agents).
+
+**Piège du diagnostic :** `query entities` sérialise le JSON BRUT
+(`toJson`, extra bag compris) — il montre un nom que l'entité vivante ne
+porte pas. C'est exactement ce qui a fait conclure l'issue que le champ
+était « bien là ». Règle : pour juger de l'état d'une entité, `DESCRIBE`
+/ `query describe` (le champ vivant), pas le JSON brut.
+
+**Vu au passage (hors périmètre #9, préexistant) :** le round-trip STEP
+du v4 ne ramène que 41/112 solides — les shells OUVERTS de MESH2SOLID
+sortent en `SHELL_BASED_SURFACE_MODEL` et `documentFromXcaf` ne garde
+que les `TopAbs_SOLID`. Même chiffre sur l'export d'avant le correctif :
+pas une régression. Candidat issue séparée.
+
+**État :** ctest 464/464 verts (457 + 5, avec le lot #11 de la session
+sœur) ; gui-smoke 351/353 — les 2 échecs restants sont la phase
+`cli timeout:` de #11 en cours chez l'autre session (binary mid-edit),
+pas de chemin #9 dedans ; refdiff/expdiff verts en isolation. Issue
+fermée après le commit.
+
+---
+
+## 2026-09-24 — Issue GitHub #7 : insertstep/MESH2SOLID IPC — le reply ne paie plus le refresh, et il dit le coût
+
+Constat v4 PSY1014 (vivi-dessinateur) : `insertstep` suivi de
+`MESH2SOLID` sur les maillages BP3D/Pitt du CNS v3 (~6k+ faces) dépasse
+la fenêtre d'attente du canal IPC, alors que le même enchaînement passe
+par le chemin offline (`import` + `--run`). Repro de cette séance :
+sphère binaire 19 208 triangles (sous le plafond 20k), `MESH2SOLID 1 2`
+sur deux exemplaires = `E_TIMEOUT` à 10,0 s pile ; le même convertit en
+4,7 s offline.
+
+**Cause racine (lue dans le code, côté GUI cette fois) :**
+`insertComponentFile()` finissait par `refreshAfterAssemblyChange()` —
+`refreshFrom` rebuild complet des structures de sélection — AVANT que le
+reply parte ; le serveur RPC étant synchrone, tout ce temps est un
+silence socket pour le client, qui donne au bout de sa fenêtre (le
+plafond 10 s a sauté dès ~38k triangles en un exec, à 5 s par
+conversion).
+
+**Correctif (gui/MainWindow.{h,cpp}) :** le verbe IPC `insertstep` passe
+`refreshView=false` et DIFFÈRE le rafraîchissement sur le timer
+single-shot zéro-délai du correctif #6 (coalescé par rafale) ; le timer
+choisit maintenant l'action via `m_ipc3dSyncRefreshAsm` :
+`refreshAfterAssemblyChange()` (insertstep) ou `sync3DView()` (exec) ;
+`flushIpc3dSync()` honore le flag, donc query/pick3d/viewdir/screenshot
+ne peuvent jamais lire une scène plus vieille que le document.
+**Et le reply est enrichi** (la boussole demandée par l'issue) :
+`inserted[{id,name,triangles}]` + `triangles` total — l'agent connaît le
+coût du futur MESH2SOLID (sewing ≈ une face par triangle, plafond 20 000)
+AVANT de l'envoyer, et choisit `--timeout` généreux ou le chemin offline
+au lieu d'un timeout à l'aveugle. Le volet fenêtre réglable
+(`connect --timeout` / `VIKICAD_CONNECT_TIMEOUT`) est livré par la
+séance #10 (entrée ci-dessus).
+
+**Mesures réelles (build debug) :** insertstep 19,2k tri = 0,04 s avec le
+payload (avant : 0,3 s sans payload) ; MESH2SOLID 19,2k tri par IPC =
+4,84 s (dans la fenêtre 10 s par défaut) ; sur le cas 38,4k tri, le
+reply nomme 38 416 triangles et l'agent arbitre en connaissance de cause.
+
+**Vérification par la suite officielle :** phase gui-smoke `meshimp`
+étendue de 8 checks (insertstep : reply ok, nom du composant, triangles
+12/12, entité posée, visible au describe après flush, ERASE). Passage
+19/19 dans le run complet de la séance #11 (16 h — partagé : nous
+travaillons à quatre sur le même arbre, coordination 15:45). Les runs de
+cette séance sont bruités par les quatre sessions en parallèle sur le
+même socket `vikicad` (échecs en cascade E_CONNECT/count décalés,
+races documentées dans le rapport livrable) ; ctest 457/457.
+
+---
+
+## 2026-09-24 — Issue GitHub #11 : le verbe CLI `open` n'acceptait que le .vkd
+
+Constat v4 PSY1014 (vivi-dessinateur) : `$CLI open file.stl --save-as out.vkd`
+échouait avec `not a VikiCAD file (no entities table): file.stl`, alors que
+`$CLI import file.stl --save-as out.vkd` réussissait et que la GUI ouvrait le
+même fichier par File>Open. Deux verbes, un seul fichier, deux verdicts — le
+piège classique pour un agent qui prend `open` par réflexe.
+
+**Cause racine :** deux chemins d'ouverture au lieu d'un. `cmdNewOrOpen`
+(nouveau comme `open`) appelait `NativeStore::load` en dur — le `.vkd` natif
+seulement. La GUI, elle, portait sa propre table de dispatch par extension
+dans `MainWindow::loadFile` (écrite au chantier « pourquoi je ne peux pas
+ouvrir un dwg direct ? »), et le verbe CLI `import` sa propre copie encore.
+Trois implémentations de la même politique, dont deux seulement connaissaient
+les formats importés.
+
+**Correctif : UNE table de dispatch partagée.** Nouveau module
+`core/io/FileOpen.{h,cpp}` (`openFileAny()`), reprise fidèle de l'ordre et
+des règles de `File>Open` : répertoire = kit Gerber ; `.vkd` = store natif ;
+`.dxf`/`.dwg` ; `.step`/`.stp` ; `.igs`/`.iges` ; `.stl` ; `.brd`/`.sch`/
+`.lbr` ; fichier Gerber/Excellon isolé (sniff de CONTENU) ; et en repli le
+store natif, pour que le comportement historique du `.vkd` renommé ou sans
+extension ne casse jamais derrière le nouveau routage. Le marquage des
+composants (nom de fichier en repli pour STEP/IGES quand le fichier n'en
+porte pas, systématique pour STL) est reproduit à l'identique, et
+`OpenFileResult` remonte les compteurs de chaque importeur.
+
+`cmdNewOrOpen` utilise désormais `openFileAny()`. Trois conséquences
+voulues :
+
+1. `open f.stl` et `import f.stl` produisent le MÊME document (même routage,
+   même importeur, mêmes marquages) ;
+2. la réponse JSON de `open` gagne un champ `dispatch` (l'arme prise :
+   `vkd` `dxf` `dwg` `step` `iges` `stl` `eagle` `gerberkit`) et **reprend
+   les compteurs du verbe `import`** (`solids` `triangles` `imported`
+   `skipped` `files` `entities` `layers` `warnings`…) — un agent qui lit
+   `open` n'a plus à deviner ce qui est arrivé ;
+3. garde-fou ajouté : `open f.stl --save` est REFUSÉ (`E_ARGS`), parce
+   qu'un `--save` nu écraserait le fichier SOURCE avec des octets `.vkd`.
+   Le message nomme le verbe correct (`--save-as OUT.vkd`). Pour un `.vkd`
+   ouvert nativement, `--save` reste légitime et inchangé.
+
+**Doc (le point précis de l'issue) :** la ligne `open` du §1a ne disait que
+`FILE.vkd`, pendant que la ligne du §1b décrivait le dispatch par extension
+comme s'il était propre à l'IPC/GUI. Les deux lignes nomment maintenant le
+routage partagé, et une note dédiée au §7 (« One routing for every open
+channel ») explique la distinction `open` (prendre un fichier) vs `import`
+(verbe explicite) — c'est l'ambiguïté documentaire qui a produit le ticket.
+
+**Preuves :** 7 cas Catch2 neufs dans `tests/test_file_open.cpp` (tag
+`[issue11]`, 120 assertions) — routage `.vkd`/`.stl`/`.step`/`.dxf`/kit
+Gerber/fichier fab isolé, repli natif d'une extension inconnue, messages et
+compteurs, marquage des composants (STEP anonyme = stem du fichier, STEP nommé
+= nom conservé), et l'égalité `open`/`import` sur le même STL. ctest
+464/464 (457 avant + 7). Phase gui-smoke « open dispatch: » ajoutée,
+exécutable sans GUI (fixtures auto-construites), + suite complète relancée.
+
+**Piège rencontré :** le writer STEP de vikiCAD estampille TOUJOURS un nom de
+PRODUCT (`SOLID` pour un corps anonyme) — impossible de fabriquer un STEP
+« sans nom » avec notre propre export pour tester le repli du stem. La fixture
+du test part donc d'un export réel dont les champs PRODUCT sont blanchis :
+c'est ce à quoi ressemble la sortie d'un exporteur brut, et le repli s'y
+vérifie pour de vrai. À ne pas confondre avec l'issue #9 (le nom du PRODUCT
+côté writer) — chantier distinct.
+
+---
+
+## 2026-09-24 — Issue GitHub #10 : `connect open` renvoie un faux E_TIMEOUT sur les .vkd lourds
+
+Constat v4 PSY1014 (vivi-dessinateur) : `connect open` d'un .vkd de
+269 Mo (112 solides OCC, néocortex ~19 000 facettes ×2) répond
+`E_TIMEOUT / "no response"` après ~10 s alors que l'ouverture finit par
+réussir dans la GUI — le modèle est correct (count=112 au `query
+entities`). Faux négatif pur.
+
+**Cause racine (lue dans le code, les deux bouts de la socket) :** le
+client CLI (`cmdConnect`) lit la réponse avec `waitForReadyRead(10000)` —
+10 s de SILENCE socket. Le serveur RPC (`gui/ipc/RpcServer.cpp`) est
+strictement synchrone : `handleRpc("open")` appelle `loadFile`, qui ne
+RETOURNE qu'après `NativeStore::load` (les BREP base64 de 112 solides
+désérialisés) + `adoptDocument` (rebuild des panels, zoomExtents). Le
+premier `waitForReadyRead` porte donc TOUTE la durée du chargement : sur
+un gros fichier, le client abandonne pendant que la GUI travaille encore.
+La commande `query entities` qui suit (~60 s de BREP sérialisé) passait
+parce que ses chunks arrivent vite (socket vivante, budget réarmé à
+chaque chunk).
+
+**Correctif (côté client, une seule méthode) :** budget de SILENCE
+paramétrable `connect --timeout MS` + variable `VIKICAD_CONNECT_TIMEOUT`
+(env gagne sur le flag). Le budget se réarme à chaque chunk — un
+transfert vivant n'est jamais tué, une GUI muette aborte après la
+fenêtre. Défaut inchangé : 10 s (aucun comportement interactif ne
+change). Refus propres `E_ARGS` pour valeur manquante/mal formée et
+option `--` inconnue ; le message E_TIMEOUT nomme les deux leviers.
+Choix design : PAS de réponse async (ok immédiat + poll) — un `ok:true`
+immédiat ferait croire à un agent que le document chargé est le nouveau
+ALORS QUE `query` pendant l'ouverture lirait encore l'ANCIEN document ;
+la fenêtre large garde le contrat « la réponse = le travail fini ».
+
+**Piège du lot (attrapé par les cas CLI, pas par les yeux) :** premier
+essai avec `rest = args.mid(1)` — mais `args[0]` EST la méthode (l'ancien
+code lisait `args.first()`) : le décalage faisait disparaître le dispatch
+et passer `--timeout` nu à travers. Corrigé en `rest = args` (méthode en
+rest[0]) ; les 5 cas E_ARGS/E_CONNECT du harnais verrouillent le
+découpage dans les deux positions du flag.
+
+**État :** ctest 452/452 verts ; phase gui-smoke `cli timeout:` 5/5
+(exécutée en isolation — la phase ne parle PAS au GUI, donc validable
+headless) ; suite gui-smoke complète non relancée (GUI en unité systemd
+pas (re)démarrée dans cette séance — le harnais la démarre tout seul).
+Live sur le fichier de l'issue (269 Mo, --timeout 900000) : À FAIRE à la
+prochaine fenêtre GUI.
+
+---
+
+## 2026-09-24 — Issue GitHub #8 : MESH2SOLID ne réoriente pas les faces (volume signé négatif)
+
+Demande inter-agents de vivi-dessinateur (constat v4 PSY1014) : un STL fermé
+produit par trimesh (union **concaténée** de cylindres + coquilles icosphere,
+sans booléen) ressort de `MESH2SOLID` avec un **volume signé négatif** stable
+(−353 mm³ sur les tubes/scissures). Le workaround trouvé par lui était une
+union booléenne `manifold3d` en amont.
+
+**Repro d'abord, hors dépôt** (`/tmp/vp8`, quatre STL générés à la main) :
+
+```
+$ vikicad-cli import cube-inv.stl --save-as cube-inv.vkd
+$ vikicad-cli open cube-inv.vkd --exec "MESH2SOLID 1" --save-as cube-inv-solid.vkd
+  messages: ["solid 1: 12 triangles sewn into 12 faces (closed solid)"]
+$ vikicad-cli query cube-inv-solid.vkd --describe
+  volume: -1000.0000000000002        # le cube fait 1000 mm3 par enroulement sortant
+```
+
+Le même cube, 12 facettes inversées : géométrie identique au point près,
+orientation opposée, volume **−1000**. Le report dit « closed solid » — donc
+rien, ni dans le message ni dans les chiffres, ne signalait l'anomalie.
+
+**Deux défauts distincts, mesurés avec une sonde OCCT autonome** (probe.cpp,
+`/tmp/vp8` — chemin de sew copié de `meshToSolid`, puis chaque remède candidat
+essayé un par un) :
+
+1. **Enroulement entrant jamais normalisé.** Le sew transmet la winding d'entrée
+   telle quelle. `BRepBuilderAPI_MakeSolid` en fait un solide « valide » dont
+   `BRepGProp::VolumeProperties` est négatif. C'est le défaut rapporté — et il
+   n'a rien à voir avec l'enchevêtrement des nappes : il suffit d'un maillage
+   inversé, même parfaitement fermé et propre.
+2. **Coques multiples perdues.** Le code ne regardait qu'un `TopAbs_SHELL` de
+   premier niveau. Un maillage issu d'une union concaténée se coud en
+   `TopAbs_COMPOUND` de plusieurs coques fermées disjointes (aucun sommet
+   partagé) : la condition `sewn.ShapeType() == TopAbs_SHELL` échouait, le
+   `closed` restait faux, et le report disait « open shell » alors que **toutes**
+   les moitiés étaient étanches. Aucune n'était convertie en solide.
+
+Le diagnostic de l'issue (nappes enchevêtrées) était donc partiellement juste :
+le vrai déclencheur est l'orientation, et le symptôme « open shell » signalait
+un second bug que l'issue ne nommait pas.
+
+**Pourquoi l'orientation ne peut pas se déduire d'elle-même.** Une coque fermée
+est une surface orientable à deux côtés : la seule donnée géométrique ne dit pas
+quel côté est « dehors ». Le critère déterministe et bon marché est donc le
+volume signé — négatif = faces tournées vers l'intérieur. C'est exactement ce que
+`trimesh.repair.fix_normals` fait pour l'appelant, comme l'issue le demandait.
+
+**Correctif** (`core/io/StlIo.cpp`, parcours **coque par coque**) :
+
+1. coque fermée → solide (`MakeSolid`) ;
+2. si `BRepGProp::VolumeProperties < 0` → `BRepLib::OrientClosedSolid`, avec un
+   repli explicite (`Reversed()` sur chaque face, coque reconstruite) pour le
+   cas rare où OCCT refuse ;
+3. **tout** est rassemblé dans un `TopoDS_Compound` — solides et coque
+   réellement ouvertes (un maillage troué reste de la géométrie légitime, jamais
+   sacrifié) ;
+4. une seule coque ressort nue (pas d'enveloppe compound), forme que voyaient
+   déjà tous les consommateurs et tous les tests antérieurs.
+
+`MeshToSolidResult` gagne trois compteurs (`solids`, `openShells`, `reoriented`)
+et `closed` garde son sens mais devient vrai seulement si **toutes** les coques
+ont abouti. Le message nomme désormais le nombre de corps — `2 closed solids`
+au lieu d'un « open shell » trompeur — et annonce le retournement quand il a
+lieu, pour ne pas « réparer » silencieusement un maillage inversé.
+
+**Preuves.** Sonde de stratégie validée 32/32 fichiers avant d'écrire une ligne
+de code de production. Après correctif, sur les **28 maillages trimesh réels**
+du livrable SNC de vivi-dessinateur (`livrables/20260924-1020-zcode-snc-v3-complements/dashboard-meshes/`)
+— le cas exact de l'issue :
+
+```
+Total=28  positifs=28  negatifs=0  echecs_ou_anomalies=0
+```
+
+Deux résultats qui montrent l'enjeu réel au-delà de la reproduction minimale :
+
+| fichier | avant | après |
+|---|---|---|
+| `tronc-cerebral.stl` (5992 tri, 24 coques) | 19 104.76 mm³ | **21 465.58 mm³** |
+| `arachnoide.stl` (19000 tri, 4 coques) | 2 579 743.52 mm³ | **2 579 782.83 mm³** |
+| `dure-mere.stl` (19000 tri, 3 coques) | 3 010 220.23 mm³ | **3 010 335.97 mm³** |
+
+Sur `tronc-cerebral`, **14 des 24 coques** étaient soustraites : le volume
+« plausible » d'avant était le résultat de soustractions parasites, pas une
+mesure. Un volume signé négatif est spectaculaire ; un volume positif mais faux
+ne l'est pas, et le correctif attrape les deux.
+
+**Réserve honnête.** `BRepCheck_Analyzer` déclare certains de ces maillages
+invalides — mais l'invalidité est **pré-existante dans le chemin de production**
+(elle vient du sew brut, vérifié sur le code d'avant correctif), pas introduite
+par lui. Le correctif ne l'aggrave pas et ne prétend pas la guérir : le sew d'un
+maillage en facettes produit une coque à une face par triangle, et les
+tolérances d'arêtes y sont limites. Documenté à LESSONS.md plutôt que masqué.
+
+- **Tests** : 4 cas de régression ajoutés (`tests/test_stl_import.cpp`, tag
+  `[issue8]`), chacun sur une fixture STL **construite octet par octet** dans le
+  test (enroulement inversé, deux coques disjointes, winding mixte, libellé du
+  message) — pas de dépendance à un exporteur dont le comportement pourrait
+  changer. Le test de non-régression existant (« volume exactement 1000 »,
+  « 12 faces ») reste vert inchangé.
+- **Doc** : AGENT.md (gotcha MESH2SOLID), CHANGELOG.md, DEVLOG.md (ici),
+  LESSONS.md (le piège de l'orientation et de l'invalidité pré-existante).
+- **Clôture** : issue #8 fermée sur GitHub après suite verte + gui-smoke vert.
+
+---
+
+## 2026-09-24 — Issues GitHub #1-#4 (demande inter-agents de ZCode)
+
+Quatre issues ouvertes par vivi-dessinateur pendant le dessin du SNC
+traitées d'un lot, chacune vérifiée par un repro headless avant/après
+(tous les extraits de messages ci-dessous sont des sorties réelles du
+CLI build/debug) :
+
+- **#1 — contrat une-invocation-une-séquence + erreurs qui nomment la
+  cause.** Le vrai comportement est documenté (une invocation = un
+  document neuf, état jamais partagé entre invocations) dans
+  AGENT.md §1a ; `SKETCH CLOSE` sans sketch ouvert explique maintenant
+  TOUT (invocation fraîche, --exec chaînés, --run script.vks, SKETCH
+  Open dans la GUI) au lieu d'un sec « no sketch is open ». Pas de
+  mode session : le contrat one-shot + --run couvre le besoin réel
+  (l'agent de dessin a fini son SNC avec un seul --run).
+- **#2 — erreurs qui nomment la ligne fautive + séparateur `;`.** La
+  réponse E_EXEC inclut la ligne (déjà) — et la vraie morsure, le
+  « expected entity ids » nu, dit maintenant QUELLE commande attend
+  encore et à quel prompt : « expected entity ids for command EXTRUDE
+  (waiting at "Select profiles:") — put the ids on their own line, or
+  a blank line before the next command » (CommandProcessor, gulp
+  EntitySet vide). Et un `;` dans un --exec sépare des commandes
+  complètes : `--exec "RECT 0,0 40,30; EXTRUDE 10 1"` en lance deux,
+  première erreur aborte avec le segment fautif dans le message.
+  AGENT.md §1a + §2-5 mis à jour.
+- **#3 — SETCOLOR <ids> <#RRGGBB|nom> [alpha].** Commande
+  first-class dans CommandsAssembly (registre aux côtés de TRANS) :
+  hex 6 chiffres ou noms de base (red/green/blue/…/orange), alpha
+  0-100 = pourcentage TRANSPARENT (clampé), pickfirst (SELECT 3 puis
+  SETCOLOR seul), un message de refus qui montre les formes
+  acceptées, UNDO en une étape. La couleur passe dans l'entité JSON
+  (`color`), la transparence dans `geom.transparency` — le .vkd les
+  persiste déjà et le STEP writer les transforme en STYLED_ITEM/
+  COLOUR_RGB (chemin test_step_color). Testé aussi en bout :
+  SETCOLOR -> export STEP -> COLOUR_RGB présent. Doc AGENT.md §2b.
+  Tests : tests/test_setcolor.cpp (62 assertions).
+- **#4 — import STL : avertissement AVANT l'export STEP.** Un maillage
+  qui traverse STEP produit un MANIFOLD_SURFACE_SHAPE_REPRESENTATION
+  vide (géométrie perdue, silencieux). `importStl` retourne maintenant
+  des `warnings` : le CLI `import` les sort dans un tableau
+  `warnings` du JSON, la GUI (File>Open .stl et insertstep) les met
+  dans l'historique. Le message nomme le remède (MESH2SOLID) sans
+  convertir implicitement — la conversion implicite changerait la
+  pièce et resterait plafonnée à 20 000 triangles, le choix explicite
+  reste le bon. Doc AGENT.md gotcha STL étendu. Test dédié.
+
+- **Passes :** ctest 448/448 verts (444 + 4 nouveaux) ; gui-smoke
+  333/334 — le seul échec (« fresh document empty: got 11 ») est
+  l'artefact d'un GUI laissé ouvert par une autre session (socket
+  /tmp/vikicad tenu, scénario couru contre lui) ; à relancer après
+  fermeture. +1 fix shadow -Wall au passage (OcctViewWidget sk→skId).
+
+---
+
 ## 2026-07-07 — Entrée 0 : lancement du projet, squelette M0
 
 **Contexte.** Migration Windows→Kubuntu 26.04 ; aucune CAO Linux satisfaisante pour du drafting 2D façon nanoCAD. Décision : construire VikiCAD. Plan complet validé (voir `~/.claude/plans/je-migtre-vers-linux-calm-nest.md`), jalons M0→M8, 2D daily-driver avant le 3D.

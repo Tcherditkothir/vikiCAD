@@ -97,6 +97,14 @@ protected:
     virtual void geomToJson(QJsonObject& obj) const = 0;
     virtual void geomFromJson(const QJsonObject& obj) = 0;
 
+    // Second pass of fromJson, called with the WHOLE root object after
+    // geomFromJson. Default: nothing. Entities whose state spans both the
+    // top level and "geom" override it — e.g. SolidEntity accepts a
+    // top-level "component" as a fallback (scripts that assemble .vkd
+    // documents by SQL put the name there; the canonical home is
+    // geom.component).
+    virtual void postFromJson(const QJsonObject& obj) { (void)obj; }
+
 private:
     friend class Document;
     EntityId m_id = kInvalidEntityId;

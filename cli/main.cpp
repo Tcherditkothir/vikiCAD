@@ -1,5 +1,7 @@
 #include <cstdio>
 
+#include <limits>
+
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -26,6 +28,7 @@
 #endif
 #include "io/ExcellonWriter.h"
 #include "io/EagleImporter.h"
+#include "io/FileOpen.h"
 #include "io/GerberKit.h"
 #include "io/GerberKitWriter.h"
 #include "io/NativeStore.h"
@@ -74,6 +77,9 @@ int printUsage(FILE* out)
         "  vikicad-cli new  [--exec \"CMD ...\"]... [--run script.vks] --save-as OUT.vkd\n"
         "  vikicad-cli open FILE.vkd [--exec \"CMD ...\"]... [--run script.vks]\n"
         "              [--save] [--save-as OUT.vkd]\n"
+        "              (File>Open dispatch: also .dxf/.dwg/.step/.igs/.stl,\n"
+        "               .brd/.sch/.lbr, and a Gerber kit dir/lone fab file —\n"
+        "               imported documents need --save-as, never --save)\n"
         "  vikicad-cli query FILE.vkd [--entities] [--layers] [--bounds]\n"
         "              [--notes] [--blocks] [--layouts] [--describe]\n"
         "  vikicad-cli import IN.dxf|IN.dwg --save-as OUT.vkd\n"
@@ -95,6 +101,8 @@ int printUsage(FILE* out)
         "  vikicad-cli import IN.stl  --save-as OUT.vkd   (mesh, ASCII or "
         "binary)\n"
         "  vikicad-cli connect METHOD [ARGS...]   (talk to a running GUI)\n"
+        "              [--timeout MS] (reply wait window; default 10 s, env\n"
+        "              VIKICAD_CONNECT_TIMEOUT; raise for heavy open/save/export)\n"
         "  vikicad-cli anim render --pose POSE.json --avatar AVATAR.json --out DIR\n"
         "              [--chain CHAIN.json] [--fps N] [--size LxH]\n"
         "              [--formats glb,webp,png] [--camera side|front|three-quarter]\n"
@@ -151,15 +159,32 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
 {
     std::unique_ptr<Document> doc;
     QString openedPath;
+    // File>Open parity lines from the importer (issue #11) + whether the
+    // opened document came from an importer (a bare `--save` would overwrite
+    // the SOURCE file with a .vkd payload — only --save-as makes sense).
+    QStringList preMessages;
+    bool importedDoc = false;
+    // Kept past the open branch so the reply can mirror the `import` verb's
+    // counters (kind, solids/triangles, imported/skipped, files/entities):
+    // `open f.stl` and `import f.stl` must READ ALIKE whichever channel an
+    // agent picked, otherwise the numbers an agent already trusts from one
+    // verb look missing in the other. Stays empty for the `new` verb.
+    OpenFileResult loaded;
 
     if (verb == QLatin1String("open")) {
         if (args.isEmpty() || args.first().startsWith(QLatin1String("--")))
             return emitError(QStringLiteral("E_ARGS"), QStringLiteral("open needs a file"));
         openedPath = args.takeFirst();
-        QString error;
-        doc = NativeStore::load(openedPath, error);
-        if (!doc)
-            return emitError(QStringLiteral("E_OPEN"), error);
+        // Issue #11: `open` dispatches by extension exactly like the GUI's
+        // File>Open (one behaviour for every channel) — .vkd loads natively,
+        // any other CAD/EDA/fab file goes through its importer. Importer
+        // summary lines and warnings land in the reply's `messages`.
+        loaded = openFileAny(openedPath);
+        if (!loaded.ok)
+            return emitError(QStringLiteral("E_OPEN"), loaded.error);
+        doc = std::move(loaded.document);
+        preMessages = loaded.messages;
+        importedDoc = loaded.kind != QLatin1String("vkd");
     } else {
         doc = std::make_unique<Document>();
     }
@@ -178,11 +203,22 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
         if (a == QLatin1String("--exec")) {
             if (++i >= args.size())
                 return emitError(QStringLiteral("E_ARGS"), QStringLiteral("--exec needs a value"));
-            const auto r = processor.submit(args[i], /*strict=*/true);
-            if (!r.ok)
-                return emitError(QStringLiteral("E_EXEC"),
-                                 QStringLiteral("%1 (in: %2)").arg(r.error, args[i]));
-            ++executed;
+            // `;` separates complete commands on one --exec (issue #2): each
+            // part is its own submission, in order, first failure aborts.
+            // A trailing/empty segment (stray `;`) is ignored.
+            const QStringList parts =
+                args[i].split(QLatin1Char(';'), Qt::SkipEmptyParts);
+            for (const QString& part : parts) {
+                const QString line = part.trimmed();
+                if (line.isEmpty())
+                    continue;
+                const auto r = processor.submit(line, /*strict=*/true);
+                if (!r.ok)
+                    return emitError(QStringLiteral("E_EXEC"),
+                                     QStringLiteral("%1 (in --exec: %2)")
+                                         .arg(r.error, line));
+                ++executed;
+            }
         } else if (a == QLatin1String("--run")) {
             if (++i >= args.size())
                 return emitError(QStringLiteral("E_ARGS"), QStringLiteral("--run needs a file"));
@@ -210,6 +246,13 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
     if (save && openedPath.isEmpty() && saveAs.isEmpty())
         return emitError(QStringLiteral("E_ARGS"),
                          QStringLiteral("new document: use --save-as, not --save"));
+    // Issue #11 guard: an imported document (`open f.stl --save`) must never
+    // overwrite its SOURCE file with .vkd content — name the working verbs.
+    if (savedTo == openedPath && importedDoc)
+        return emitError(QStringLiteral("E_ARGS"),
+                         QStringLiteral("cannot --save over the imported source file %1 — "
+                                        "use --save-as OUT.vkd")
+                             .arg(openedPath));
     if (!savedTo.isEmpty()) {
         QString error;
         if (!NativeStore::save(*doc, savedTo, error))
@@ -221,7 +264,46 @@ int cmdNewOrOpen(const QString& verb, QStringList args)
     result[QStringLiteral("entityCount")] = qint64(doc->entityCount());
     if (!savedTo.isEmpty())
         result[QStringLiteral("savedTo")] = savedTo;
+    // `open` reports how it dispatched AND mirrors the `import` verb's
+    // counters (issue #11): an agent that reached for `open f.stl` reads the
+    // same numbers as one that used `import f.stl` — same key names, same
+    // meaning. `dispatch` is the only addition ("vkd" = native store, so a
+    // renamed/extensionless document is never a silent mystery).
+    if (!loaded.kind.isEmpty()) {
+        result[QStringLiteral("dispatch")] = loaded.kind;
+        if (loaded.files > 0 || loaded.entities > 0) { // Gerber kit
+            result[QStringLiteral("files")] = loaded.files;
+            result[QStringLiteral("entities")] = loaded.entities;
+        }
+        if (loaded.solids > 0)
+            result[QStringLiteral("solids")] = loaded.solids;
+        if (loaded.triangles > 0)
+            result[QStringLiteral("triangles")] = loaded.triangles;
+        if (loaded.imported > 0)
+            result[QStringLiteral("imported")] = loaded.imported;
+        if (loaded.skipped > 0)
+            result[QStringLiteral("skipped")] = loaded.skipped;
+        if (loaded.notes > 0)
+            result[QStringLiteral("sidecarNotes")] = loaded.notes;
+        if (loaded.colored > 0)
+            result[QStringLiteral("colored")] = loaded.colored;
+        if (loaded.named > 0)
+            result[QStringLiteral("named")] = loaded.named;
+        if (loaded.sheets > 0)
+            result[QStringLiteral("sheets")] = loaded.sheets;
+        if (!loaded.eagleKind.isEmpty()) // EAGLE board vs schematic
+            result[QStringLiteral("kind")] = loaded.eagleKind;
+        if (!loaded.layers.isEmpty())
+            result[QStringLiteral("layers")] = QJsonArray::fromStringList(loaded.layers);
+        if (!loaded.skippedTypes.isEmpty())
+            result[QStringLiteral("skippedTypes")] =
+                QJsonArray::fromStringList(loaded.skippedTypes);
+        if (!loaded.warnings.isEmpty())
+            result[QStringLiteral("warnings")] = QJsonArray::fromStringList(loaded.warnings);
+    }
     QJsonArray messages;
+    for (const QString& m : preMessages) // importer parity lines first
+        messages.append(m);
     for (const QString& m : ctx.messages())
         messages.append(m);
     result[QStringLiteral("messages")] = messages;
@@ -323,9 +405,14 @@ int cmdImport(const QStringList& args)
         QString error;
         if (!NativeStore::save(*doc, outPath, error))
             return emitError(QStringLiteral("E_SAVE"), error);
-        return emitOk(QJsonObject{{QStringLiteral("solids"), r.solids},
-                                  {QStringLiteral("triangles"), r.triangles},
-                                  {QStringLiteral("savedTo"), outPath}});
+        QJsonObject result{{QStringLiteral("solids"), r.solids},
+                           {QStringLiteral("triangles"), r.triangles},
+                           {QStringLiteral("savedTo"), outPath}};
+        // Import advisories (issue #4): the mesh vs STEP-export warning.
+        if (!r.warnings.isEmpty())
+            result[QStringLiteral("warnings")] =
+                QJsonArray::fromStringList(r.warnings);
+        return emitOk(result);
     }
 
     if (eagleLike) {
@@ -638,49 +725,89 @@ int cmdConnect(const QStringList& args)
                          QStringLiteral("connect needs a method: ping|exec|query|open|"
                                         "save|screenshot|view3d|viewdir|pick3d|"
                                         "export|insertstep|sketchface|anim"));
-    const QString method = args.first();
+    // rest[0] is the METHOD (the old code read args.first()); --timeout may
+    // appear anywhere (connect open FILE --timeout 900 or before the method).
+    QStringList rest = args;
+    // Issue #10: the CLI is a SYNCHRONOUS RPC client — it gives up after a
+    // window of socket silence while the GUI only answers once the whole
+    // method finished (loadFile for open/insertstep, the whole kit for
+    // export, the BREP serialization for save). Big documents blow through
+    // the fixed 10 s window and the caller saw a fake E_TIMEOUT while the
+    // open was still progressing fine. The read window is now flag- and
+    // env-tunable, with generous per-method defaults for the heavy verbs
+    // (a 270 MB .vkd of 112 OCC solids measured ~1-5 min here).
+    int readTimeout = 10000;
+    for (int i = 0; i < rest.size();) {
+        if (rest[i] == QLatin1String("--timeout")) {
+            if (i + 1 >= rest.size())
+                return emitError(QStringLiteral("E_ARGS"),
+                                 QStringLiteral("--timeout needs a value in milliseconds"));
+            bool ok = false;
+            const qint64 v = rest[i + 1].toLongLong(&ok);
+            if (!ok || v <= 0)
+                return emitError(QStringLiteral("E_ARGS"),
+                                 QStringLiteral("bad --timeout value: %1 (milliseconds, > 0)")
+                                     .arg(rest[i + 1]));
+            readTimeout = static_cast<int>(qMin<qint64>(v, std::numeric_limits<int>::max()));
+            rest.removeAt(i);
+            rest.removeAt(i);
+        } else if (rest[i].startsWith(QLatin1String("--"))) {
+            return emitError(QStringLiteral("E_ARGS"),
+                             QStringLiteral("unknown connect option: %1 (only --timeout MS)")
+                                 .arg(rest[i]));
+        } else {
+            ++i; // positional tokens stay for the method dispatch below
+        }
+    }
+    bool okEnv = false;
+    const qint64 envTimeout =
+        qEnvironmentVariableIntValue("VIKICAD_CONNECT_TIMEOUT", &okEnv);
+    if (okEnv && envTimeout > 0)
+        readTimeout = static_cast<int>(qMin<qint64>(envTimeout, qint64(std::numeric_limits<int>::max())));
+
+    const QString method = rest.isEmpty() ? QString() : rest.first();
     QJsonObject params;
-    if (method == QLatin1String("exec") && args.size() > 1)
-        params[QStringLiteral("line")] = QStringList(args.mid(1)).join(QLatin1Char(' '));
-    else if (method == QLatin1String("query") && args.size() > 1)
-        params[QStringLiteral("kind")] = args[1];
+    if (method == QLatin1String("exec") && rest.size() > 1)
+        params[QStringLiteral("line")] = QStringList(rest.mid(1)).join(QLatin1Char(' '));
+    else if (method == QLatin1String("query") && rest.size() > 1)
+        params[QStringLiteral("kind")] = rest[1];
     else if ((method == QLatin1String("open") || method == QLatin1String("save") ||
               method == QLatin1String("screenshot") ||
               method == QLatin1String("insertstep") ||
               method == QLatin1String("export")) &&
-             args.size() > 1) {
-        params[QStringLiteral("path")] = args[1];
+             rest.size() > 1) {
+        params[QStringLiteral("path")] = rest[1];
         // `screenshot PATH clean` = 2D capture without overlay decorations
         // (grid/axes/crosshair) — geometry only, for reference image diffs.
-        if (method == QLatin1String("screenshot") && args.size() > 2 &&
-            args[2] == QLatin1String("clean"))
+        if (method == QLatin1String("screenshot") && rest.size() > 2 &&
+            rest[2] == QLatin1String("clean"))
             params[QStringLiteral("overlays")] = false;
         // `export OUT.gts <layer>` = one fab layer by name (else the layer is
         // resolved from the extension; a directory path exports the whole kit).
-        if (method == QLatin1String("export") && args.size() > 2)
-            params[QStringLiteral("layer")] = args[2];
+        if (method == QLatin1String("export") && rest.size() > 2)
+            params[QStringLiteral("layer")] = rest[2];
     }
-    else if (method == QLatin1String("view3d") && args.size() > 1)
-        params[QStringLiteral("on")] = args[1] != QLatin1String("off");
-    else if (method == QLatin1String("viewdir") && args.size() > 1)
-        params[QStringLiteral("name")] = args[1]; // TOP/FRONT/.../ISO
-    else if (method == QLatin1String("pick3d") && args.size() > 2) {
-        params[QStringLiteral("x")] = args[1].toInt();
-        params[QStringLiteral("y")] = args[2].toInt();
+    else if (method == QLatin1String("view3d") && rest.size() > 1)
+        params[QStringLiteral("on")] = rest[1] != QLatin1String("off");
+    else if (method == QLatin1String("viewdir") && rest.size() > 1)
+        params[QStringLiteral("name")] = rest[1]; // TOP/FRONT/.../ISO
+    else if (method == QLatin1String("pick3d") && rest.size() > 2) {
+        params[QStringLiteral("x")] = rest[1].toInt();
+        params[QStringLiteral("y")] = rest[2].toInt();
     }
     // Timeline panel: `anim load POSE AVATAR [CHAIN]`, `anim frame N`,
     // `anim play|stop|clear|status`.
-    else if (method == QLatin1String("anim") && args.size() > 1) {
-        params[QStringLiteral("action")] = args[1];
-        if (args[1] == QLatin1String("load")) {
-            if (args.size() > 2)
-                params[QStringLiteral("pose")] = args[2];
-            if (args.size() > 3)
-                params[QStringLiteral("avatar")] = args[3];
-            if (args.size() > 4)
-                params[QStringLiteral("chain")] = args[4];
-        } else if (args[1] == QLatin1String("frame") && args.size() > 2) {
-            params[QStringLiteral("frame")] = args[2].toInt();
+    else if (method == QLatin1String("anim") && rest.size() > 1) {
+        params[QStringLiteral("action")] = rest[1];
+        if (rest[1] == QLatin1String("load")) {
+            if (rest.size() > 2)
+                params[QStringLiteral("pose")] = rest[2];
+            if (rest.size() > 3)
+                params[QStringLiteral("avatar")] = rest[3];
+            if (rest.size() > 4)
+                params[QStringLiteral("chain")] = rest[4];
+        } else if (rest[1] == QLatin1String("frame") && rest.size() > 2) {
+            params[QStringLiteral("frame")] = rest[2].toInt();
         }
     }
 
@@ -698,9 +825,19 @@ int cmdConnect(const QStringList& args)
     // Large replies (e.g. query entities with BREP solids) arrive in several
     // chunks: keep reading until the full newline-terminated line is buffered,
     // otherwise a partial line parses as an empty JSON object.
+    // Issue #10: the GUI answers only once the whole method finished, so the
+    // FIRST waitForReadyRead is the one that must survive a long open — and
+    // every later one just awaits the next chunk of an already-flowing reply.
+    // The silence budget therefore RESETS on every chunk: a live transfer is
+    // never killed mid-flight, a silent GUI aborts after the window.
+    const int silenceBudget = readTimeout > 10000 ? readTimeout : 10000;
     while (!socket.canReadLine())
-        if (!socket.waitForReadyRead(10000))
-            return emitError(QStringLiteral("E_TIMEOUT"), QStringLiteral("no response"));
+        if (!socket.waitForReadyRead(silenceBudget))
+            return emitError(
+                QStringLiteral("E_TIMEOUT"),
+                QStringLiteral("no response within %1 ms (tune with connect "
+                               "--timeout MS or VIKICAD_CONNECT_TIMEOUT)")
+                    .arg(silenceBudget));
     const QJsonObject resp = QJsonDocument::fromJson(socket.readLine()).object();
     if (resp.contains(QStringLiteral("error")))
         return emitError(QStringLiteral("E_RPC"),

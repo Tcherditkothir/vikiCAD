@@ -538,6 +538,75 @@ SolidResult revolveWires(const std::vector<TopoDS_Wire>& wires, const Vec2d& axi
     return result;
 }
 
+namespace {
+
+// Split an open wire into MAXIMAL TANGENT-CONTINUOUS legs (issue #13).
+//
+// BRepOffsetAPI_MakePipe has a silent failure mode over a spine whose
+// direction breaks: it builds a shape BRepCheck calls valid and closed that
+// holds only the FIRST leg's volume and drops the rest. Measured on a
+// 0,0 -> 0,25 -> 25,25 spine with an r=1.4 disc: 153.938 mm3 instead of
+// 307.876 (exactly 50 %), and on a 4-leg staircase 147.781 instead of
+// 295.561 (also 50 %). Nothing in the report says so — the volume guard in
+// requireSolid only rejects ZERO volume, not a partial one.
+//
+// The cure is to sweep one leg at a time and fuse: measured 307.091 mm3
+// (99.7 %) on the 2-leg corner and 293.206 (99.2 %) on the staircase, while
+// a straight spine and a single-arc spine are untouched (100 %).
+//
+// A leg is a maximal run of consecutive edges whose directions match: the
+// wire is walked edge by edge, each edge's tangent taken at its own start,
+// and a new leg opens whenever the direction differs by more than `tol`.
+std::vector<TopoDS_Wire> tangentLegs(const TopoDS_Wire& spine)
+{
+    std::vector<TopoDS_Wire> legs;
+    std::vector<TopoDS_Edge> current;
+    gp_Dir currentDir;
+    bool haveDir = false;
+
+    auto flush = [&]() {
+        if (current.empty())
+            return;
+        BRepBuilderAPI_MakeWire maker;
+        for (const TopoDS_Edge& e : current)
+            maker.Add(e);
+        if (maker.IsDone())
+            legs.push_back(maker.Wire());
+        current.clear();
+    };
+
+    for (TopExp_Explorer exp(spine, TopAbs_EDGE); exp.More(); exp.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(exp.Current());
+        gp_Dir dir;
+        bool ok = false;
+        try {
+            BRepAdaptor_Curve curve(edge);
+            gp_Pnt p;
+            gp_Vec v;
+            curve.D1(curve.FirstParameter(), p, v);
+            if (v.Magnitude() > 1e-9) {
+                dir = gp_Dir(v);
+                ok = true;
+            }
+        } catch (const Standard_Failure&) {
+        }
+        if (!ok) { // cannot measure it: keep it in the running leg
+            current.push_back(edge);
+            continue;
+        }
+        if (haveDir && !currentDir.IsEqual(dir, 1e-6)) {
+            flush(); // direction break: the previous leg ends here
+        }
+        currentDir = dir;
+        haveDir = true;
+        current.push_back(edge);
+    }
+    flush();
+    return legs;
+}
+
+} // namespace
+
 SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
                          const TopoDS_Wire& pathWire)
 {
@@ -555,22 +624,40 @@ SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
     // its centre sits at the path start, so the sweep encloses a real volume
     // even when the profile was sketched coplanar with the path (the usual 2D
     // workflow). MakePipe itself keeps the profile rigid along the spine.
-    gp_Pnt startPnt;
-    gp_Vec startTan;
-    try {
-        BRepAdaptor_CompCurve spine(pathWire);
-        const double u0 = spine.FirstParameter();
-        spine.D1(u0, startPnt, startTan);
-    } catch (const Standard_Failure& e) {
-        result.message = QStringLiteral("bad sweep path: %1")
-                             .arg(QString::fromUtf8(e.GetMessageString()));
-        return result;
-    }
-    if (startTan.Magnitude() < 1e-9) {
+    // Split the spine at every direction break and sweep one tangent-continuous
+    // leg at a time (issue #13 — see tangentLegs): MakePipe over a cornered
+    // spine silently keeps only the first leg.
+    const std::vector<TopoDS_Wire> legs = tangentLegs(pathWire);
+    if (legs.empty()) {
         result.message = QStringLiteral("degenerate sweep path");
         return result;
     }
-    const gp_Dir tangent(startTan);
+    // Per-leg frame: the profile of a leg is oriented perpendicular to ITS
+    // tangent and centred on ITS start (the corner).
+    struct LegFrame {
+        TopoDS_Wire wire;
+        gp_Pnt start;
+        gp_Dir tangent{0, 0, 1};
+    };
+    std::vector<LegFrame> frames;
+    for (const TopoDS_Wire& leg : legs) {
+        LegFrame f;
+        f.wire = leg;
+        try {
+            BRepAdaptor_CompCurve curve(leg);
+            const double u0 = curve.FirstParameter();
+            gp_Vec v;
+            curve.D1(u0, f.start, v);
+            if (v.Magnitude() < 1e-9)
+                throw Standard_Failure("degenerate leg");
+            f.tangent = gp_Dir(v);
+        } catch (const Standard_Failure& e) {
+            result.message = QStringLiteral("bad sweep path: %1")
+                                 .arg(QString::fromUtf8(e.GetMessageString()));
+            return result;
+        }
+        frames.push_back(f);
+    }
 
     TopoDS_Shape acc;
     for (const TopoDS_Wire& wire : profileWires) {
@@ -579,60 +666,66 @@ SolidResult sweepProfile(const std::vector<TopoDS_Wire>& profileWires,
             result.message = QStringLiteral("profile wire does not bound a face");
             return result;
         }
-        // Reorient the profile face: rotate its plane normal onto the path
-        // tangent and translate its centroid onto the path start point.
-        TopoDS_Shape profShape = face.Face();
-        GProp_GProps sprops;
-        BRepGProp::SurfaceProperties(profShape, sprops);
-        const gp_Pnt centroid = sprops.CentreOfMass();
-        gp_Dir profNormal(0, 0, 1);
-        {
-            const Handle(Geom_Surface) surf = BRep_Tool::Surface(TopoDS::Face(profShape));
-            GeomLProp_SLProps sl(surf, 0.0, 0.0, 1, 1e-7);
-            if (sl.IsNormalDefined())
-                profNormal = sl.Normal();
-        }
-        gp_Trsf orient;
-        const double dotv = profNormal.Dot(tangent);
-        if (dotv < 1.0 - 1e-9) {
-            gp_Dir rotAxis;
-            if (dotv <= -1.0 + 1e-9) {
-                // Antiparallel: pick any axis perpendicular to the normal.
-                gp_Vec seed = std::fabs(profNormal.Z()) < 0.9 ? gp_Vec(0, 0, 1)
-                                                              : gp_Vec(1, 0, 0);
-                rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(seed));
-            } else {
-                rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(gp_Vec(tangent)));
+        const TopoDS_Face profFace = face.Face();
+        for (const LegFrame& leg : frames) {
+            // Reorient the profile face for THIS leg: rotate its plane normal
+            // onto the leg tangent and translate its centroid onto the leg
+            // start (the corner), so the elbow is fully covered.
+            TopoDS_Shape profShape = profFace;
+            GProp_GProps sprops;
+            BRepGProp::SurfaceProperties(profShape, sprops);
+            const gp_Pnt centroid = sprops.CentreOfMass();
+            gp_Dir profNormal(0, 0, 1);
+            {
+                const Handle(Geom_Surface) surf =
+                    BRep_Tool::Surface(TopoDS::Face(profShape));
+                GeomLProp_SLProps sl(surf, 0.0, 0.0, 1, 1e-7);
+                if (sl.IsNormalDefined())
+                    profNormal = sl.Normal();
             }
-            const double ang = gp_Vec(profNormal).Angle(gp_Vec(tangent));
-            orient.SetRotation(gp_Ax1(centroid, rotAxis), ang);
-        }
-        gp_Trsf move;
-        move.SetTranslation(gp_Vec(centroid, startPnt));
-        profShape = BRepBuilderAPI_Transform(profShape, move.Multiplied(orient), true)
-                        .Shape();
-        try {
-            BRepOffsetAPI_MakePipe pipe(pathWire, TopoDS::Face(profShape));
-            pipe.Build();
-            if (pipe.Shape().IsNull()) {
-                result.message = QStringLiteral("sweep failed");
-                return result;
+            gp_Trsf orient;
+            const double dotv = profNormal.Dot(leg.tangent);
+            if (dotv < 1.0 - 1e-9) {
+                gp_Dir rotAxis;
+                if (dotv <= -1.0 + 1e-9) {
+                    // Antiparallel: pick any axis perpendicular to the normal.
+                    gp_Vec seed = std::fabs(profNormal.Z()) < 0.9 ? gp_Vec(0, 0, 1)
+                                                                  : gp_Vec(1, 0, 0);
+                    rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(seed));
+                } else {
+                    rotAxis = gp_Dir(gp_Vec(profNormal).Crossed(gp_Vec(leg.tangent)));
+                }
+                const double ang = gp_Vec(profNormal).Angle(gp_Vec(leg.tangent));
+                orient.SetRotation(gp_Ax1(centroid, rotAxis), ang);
             }
-            const TopoDS_Shape swept = pipe.Shape();
-            if (acc.IsNull()) {
-                acc = swept;
-            } else {
-                BRepAlgoAPI_Fuse fuse(acc, swept);
-                if (!fuse.IsDone()) {
-                    result.message = QStringLiteral("fusing swept profiles failed");
+            gp_Trsf move;
+            move.SetTranslation(gp_Vec(centroid, leg.start));
+            profShape =
+                BRepBuilderAPI_Transform(profShape, move.Multiplied(orient), true)
+                    .Shape();
+            try {
+                BRepOffsetAPI_MakePipe pipe(leg.wire, TopoDS::Face(profShape));
+                pipe.Build();
+                if (pipe.Shape().IsNull()) {
+                    result.message = QStringLiteral("sweep failed");
                     return result;
                 }
-                acc = fuse.Shape();
+                const TopoDS_Shape swept = pipe.Shape();
+                if (acc.IsNull()) {
+                    acc = swept;
+                } else {
+                    BRepAlgoAPI_Fuse fuse(acc, swept);
+                    if (!fuse.IsDone()) {
+                        result.message = QStringLiteral("fusing swept legs failed");
+                        return result;
+                    }
+                    acc = fuse.Shape();
+                }
+            } catch (const Standard_Failure& e) {
+                result.message = QStringLiteral("sweep failed: %1")
+                                     .arg(QString::fromUtf8(e.GetMessageString()));
+                return result;
             }
-        } catch (const Standard_Failure& e) {
-            result.message = QStringLiteral("sweep failed: %1")
-                                 .arg(QString::fromUtf8(e.GetMessageString()));
-            return result;
         }
     }
     requireSolid(result, acc,

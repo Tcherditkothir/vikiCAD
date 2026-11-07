@@ -7,3 +7,4 @@ compile_commands.json
 # session-handoff notes and internal agent-orchestration scripts.
 docs/REPRISE.md
 scripts/overnight-*.mjs
+PLAN-codex-oss.md

@@ -31,6 +31,7 @@
 #include <QTabWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "Version.h"
@@ -649,6 +650,23 @@ MainWindow::MainWindow()
         m_commandBar->appendHistory(
             QStringLiteral("IPC: listening on local socket 'vikicad'"));
 
+    // Issue #6: deferred, coalesced 3D sync for IPC exec bursts (single-shot
+    // zero-delay timer = the next event-loop pass, not a busy loop).
+    // Issue #7: insertstep shares the timer; its sync is the full
+    // refreshAfterAssemblyChange (assembly panel + possible 3D-view switch).
+    m_ipc3dSyncTimer = new QTimer(this);
+    m_ipc3dSyncTimer->setSingleShot(true);
+    m_ipc3dSyncTimer->setInterval(0);
+    connect(m_ipc3dSyncTimer, &QTimer::timeout, this, [this] {
+        m_ipc3dSyncPending = false;
+        if (m_ipc3dSyncRefreshAsm) {
+            m_ipc3dSyncRefreshAsm = false;
+            refreshAfterAssemblyChange();
+        } else {
+            sync3DView();
+        }
+    });
+
     loadShortcuts();
     loadMousePrefs();
     m_commandBar->focusInput();
@@ -1063,7 +1081,20 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         // Commands can change the selection (SELECT) or entity properties:
         // keep the Properties panel live for IPC-driven sessions too.
         m_propsPanel->refresh();
-        sync3DView(); // IPC-driven 3D commands must show up too
+        // Issue #6: the reply must not wait on the 3D rebuild. On a real
+        // assembly `refreshFrom` (recomputes every shape's selection
+        // structures) can exceed the CLI's 10 s read timeout, so the caller
+        // sees `E_TIMEOUT` while the mutation is already applied. Defer the
+        // visual sync to the event loop (coalesced per burst: a single
+        // pending timer collapses into one rebuild) — the reply travels
+        // first, the paint follows within a frame. The RPC verbs that
+        // OBSERVE the scene (query/pick3d/viewdir/screenshot) flush the
+        // pending sync synchronously first (flushIpc3dSync), so a capture
+        // can never show a scene older than the document.
+        if (!m_ipc3dSyncPending) {
+            m_ipc3dSyncPending = true;
+            m_ipc3dSyncTimer->start();
+        }
         if (!r.ok)
             return {{QStringLiteral("error"), r.error},
                     {QStringLiteral("messages"), messages}};
@@ -1072,6 +1103,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                 {QStringLiteral("messages"), messages}};
     }
     if (method == QLatin1String("query")) {
+        flushIpc3dSync(); // never observe a scene older than the document
         const QString kind = params[QStringLiteral("kind")].toString();
         QJsonObject result{{QStringLiteral("count"), qint64(m_doc->entityCount())}};
         if (kind.isEmpty() || kind == QLatin1String("entities"))
@@ -1148,6 +1180,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
                  m_3dButton ? m_3dButton->isChecked() : false}};
     }
     if (method == QLatin1String("pick3d")) {
+        flushIpc3dSync(); // never pick a stale scene
         if (!m_occtView || m_viewStack->currentWidget() != m_occtView)
             return {{QStringLiteral("error"), QStringLiteral("not in 3D view")}};
         // Coords in physical view pixels; default to the view centre.
@@ -1161,6 +1194,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         // The agent's eyes: aim the 3D camera along a standard view
         // (TOP/BOTTOM/FRONT/BACK/LEFT/RIGHT/ISO) — setStandardView also
         // FitAlls, so a following `screenshot` frames the whole scene.
+        flushIpc3dSync(); // never aim the camera at a stale scene
         if (!m_occtView || m_viewStack->currentWidget() != m_occtView)
             return {{QStringLiteral("error"), QStringLiteral("not in 3D view")}};
         const QString name = params[QStringLiteral("name")].toString();
@@ -1177,11 +1211,51 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         return {{QStringLiteral("ok"), true}};
     }
     if (method == QLatin1String("insertstep")) {
+        // Issue #7: a big mesh (BP3D/Pitt parts run ~6k+ faces) makes this
+        // method take longer than the caller's reply wait window, and the
+        // caller saw a fake E_TIMEOUT while the insert was proceeding fine.
+        // The refresh below is the expensive tail — defer it to the event
+        // loop (same coalesced timer the exec verb uses) so the reply only
+        // waits on the parse + document transaction itself.
         QString error;
-        if (!insertComponentFile(params[QStringLiteral("path")].toString(), error))
+        const int before = m_doc->entityCount();
+        if (!insertComponentFile(params[QStringLiteral("path")].toString(), error,
+                                 /*refreshView=*/false))
             return {{QStringLiteral("error"),
                      error.isEmpty() ? QStringLiteral("insert failed") : error}};
-        return {{QStringLiteral("ok"), true}};
+        if (!m_ipc3dSyncPending) {
+            m_ipc3dSyncPending = true;
+            m_ipc3dSyncRefreshAsm = true;
+            m_ipc3dSyncTimer->start();
+        }
+        // What landed (issue #7): names + per-solid triangle counts for mesh
+        // components, so the agent knows the MESH2SOLID cost BEFORE issuing
+        // it (sewing runs ~one face per triangle; see the
+        // kMeshToSolidMaxTriangles notes) and can pick the offline path or a
+        // raised --timeout instead of a blind timeout error.
+        QJsonArray inserted;
+        int triangles = 0;
+        const auto order = m_doc->drawOrder();
+        for (size_t i = before; i < order.size(); ++i) {
+            const EntityId id = order[i];
+            const auto* solid =
+                dynamic_cast<const SolidEntity*>(m_doc->entity(id));
+            if (!solid)
+                continue;
+            QJsonObject row{{QStringLiteral("id"), qint64(id)},
+                            {QStringLiteral("name"), solid->component}};
+            const int tri = meshTriangleCount(solid->shape());
+            if (tri > 0) {
+                row[QStringLiteral("triangles")] = tri;
+                triangles += tri;
+            }
+            inserted.append(row);
+        }
+        return {{QStringLiteral("ok"), true},
+                {QStringLiteral("inserted"), inserted},
+                {QStringLiteral("entityCount"),
+                 qint64(m_doc->entityCount())},
+                {QStringLiteral("triangles"), triangles}};
     }
     if (method == QLatin1String("screenshot")) {
         const QString path = params[QStringLiteral("path")].toString();
@@ -1201,6 +1275,7 @@ QJsonObject MainWindow::handleRpc(const QString& method, const QJsonObject& para
         }
         // In 3D, dump the OCCT framebuffer (QWidget::grab can't capture a
         // native GL window). Otherwise grab the 2D canvas.
+        flushIpc3dSync(); // a capture must show the document, not the pre-exec scene
         const bool in3d = m_occtView && m_viewStack &&
                           m_viewStack->currentWidget() == m_occtView;
         if (in3d) {
@@ -1476,6 +1551,20 @@ void MainWindow::sync3DView()
     }
 }
 
+void MainWindow::flushIpc3dSync()
+{
+    if (!m_ipc3dSyncPending)
+        return;
+    m_ipc3dSyncTimer->stop();
+    m_ipc3dSyncPending = false;
+    if (m_ipc3dSyncRefreshAsm) {
+        m_ipc3dSyncRefreshAsm = false;
+        refreshAfterAssemblyChange();
+    } else {
+        sync3DView();
+    }
+}
+
 void MainWindow::onInteraction()
 {
     refreshPromptAndMessages();
@@ -1662,6 +1751,8 @@ bool MainWindow::loadFile(const QString& path, bool interactive)
                            "converts it to real geometry if you need booleans")
                 .arg(r.triangles)
                 .arg(path));
+        for (const QString& w : r.warnings) // issue #4: STEP-export warning
+            m_commandBar->appendHistory(w);
         return true;
     }
     // EAGLE 6+ XML boards and schematics (.lbr goes through importEagle too,
@@ -2420,6 +2511,16 @@ bool MainWindow::insertComponentFile(const QString& path, QString& error,
     m_commandBar->appendHistory(
         QStringLiteral("Inserted component '%1' (%2 solid%3)")
             .arg(comp).arg(added).arg(added == 1 ? QString() : QStringLiteral("s")));
+    // Issue #4: an STL component is a mesh — STEP export needs MESH2SOLID.
+    if (path.endsWith(QLatin1String(".stl"), Qt::CaseInsensitive)) {
+        // Re-reading the file just for the advisory is wasteful; the warning
+        // is the same for every STL import.
+        m_commandBar->appendHistory(
+            QStringLiteral(
+                "'%1' imported as a MESH: STEP export writes no geometry — "
+                "MESH2SOLID <id> first if you need a STEP")
+                .arg(comp));
+    }
     if (refreshView)
         refreshAfterAssemblyChange();
     return true;

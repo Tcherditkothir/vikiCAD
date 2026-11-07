@@ -129,7 +129,15 @@ private:
     {
         Document& doc = ctx.doc();
         if (doc.activeSketch() == 0) {
-            ctx.info(QStringLiteral("no sketch is open"));
+            // Issue #1: a headless agent hitting this almost always ran two
+            // CLI invocations — SKETCH NEW in one, the profile in another,
+            // each `new`/`open` spawning a FRESH in-memory document. Say so.
+            ctx.info(QStringLiteral(
+                "no sketch is open — each CLI invocation starts from a fresh "
+                "document, so a sketch opened by an earlier `new`/`open` call "
+                "is gone: put the WHOLE sequence in one invocation (chain "
+                "--exec flags or use --run script.vks), or in the GUI re-open "
+                "it with SKETCH Open <name|id>"));
             return Step::done();
         }
         const SketchInfo* info = doc.sketchById(doc.activeSketch());

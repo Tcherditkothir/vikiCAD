@@ -3,16 +3,20 @@
 #include <algorithm>
 
 #include <QFileInfo>
+#include <QStringList>
 
 #include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepLib.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Precision.hxx>
 #include <RWStl.hxx>
@@ -24,6 +28,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 
@@ -31,6 +36,22 @@
 #include "solid/SolidEntity.h"
 
 namespace viki {
+
+namespace {
+
+// Signed volume of a shape (GProp volume properties, mm³). The SIGN carries
+// meaning here: a closed shell whose faces wind inward measures negative —
+// see meshToSolid, which normalises that (issue #8).
+double signedVolume(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull())
+        return 0.0;
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(shape, props);
+    return props.Mass();
+}
+
+} // namespace
 
 StlResult exportStl(const Document& doc, const QString& path, double deflection,
                     bool ascii)
@@ -159,6 +180,16 @@ StlResult importStl(const QString& path, std::unique_ptr<Document>& outDoc)
     result.ok = true;
     result.solids = 1;
     result.triangles = tri->NbTriangles();
+    // Issue #4: mesh-backed solids cannot cross STEP (the XCAF writer emits
+    // an empty MANIFOLD_SURFACE_SHAPE_REPRESENTATION for a surface-less face
+    // and the file loses the geometry). Warn here, at import, where the cure
+    // is one command away — the implicit alternative changes the part and is
+    // capped at 20 000 triangles, so the warning names MESH2SOLID instead.
+    result.warnings << QStringLiteral(
+        "this STL imported as a MESH (triangulation only): viewing, "
+        "measuring and moving are fine, but STEP export of a mesh writes no "
+        "geometry — run MESH2SOLID <id> first if you need a STEP (booleans, "
+        "fillets also need real geometry)");
     return result;
 }
 
@@ -246,27 +277,97 @@ MeshToSolidResult meshToSolid(const TopoDS_Shape& mesh, int maxTriangles)
         return result;
     }
 
-    for (TopExp_Explorer exp(sewn, TopAbs_FACE); exp.More(); exp.Next())
+    // --- Issue #8: walk the sewn shape SHELL BY SHELL ------------------------
+    //
+    // The old code only looked at a top-level TopAbs_SHELL, so anything the
+    // sewer handed back as a COMPOUND (which is what a mesh of two overlapping
+    // bodies sews into: two disjoint closed shells, no shared vertex) fell
+    // through to `result.shape = sewn` with closed=false and was reported as an
+    // "open shell" even though both halves were watertight. And a top-level
+    // shell whose triangles wound INWARD produced a solid with a NEGATIVE
+    // volume, which the caller then read as anti-material (magnitudes looked
+    // plausible, so it survived review).
+    //
+    // Both are fixed here, per shell:
+    //   1. a closed shell becomes a solid;
+    //   2. if that solid's signed volume is negative, its faces point at the
+    //      inside, so it is flipped;
+    //   3. everything (solids and any genuinely open shell) is collected into
+    //      one COMPOUND — nothing is ever dropped.
+    std::vector<TopoDS_Shape> parts;
+    for (TopExp_Explorer exp(sewn, TopAbs_SHELL); exp.More(); exp.Next()) {
+        const TopoDS_Shell shell = TopoDS::Shell(exp.Current());
+        if (!BRep_Tool::IsClosed(shell)) {
+            // A mesh with holes is common in downloaded parts and is still real
+            // geometry — keep the shell as-is rather than failing on it.
+            ++result.openShells;
+            parts.push_back(shell);
+            continue;
+        }
+
+        BRepBuilderAPI_MakeSolid mk(shell);
+        if (!mk.IsDone() || mk.Shape().IsNull()) {
+            // IsClosed said yes but MakeSolid would not commit: keep the shell
+            // instead of losing the geometry, and count it honestly.
+            ++result.openShells;
+            parts.push_back(shell);
+            continue;
+        }
+        TopoDS_Solid solid = mk.Solid();
+
+        // The signed volume is the whole point of the issue: sewing carries the
+        // input winding through untouched, so an inward-wound mesh yields a
+        // solid enclosing "negative" material. BRepLib::OrientClosedSolid
+        // restores outward orientation when it finds the faces pointing in.
+        if (signedVolume(solid) < 0.0) {
+            BRepLib::OrientClosedSolid(solid);
+            if (signedVolume(solid) < 0.0) {
+                // Belt and braces: an explicit shell-level reversal, for the
+                // rare shape OrientClosedSolid declines to touch.
+                std::vector<TopoDS_Shape> flipped;
+                for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next())
+                    flipped.push_back(f.Current().Reversed());
+                TopoDS_Shell rebuilt;
+                BRep_Builder shellBuilder;
+                shellBuilder.MakeShell(rebuilt);
+                for (const TopoDS_Shape& f : flipped)
+                    shellBuilder.Add(rebuilt, f);
+                BRepBuilderAPI_MakeSolid remade(rebuilt);
+                if (remade.IsDone() && !remade.Shape().IsNull())
+                    solid = remade.Solid();
+            }
+            ++result.reoriented;
+        }
+        ++result.solids;
+        parts.push_back(solid);
+    }
+
+    if (parts.empty()) {
+        result.error = QStringLiteral("sewing produced no shell");
+        return result;
+    }
+
+    // One shell comes back as itself (a bare solid, not wrapped in a compound:
+    // that is the shape every earlier consumer and test saw). Several come back
+    // as a compound.
+    result.shape = parts.size() == 1 ? parts.front() : [&parts] {
+        TopoDS_Compound comp;
+        BRep_Builder builder;
+        builder.MakeCompound(comp);
+        for (const TopoDS_Shape& p : parts)
+            builder.Add(comp, p);
+        return TopoDS_Shape(comp);
+    }();
+
+    for (TopExp_Explorer exp(result.shape, TopAbs_FACE); exp.More(); exp.Next())
         ++result.faces;
     if (result.faces == 0) {
         result.error = QStringLiteral("sewing produced no face");
         return result;
     }
-
-    // A closed shell can become a solid; an open one (a mesh with holes, which
-    // is common in downloaded parts) stays a shell. Both are real geometry, so
-    // report which one came out instead of failing on the open case.
-    result.shape = sewn;
-    if (sewn.ShapeType() == TopAbs_SHELL) {
-        const TopoDS_Shell shell = TopoDS::Shell(sewn);
-        if (BRep_Tool::IsClosed(shell)) {
-            BRepBuilderAPI_MakeSolid mk(shell);
-            if (mk.IsDone() && !mk.Shape().IsNull()) {
-                result.shape = mk.Shape();
-                result.closed = true;
-            }
-        }
-    }
+    // "closed" keeps its old meaning — a watertight solid came out — but now it
+    // is only true when EVERY shell made it.
+    result.closed = result.openShells == 0 && result.solids > 0;
 
     if (result.shape.IsNull()) {
         result.error = QStringLiteral("conversion produced a null shape");

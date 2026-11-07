@@ -58,9 +58,20 @@ public:
 
     CommandContext& ctx() { return m_ctx; }
 
+    // The prompt an active command was waiting at when it cancelled itself,
+    // and the command's name — read by the strict-mode silent-cancellation
+    // guard (issue #12). Cleared by every non-cancelled step.
+    QString cancelledAt() const { return m_cancelPrompt; }
+    QString cancelledCommand() const { return m_cancelCommand; }
+
 private:
     Result drive(Step step);
     Result feedPendingTokens();
+    // strict mode only: a command that CANCELLED itself while leaving not one
+    // message is the silent-failure trap of issue #12 — the caller sees
+    // {"ok":true,...} with nothing done and nothing said. Returns the error
+    // Result instead, or `r` unchanged when the guard does not apply.
+    Result guardSilentCancellation(const Result& r, size_t messagesBefore);
     // Parse one token for the currently requested input kind.
     std::optional<InputValue> parseToken(const QString& token, QString& error);
     void finishCommand(bool cancelled);
@@ -77,6 +88,10 @@ private:
     // token text is known). Reset on every drive().
     bool m_repushPending = false;
     bool m_strict = false; // strictness of the submit() currently running
+    // Where the last self-cancellation happened (issue #12): the prompt the
+    // command was waiting at, and its name. Empty when nothing cancelled.
+    QString m_cancelPrompt;
+    QString m_cancelCommand;
 };
 
 // Registers every built-in command (drawing, editing, view).

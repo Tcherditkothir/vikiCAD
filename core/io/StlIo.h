@@ -15,6 +15,11 @@ struct StlResult {
     QString error;
     int solids = 0;    // number of SolidEntity meshed into the STL
     int triangles = 0; // facets read (import) — 0 on export
+    // Import advisories (issue #4): an STL lands as a MESH; STEP export of a
+    // mesh-backed solid writes an empty MANIFOLD_SURFACE_SHAPE_REPRESENTATION
+    // (geometry silently lost). The cure is MESH2SOLID first — warn the caller
+    // right at import, both CLI JSON and GUI history.
+    QStringList warnings;
 };
 
 // STL export for 3D printing. Every SolidEntity is meshed with
@@ -52,8 +57,18 @@ struct MeshToSolidResult {
     QString warning;      // advisory on a successful conversion (skipped facets)
     TopoDS_Shape shape;
     int triangles = 0;    // facets fed to the sewer
-    int faces = 0;        // faces in the sewn result
-    bool closed = false;  // true when a watertight solid came out
+    int faces = 0;        // faces in `shape`
+    // Issue #8: a mesh does NOT have to be one body. A concatenated union (two
+    // overlapping shells sharing no vertex, exactly what a naive trimesh export
+    // produces) sews into several disjoint closed shells. The old single-shell
+    // code path dropped those cases to "open shell" and never made a solid of
+    // them. So the sewn shape is now walked shell by shell.
+    int solids = 0;       // closed shells that became real TopAbs_SOLID bodies
+    int openShells = 0;   // shells left as shells: genuinely open ones, plus
+                          // closed-but-unbuildable ones. Never dropped.
+    int reoriented = 0;   // closed shells whose faces pointed INWARD and were
+                          // flipped so the signed volume comes out positive
+    bool closed = false;  // true when EVERY shell came out a watertight solid
 };
 
 // Default cap on MESH2SOLID input. Sewing costs one planar face per triangle
@@ -72,13 +87,22 @@ struct MeshToSolidResult {
 inline constexpr int kMeshToSolidMaxTriangles = 20000;
 
 // Convert a mesh-backed shape (see importStl) into real BREP geometry: every
-// triangle becomes a planar face, the faces are sewn into a shell, and a closed
-// shell becomes a solid. That is what unlocks booleans, sections and MINDIST on
-// an imported STL.
+// triangle becomes a planar face, the faces are sewn into shells, and each
+// CLOSED shell becomes a solid. That is what unlocks booleans, sections and
+// MINDIST on an imported STL.
 //
 // The result is faceted by construction -- a fillet on a facet edge has no
 // geometric meaning -- so this is a deliberate, explicit step (the MESH2SOLID
 // command), never something the importer does behind your back.
+//
+// Signed volume is normalised (issue #8): sewing preserves whatever winding
+// came in, so a mesh exported with inward-facing triangles sews into a
+// watertight shell whose volume is NEGATIVE, and every downstream consumer
+// (measure, mass, STEP, booleans) then sees anti-material. Sewing has no
+// opinion about which side is "outside" -- the surface alone cannot say -- so
+// each closed shell is checked and flipped when its signed volume is negative,
+// which is the deterministic, cheap fix and matches what trimesh's
+// `repair.fix_normals` does for the caller.
 //
 // Never reports success with a null shape: an OCCT sewing pass can "succeed"
 // and hand back nothing (see LESSONS, the requireSolid rule).

@@ -66,9 +66,12 @@ CommandProcessor::Result CommandProcessor::submit(const QString& line, bool stri
         m_ctx.clearOverlay();
         m_active = it->second();
         m_pendingTokens = tokens;
+        m_cancelPrompt.clear();
+        m_cancelCommand.clear();
+        const size_t messagesBefore = m_ctx.messages().size();
         Result r = drive(m_active->start(m_ctx));
         if (!r.ok || !r.pending)
-            return r;
+            return guardSilentCancellation(r, messagesBefore);
         r = feedPendingTokens();
         if (r.ok && r.pending && strict) {
             // Implicit Finishes let repeating/optional stages terminate
@@ -81,14 +84,44 @@ CommandProcessor::Result CommandProcessor::submit(const QString& line, bool stri
                         false, {}};
             }
         }
-        return r;
+        return guardSilentCancellation(r, messagesBefore);
     }
 
     // A command is active: the line is input for it.
-    if (tokens.isEmpty())
-        return provideInput(InputValue::makeFinish());
+    const size_t messagesBefore = m_ctx.messages().size();
+    if (tokens.isEmpty()) {
+        Result r = provideInput(InputValue::makeFinish());
+        return guardSilentCancellation(r, messagesBefore);
+    }
     m_pendingTokens << tokens;
-    return feedPendingTokens();
+    Result r = feedPendingTokens();
+    return guardSilentCancellation(r, messagesBefore);
+}
+
+// A command that CANCELLED itself while leaving not one message is the silent
+// trap of issue #12: `SWEEP 1 2` (one line, two selection stages) replied
+// {"ok":true,...} with nothing built and nothing said, and the caller could
+// not tell it from success. Only STRICT mode is guarded — an interactive
+// Escape must stay silent — and a command that explained itself (ctx.info)
+// is left alone, since its cancellation was its own verdict.
+CommandProcessor::Result
+CommandProcessor::guardSilentCancellation(const Result& r, size_t messagesBefore)
+{
+    if (!m_strict || m_cancelCommand.isEmpty())
+        return r;
+    if (m_ctx.messages().size() != messagesBefore)
+        return r;
+    const QString where = m_cancelPrompt.isEmpty()
+                              ? QStringLiteral("no prompt")
+                              : QStringLiteral("waiting at \"%1\"").arg(m_cancelPrompt);
+    return {false,
+            QStringLiteral(
+                "%1 cancelled itself with nothing done and no explanation (%2). "
+                "If one line fed it two selection stages at once, give each "
+                "stage its own line — a .vks script (AGENT.md §2 rule 5).")
+                .arg(m_cancelCommand, where),
+            false,
+            {}};
 }
 
 CommandProcessor::Result CommandProcessor::provideInput(const InputValue& value)
@@ -104,12 +137,20 @@ CommandProcessor::Result CommandProcessor::drive(Step step)
     switch (step.state) {
     case Step::State::Done:
         m_repushPending = step.repush;
+        m_cancelPrompt.clear();
+        m_cancelCommand.clear();
         finishCommand(false);
         return {};
     case Step::State::Cancelled:
+        // Remember WHERE the command gave up (issue #12): strict mode turns an
+        // unexplained cancellation into an error instead of a silent ok:true.
+        m_cancelPrompt = m_currentRequest.prompt;
+        m_cancelCommand = m_active ? QLatin1String(m_active->name()) : QString();
         finishCommand(true);
         return {true, {}, false, {}};
     case Step::State::Continue:
+        m_cancelPrompt.clear();
+        m_cancelCommand.clear();
         m_currentRequest = step.request;
         return {true, {}, true, step.request.prompt};
     }
@@ -139,8 +180,22 @@ CommandProcessor::Result CommandProcessor::feedPendingTokens()
                 ids.push_back(id);
                 m_pendingTokens.removeFirst();
             }
-            if (ids.empty())
-                return {false, QStringLiteral("expected entity ids"), false, {}};
+            if (ids.empty()) {
+                // Name the pending command and its prompt: the gulp found a
+                // non-id token, which almost always means the PREVIOUS
+                // command is still waiting and swallowed this line's verb
+                // (issue #2: a bare "expected entity ids" gave no context).
+                return {false,
+                        QStringLiteral(
+                            "expected entity ids for command %1 (waiting at "
+                            "\"%2\") — put the ids on their own line, or a "
+                            "blank line before the next command")
+                            .arg(m_active ? QLatin1String(m_active->name())
+                                          : QStringLiteral("?"),
+                                 m_currentRequest.prompt),
+                        false,
+                        {}};
+            }
             r = provideInput(InputValue::makeEntitySet(std::move(ids)));
             continue;
         }

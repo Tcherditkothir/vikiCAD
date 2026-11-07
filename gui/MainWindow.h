@@ -15,6 +15,7 @@ class QPushButton;
 class QShortcut;
 class QStackedWidget;
 class QTabWidget;
+class QTimer;
 class QToolBar;
 class QToolButton;
 
@@ -147,6 +148,20 @@ private:
     // and froze the GUI on real STEP parts.
     void sync3DView();
     bool m_docDirty3d = false;
+    // Issue #6: the 3D sync triggered by an IPC exec runs on a zero-delay
+    // single-shot timer so the RPC reply never waits on the (potentially
+    // expensive) refreshFrom rebuild; m_ipc3dSyncPending coalesces a burst
+    // of execs into ONE rebuild on the next event-loop pass. Issue #7:
+    // insertstep shares the timer; m_ipc3dSyncRefreshAsm marks the sync as
+    // a full refreshAfterAssemblyChange (may switch to the 3D view) instead
+    // of a plain sync3DView.
+    QTimer* m_ipc3dSyncTimer = nullptr;
+    bool m_ipc3dSyncPending = false;
+    bool m_ipc3dSyncRefreshAsm = false;
+    // Run the pending deferred sync NOW (no-op when none). Called by the RPC
+    // verbs that OBSERVE the scene (query/pick3d/viewdir/screenshot): a burst
+    // of requests sharing one readyRead must never read a stale 3D scene.
+    void flushIpc3dSync();
     bool documentIsSolidsOnly() const;
     QJsonObject handleRpc(const QString& method, const QJsonObject& params);
     void loadShortcuts();

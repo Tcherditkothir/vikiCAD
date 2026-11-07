@@ -68,6 +68,12 @@ public:
 protected:
     void geomToJson(QJsonObject& obj) const override;
     void geomFromJson(const QJsonObject& obj) override;
+    // Issue #9: a solid whose .vkd JSON carries the component name at the TOP
+    // level (scripts assembling documents by SQL write it there; the canonical
+    // home is geom.component, which geomFromJson already reads) must not lose
+    // it. Adopt the top-level name only when geom.component was empty — the
+    // canonical field always wins when both agree to differ.
+    void postFromJson(const QJsonObject& obj) override;
 
 private:
     void updateCache();

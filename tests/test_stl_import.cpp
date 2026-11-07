@@ -1,9 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cstring>
+
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 
@@ -59,6 +64,117 @@ const SolidEntity* soleSolid(const Document& doc)
     }
     CHECK(count == 1);
     return found;
+}
+
+// Binary STL surgery, for the issue #8 fixtures. A binary STL is a 80-byte
+// header, a uint32 facet count, then 50 bytes per facet (normal, 3 vertices,
+// a uint16 attribute). Both helpers below rewrite that layout directly, so the
+// tests drive EXACTLY the geometry they mean to — no exporter opinion in the
+// way.
+struct StlFacet {
+    float n[3];
+    float v[3][3];
+    quint16 attr = 0;
+};
+
+std::vector<StlFacet> readBinaryStl(const QString& path)
+{
+    QFile f(path);
+    REQUIRE(f.open(QIODevice::ReadOnly));
+    const QByteArray blob = f.readAll();
+    REQUIRE(blob.size() >= 84);
+    const char* p = blob.constData();
+    quint32 count = 0;
+    std::memcpy(&count, p + 80, 4);
+    REQUIRE(blob.size() >= 84 + int(count) * 50);
+    std::vector<StlFacet> facets;
+    for (quint32 i = 0; i < count; ++i) {
+        StlFacet s;
+        std::memcpy(&s, p + 84 + i * 50, 50);
+        facets.push_back(s);
+    }
+    return facets;
+}
+
+void writeBinaryStl(const QString& path, const std::vector<StlFacet>& facets)
+{
+    QByteArray blob(80, '\0');
+    const char* tag = "vikiCAD test fixture";
+    std::memcpy(blob.data(), tag, std::strlen(tag));
+    const quint32 count = quint32(facets.size());
+    blob.append(reinterpret_cast<const char*>(&count), 4);
+    for (const StlFacet& s : facets)
+        blob.append(reinterpret_cast<const char*>(&s), 50);
+    QFile f(path);
+    REQUIRE(f.open(QIODevice::WriteOnly));
+    REQUIRE(f.write(blob) == blob.size());
+}
+
+// Reverse every facet's winding: the surface is bit-for-bit the same point set,
+// only its orientation flips. This is what an inward-wound export looks like,
+// and sewing cannot tell the difference on its own.
+void flipWinding(std::vector<StlFacet>& facets)
+{
+    for (StlFacet& s : facets) {
+        std::swap(s.v[1], s.v[2]);
+        for (float& c : s.n)
+            c = -c;
+    }
+}
+
+// Two boxes side by side sharing NO vertex: a concatenated union, i.e. two
+// independent closed shells in one file (issue #8's "deux veines").
+std::vector<StlFacet> twoBoxes(const QString& dir)
+{
+    Rig a;
+    REQUIRE(a.run(QStringLiteral("RECT 0,0 10,10")));
+    REQUIRE(a.run(QStringLiteral("EXTRUDE 10 1")));
+    const QString one = QDir(dir).filePath(QStringLiteral("box-a.stl"));
+    REQUIRE(exportStl(a.doc, one, 0.1, false).ok);
+
+    Rig b;
+    REQUIRE(b.run(QStringLiteral("RECT 20,0 30,10")));
+    REQUIRE(b.run(QStringLiteral("EXTRUDE 10 1")));
+    const QString two = QDir(dir).filePath(QStringLiteral("box-b.stl"));
+    REQUIRE(exportStl(b.doc, two, 0.1, false).ok);
+
+    std::vector<StlFacet> merged = readBinaryStl(one);
+    const std::vector<StlFacet> other = readBinaryStl(two);
+    merged.insert(merged.end(), other.begin(), other.end());
+    return merged;
+}
+
+int shellCount(const TopoDS_Shape& s)
+{
+    int n = 0;
+    for (TopExp_Explorer e(s, TopAbs_SHELL); e.More(); e.Next())
+        ++n;
+    return n;
+}
+
+int solidCount(const TopoDS_Shape& s)
+{
+    int n = 0;
+    for (TopExp_Explorer e(s, TopAbs_SOLID); e.More(); e.Next())
+        ++n;
+    return n;
+}
+
+// The smallest volume found anywhere in the shape, shell by shell. Used to
+// assert "no anti-material survived anywhere" rather than just at the top.
+double minShellVolume(const TopoDS_Shape& s)
+{
+    double lo = 0.0;
+    bool first = true;
+    for (TopExp_Explorer e(s, TopAbs_SHELL); e.More(); e.Next()) {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(e.Current(), props);
+        if (first || props.Mass() < lo) {
+            lo = props.Mass();
+            first = false;
+        }
+    }
+    return first ? 0.0 : lo;
 }
 } // namespace
 
@@ -295,6 +411,155 @@ TEST_CASE("MESH2SOLID refuses geometry that is not a mesh", "[stl][import][mesh2
     CHECK(facesAfter == 6);
     CHECK_THAT(solidops::solidMetrics(soleSolid(rig.doc)->shape()).volume,
                WithinAbs(1000.0, 1e-6));
+}
+
+TEST_CASE("importStl warns that STEP export of a mesh needs MESH2SOLID first",
+          "[stl][import][issue4]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString path = writeBoxStl(dir, QStringLiteral("box.stl"), false);
+
+    std::unique_ptr<Document> doc;
+    const StlResult r = importStl(path, doc);
+    REQUIRE(r.ok);
+
+    // Issue #4: a meshed solid crossing STEP loses its geometry (the XCAF
+    // writer emits an EMPTY MANIFOLD_SURFACE_SHAPE_REPRESENTATION). The
+    // import reply must say so BEFORE the export, and name the cure.
+    REQUIRE_FALSE(r.warnings.isEmpty());
+    bool warned = false;
+    for (const QString& w : r.warnings)
+        warned = warned || (w.contains(QStringLiteral("MESH2SOLID")) &&
+                            w.contains(QStringLiteral("STEP")));
+    CHECK(warned);
+}
+
+TEST_CASE("meshToSolid flips a shell whose faces wind inward (issue #8)",
+          "[stl][import][mesh2solid][issue8]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString good = writeBoxStl(dir, QStringLiteral("box.stl"), false);
+
+    // The SAME 10mm box, every facet reversed: identical point set, identical
+    // bounds, opposite orientation. This is the mesh vivi-dessinateur's trimesh
+    // export produced, and it used to come out of MESH2SOLID as a solid whose
+    // volume was -1000.
+    std::vector<StlFacet> facets = readBinaryStl(good);
+    REQUIRE(facets.size() == 12);
+    flipWinding(facets);
+    const QString insideOut = dir.filePath(QStringLiteral("box-inside-out.stl"));
+    writeBinaryStl(insideOut, facets);
+
+    std::unique_ptr<Document> doc;
+    REQUIRE(importStl(insideOut, doc).ok);
+    const TopoDS_Shape mesh = soleSolid(*doc)->shape();
+
+    // The mesh itself is unchanged geometry — same extents as the good box.
+    CHECK_THAT(soleSolid(*doc)->bounds().max.x, WithinAbs(10.0, 1e-6));
+
+    const MeshToSolidResult r = meshToSolid(mesh);
+    REQUIRE(r.ok);
+    CHECK(r.closed);
+    CHECK(r.solids == 1);
+    CHECK(r.openShells == 0);
+    CHECK(r.reoriented == 1); // the report says the winding had to be flipped
+    CHECK(r.faces == 12);
+
+    // THE regression: a positive volume, exactly that of the box.
+    REQUIRE_FALSE(r.shape.IsNull());
+    CHECK_THAT(solidops::solidMetrics(r.shape).volume, WithinAbs(1000.0, 1e-6));
+    // …and no anti-material hiding in any shell of the result.
+    CHECK(minShellVolume(r.shape) > 0.0);
+}
+
+TEST_CASE("meshToSolid keeps every shell of a concatenated mesh (issue #8)",
+          "[stl][import][mesh2solid][issue8]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const std::vector<StlFacet> merged = twoBoxes(dir.path());
+    REQUIRE(merged.size() == 24);
+    const QString path = dir.filePath(QStringLiteral("two-veines.stl"));
+    writeBinaryStl(path, merged);
+
+    std::unique_ptr<Document> doc;
+    REQUIRE(importStl(path, doc).ok);
+    const MeshToSolidResult r = meshToSolid(soleSolid(*doc)->shape());
+    REQUIRE(r.ok);
+
+    // Two disjoint closed shells that share no vertex — the sewer hands back a
+    // COMPOUND, and the old code called that an "open shell" and never made a
+    // solid of either half. Both are bodies now, and nothing is dropped.
+    CHECK(r.faces == 24);
+    CHECK(r.solids == 2);
+    CHECK(r.openShells == 0);
+    CHECK(r.closed);
+    CHECK(shellCount(r.shape) == 2);
+    CHECK(solidCount(r.shape) == 2);
+    CHECK_THAT(solidops::solidMetrics(r.shape).volume, WithinAbs(2000.0, 1e-6));
+    CHECK(minShellVolume(r.shape) > 0.0);
+}
+
+TEST_CASE("meshToSolid normalises a concatenated mesh of MIXED winding (issue #8)",
+          "[stl][import][mesh2solid][issue8]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    std::vector<StlFacet> merged = twoBoxes(dir.path());
+    REQUIRE(merged.size() == 24);
+    // Second half wound inward: without normalisation the two halves' volumes
+    // cancel to ~0 and the part measures as empty space.
+    std::vector<StlFacet> second(merged.begin() + 12, merged.end());
+    flipWinding(second);
+    std::copy(second.begin(), second.end(), merged.begin() + 12);
+    const QString path = dir.filePath(QStringLiteral("veines-mixtes.stl"));
+    writeBinaryStl(path, merged);
+
+    std::unique_ptr<Document> doc;
+    REQUIRE(importStl(path, doc).ok);
+    const MeshToSolidResult r = meshToSolid(soleSolid(*doc)->shape());
+    REQUIRE(r.ok);
+
+    CHECK(r.solids == 2);
+    CHECK(r.reoriented == 1);
+    // Both halves now contribute their real 1000 mm3 instead of cancelling.
+    CHECK_THAT(solidops::solidMetrics(r.shape).volume, WithinAbs(2000.0, 1e-6));
+    CHECK(minShellVolume(r.shape) > 0.0);
+}
+
+TEST_CASE("the MESH2SOLID report names the body count and the flip (issue #8)",
+          "[stl][import][mesh2solid][issue8]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    std::vector<StlFacet> facets = readBinaryStl(
+        writeBoxStl(dir, QStringLiteral("box.stl"), false));
+    flipWinding(facets);
+    const QString path = dir.filePath(QStringLiteral("box-inside-out.stl"));
+    writeBinaryStl(path, facets);
+
+    std::unique_ptr<Document> imported;
+    REQUIRE(importStl(path, imported).ok);
+    const TopoDS_Shape mesh = soleSolid(*imported)->shape();
+
+    Rig rig;
+    const EntityId id = rig.doc.nextId();
+    rig.doc.restoreEntity(std::make_unique<SolidEntity>(mesh), id);
+    rig.doc.setNextId(id + 1);
+    REQUIRE(rig.run(QStringLiteral("MESH2SOLID %1").arg(id)));
+
+    // The old wording said "open shell" for a concatenated mesh that was in
+    // fact fully watertight, which read as a failure. Count the bodies, and
+    // state plainly when the winding had to be turned around.
+    bool bodies = false, flipped = false;
+    for (const QString& m : rig.ctx.messages()) {
+        bodies = bodies || m.contains(QStringLiteral("1 closed solid"));
+        flipped = flipped || m.contains(QStringLiteral("inward-facing"));
+    }
+    CHECK(bodies);
+    CHECK(flipped);
 }
 
 TEST_CASE("importStl fails cleanly on a missing or bogus file", "[stl][import]")

@@ -56,6 +56,7 @@ add_library(vikicore STATIC
     edit/MinDist.cpp
     io/NativeStore.cpp
     io/ClipboardIo.cpp
+    io/FileOpen.cpp
     io/QueryJson.cpp
     io/PdfPlotter.cpp
     script/ScriptRunner.cpp

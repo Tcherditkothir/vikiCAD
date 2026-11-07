@@ -1,6 +1,7 @@
 #include "CommandProcessor.h"
 
 #include <algorithm>
+#include <map>
 
 #include <gp_Ax1.hxx>
 #include <gp_Dir.hxx>
@@ -285,6 +286,163 @@ std::unique_ptr<Command> makeTransparency()
     return std::make_unique<TransparencyCommand>();
 }
 
+template <typename T>
+std::unique_ptr<Command> make()
+{
+    return std::make_unique<T>();
+}
+
+// SETCOLOR <id|sel> <#RRGGBB|colorname> [alpha] — set the explicit colour of
+// entities (solids included; alpha 0-100 sets their transparency too). The
+// .vkd already persists per-entity `color`/`transparency`, the viewer honours
+// them (OcctViewWidget SetColor) and the STEP writer styles solids from them
+// — this just gives headless scripts a first-class verb instead of SQL
+// surgery. Named colours mirror the CSS subset the GUI colour dialog offers.
+class SetColorCommand : public Command {
+public:
+    const char* name() const override { return "SETCOLOR"; }
+
+    Step start(CommandContext& ctx) override
+    {
+        // Pickfirst: a pre-selected set is the target (SELECT 3 then SETCOLOR).
+        if (!ctx.selection().isEmpty()) {
+            m_ids = ctx.selection().ids();
+            ctx.selection().clear();
+            m_haveIds = true;
+            return Step::cont(InputKind::Keyword,
+                              QStringLiteral("Colour (#RRGGBB or name) <keep>:"));
+        }
+        return Step::cont(InputKind::EntitySet,
+                          QStringLiteral("Select entities to colour:"));
+    }
+
+    Step onInput(CommandContext& ctx, const InputValue& v) override
+    {
+        if (v.kind == InputValue::Kind::Cancel)
+            return Step::cancelled();
+        if (!m_haveIds) {
+            switch (v.kind) {
+            case InputValue::Kind::EntitySet:
+                m_ids = v.entitySet;
+                break;
+            case InputValue::Kind::EntityRef:
+                m_ids.push_back(v.entityRef);
+                return Step::cont(InputKind::EntitySet,
+                                  QStringLiteral("Select entities to colour:"));
+            case InputValue::Kind::Finish:
+                if (m_ids.empty())
+                    return Step::cancelled();
+                break;
+            default:
+                return Step::cont(InputKind::EntitySet,
+                                  QStringLiteral("Select entities to colour:"));
+            }
+            m_haveIds = true;
+            return Step::cont(InputKind::Keyword,
+                              QStringLiteral("Colour (#RRGGBB or name) <keep>:"));
+        }
+        if (!m_haveColor) {
+            if (v.kind == InputValue::Kind::Finish) {
+                m_keepColor = true; // bare colour = keep the current one
+            } else if (v.kind == InputValue::Kind::Keyword) {
+                QString colorError;
+                if (!parseColor(v.text.trimmed(), m_rgb, colorError)) {
+                    ctx.info(colorError);
+                    return Step::cancelled();
+                }
+                m_keepColor = false;
+            } else {
+                return Step::cancelled();
+            }
+            m_haveColor = true;
+            return Step::cont(InputKind::Number,
+                              QStringLiteral("Alpha %% (0-100, Enter = opaque):"));
+        }
+        // alpha stage (Number or Finish = keep)
+        if (v.kind == InputValue::Kind::Number)
+            m_alpha = std::clamp(v.number, 0.0, 100.0);
+        else if (v.kind != InputValue::Kind::Finish)
+            return Step::cancelled();
+        return apply(ctx);
+    }
+
+private:
+    // Accepted forms: #RRGGBB / RRGGBB (hex), or one of the basic names.
+    static bool parseColor(const QString& spec, uint32_t& rgb, QString& error)
+    {
+        static const std::map<QString, uint32_t> kNamed{
+            {QStringLiteral("black"), 0x000000}, {QStringLiteral("white"), 0xFFFFFF},
+            {QStringLiteral("red"), 0xFF0000},   {QStringLiteral("green"), 0x00FF00},
+            {QStringLiteral("blue"), 0x0000FF},  {QStringLiteral("yellow"), 0xFFFF00},
+            {QStringLiteral("cyan"), 0x00FFFF},  {QStringLiteral("magenta"), 0xFF00FF},
+            {QStringLiteral("gray"), 0x808080},  {QStringLiteral("grey"), 0x808080},
+            {QStringLiteral("orange"), 0xFFA500}};
+        QString s = spec;
+        if (s.startsWith(QLatin1Char('#')))
+            s.remove(0, 1);
+        bool ok = false;
+        const uint32_t v = s.toUInt(&ok, 16);
+        if (ok && s.size() == 6) {
+            rgb = v;
+            return true;
+        }
+        const auto it = kNamed.find(s.toLower());
+        if (it != kNamed.end()) {
+            rgb = it->second;
+            return true;
+        }
+        error = QStringLiteral(
+                    "bad colour \"%1\" — use #RRGGBB (e.g. #E8AD23) or a basic "
+                    "name (red, green, blue, ...)")
+                    .arg(spec);
+        return false;
+    }
+
+    Step apply(CommandContext& ctx)
+    {
+        ctx.doc().beginTransaction(QLatin1String(name()));
+        int n = 0, skipped = 0;
+        for (const EntityId id : m_ids) {
+            Entity* e = ctx.doc().beginModify(id);
+            if (!e) {
+                ++skipped;
+                continue;
+            }
+            if (!m_keepColor)
+                e->setColor(ColorSpec{/*byLayer=*/false, m_rgb});
+            if (auto* s = dynamic_cast<SolidEntity*>(e))
+                s->transparency = m_alpha / 100.0;
+            else if (m_alpha > 0.0)
+                ++skipped; // 2D entities have no transparency channel
+            ctx.doc().endModify(id);
+            ++n;
+        }
+        ctx.doc().commitTransaction();
+        QString msg = QStringLiteral("%1 entity(ies) recoloured").arg(n);
+        if (!m_keepColor)
+            msg += QStringLiteral(" (#%2)").arg(m_rgb, 6, 16, QLatin1Char('0'));
+        if (m_alpha > 0.0)
+            msg += QStringLiteral(", %3% alpha")
+                       .arg(QString::number(int(m_alpha)));
+        ctx.info(msg);
+        if (skipped > 0)
+            ctx.info(QStringLiteral(
+                         "  %1 entity(ies) ignored (missing or alpha on a 2D entity)")
+                         .arg(skipped));
+        if (m_haveIds && m_ids.empty()) // defensive: nothing addressed
+            ctx.info(QStringLiteral("no ids given"));
+        return Step::done();
+    }
+
+    // m_keepColor mirrors "bare colour = keep current" without re-parsing.
+    bool m_haveIds = false;
+    bool m_haveColor = false;
+    bool m_keepColor = false;
+    uint32_t m_rgb = 0xFFFFFF;
+    double m_alpha = 0.0;
+    std::vector<EntityId> m_ids;
+};
+
 } // namespace
 
 void registerAssemblyCommands(CommandProcessor& p)
@@ -292,6 +450,7 @@ void registerAssemblyCommands(CommandProcessor& p)
     p.registerCommand(&makeMove3D, {QStringLiteral("M3")});
     p.registerCommand(&makeRotate3D, {QStringLiteral("RO3")});
     p.registerCommand(&makeTransparency, {QStringLiteral("TRANS")});
+    p.registerCommand(&make<SetColorCommand>);
 }
 
 } // namespace viki

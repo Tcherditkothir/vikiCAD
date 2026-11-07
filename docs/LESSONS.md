@@ -531,3 +531,128 @@ Log continu des erreurs commises, impasses, et leçons techniques. Ajouter au fi
   oui/non restaient exploitables en DIFFÉRENTIEL (compte d'erreurs), mais
   « pas de DWG produit » ne voulait plus rien dire — j'ai failli conclure
   que des hachures innocentes étaient fatales.
+
+## 2026-09-24 — Issue #8 : MESH2SOLID, orientation et coques multiples
+
+- **Un volume signé négatif peut être parfaitement « valide ».** Le sew OCCT
+  transmet la winding d'entrée sans la juger ; `BRepBuilderAPI_MakeSolid` en
+  fait un `TopAbs_SOLID` que `BRepCheck_Analyzer` déclare VALIDE, et dont
+  `BRepGProp::VolumeProperties` est négatif. Aucun garde-fou du projet ne
+  l'attrapait : `requireSolid()` refuse les volumes nuls ou non positifs, mais
+  il n'est appelé que par les producteurs de `SolidResult` (extrude, booléen,
+  congé…) — **jamais par MESH2SOLID**, qui écrit sa forme directement via
+  `beginModify`/`setShape`. Un chemin de production qui contourne le garde-fou
+  central n'hérite pas de sa protection. Vérifier qui appelle quoi avant de
+  supposer qu'une invariante tient.
+- **L'orientation d'une coque fermée ne se déduit PAS de la géométrie.** Une
+  surface fermée orientable a deux côtés ; la seule donnée géométrique ne dit
+  pas lequel est « dehors ». Tout algorithme qui prétend le déduire devine. Le
+  critère déterministe et bon marché est le **volume signé** : négatif = faces
+  tournées vers l'intérieur. `BRepLib::OrientClosedSolid` l'applique ; c'est
+  aussi ce que fait `trimesh.repair.fix_normals` côté Python.
+- **Le sew peut rendre un `TopAbs_COMPOUND`, pas seulement un `TopAbs_SHELL`.**
+  Un maillage d'union concaténée (deux corps qui se chevauchent sans partager
+  un seul sommet — ce que produit une union `trimesh` naïve) se coud en
+  plusieurs coques fermées disjointes, donc en compound. Le code ne testait que
+  `sewn.ShapeType() == TopAbs_SHELL` : les deux moitiés, pourtant étanches,
+  étaient rapportées « open shell » et AUCUNE n'était convertie. Parcourir
+  TOUJOURS par `TopExp_Explorer(..., TopAbs_SHELL)`, jamais par le type du
+  nœud racine.
+- **Un libellé binaire masque un cas réel.** « closed solid / open shell » ne
+  distinguait pas « une coque fermée » de « 24 coques fermées » ni de « 1
+  coque ouverte ». Compter les corps et le dire (`24 closed solids`) coûte une
+  ligne et rend le rapport diagnostique au lieu d'être rassurant.
+- **Un chiffre plausible peut être faux.** Avant correctif, `tronc-cerebral.stl`
+  mesurait 19 104 mm³ — parfaitement plausible. Après : 21 465 mm³. 14 de ses
+  24 coques étaient **soustraites** : le volume d'avant était le résultat de
+  soustractions parasites. Un volume signé négatif est spectaculaire et se
+  repère ; un volume positif mais faux ne se repère pas — c'est ce dernier qui
+  voyage loin.
+- **Invalidité PRÉ-EXISTANTE ≠ régression introduite.** `BRepCheck_Analyzer`
+  déclare invalides certains maillages sewés. Mesure faite : la même invalidité
+  apparaît sur le chemin d'AVANT correctif, sur le sew brut. La sonde
+  comparative (brut vs corrigé, sur le même fichier) est ce qui a permis de
+  trancher — sans elle, j'aurais pu « corriger » un bug inexistant ou en
+  introduire un en croyant réparer. Toujours établir la ligne de base AVANT de
+  conclure qu'un changement dégrade.
+- **Sonder hors du dépôt avant d'écrire dans le dépôt.** Les quatre sondes
+  autonomes (`/tmp/vp8/probe*.cpp`, liées directement contre OCCT) ont permis
+  d'essayer chaque remède candidat et d'éliminer les faux bons — dont
+  `ShapeFix_Shell::FixFaceOrientation`, qui **ne redresse pas** une coque
+  fermée globalement inversée (elle ne corrige que l'incohérence locale entre
+  faces voisines : c'est ce que fait déjà le sew). Le compilateur et le linker
+  OCCT sont disponibles sans passer par CMake : `g++ probe.cpp
+  -I/usr/include/opencascade -lTKernel -lTKBRep -lTKShHealing …`. Zéro
+  itération de build sur 27 cibles pour une question de 10 lignes.
+
+## 2026-09-24 (bis) — Issue #13 : un solide VALIDE peut être faux, et le piège hors dépôt
+
+- **Un résultat plausiblement faux est plus coûteux qu'un échec.** `MakePipe`
+  sur une spine à coude franc rend une forme que `BRepCheck_Analyzer` déclare
+  VALIDE et dont la coque est FERMÉE — avec la moitié du volume. Aucun garde
+  ne l'attrape : `requireSolid` ne rejette que le volume NUL (`> 1e-12`), et un
+  demi-tube vaut 153,9. Le diagnostic n'est pas la validité, c'est le CHIFFRE
+  attendu (π·r²·L) : quand une primitive a une formule fermée, la comparer.
+  Même famille que « un volume positif peut être faux » (LESSONS, maillages
+  multi-coques) : la validité topologique ne dit rien de l'EXACTITUDE.
+- **Sonder OCCT directement, côte à côte, avant de choisir un remède.** Une
+  sonde de 10 lignes liée contre OCCT (zéro build du projet) a départagé quatre
+  voies sur la MÊME géométrie en un seul run : `MakePipe` global 50,0 % ;
+  par jambe + `Fuse` 99,7 % ; `MakePipeShell` dans ses trois modes de
+  transition 71,9/71,2/33,3 % avec `TopAbs_SOLID` absent. Le remède « évident »
+  (`MakePipeShell`, fait POUR les coins) était le pire — ne pas le présumer.
+- **Un correctif de découpage doit se prouver non-dégradant sur ce qui
+  marchait.** Le chemin DROIT et l'ARC doivent donner exactement pareil avant
+  et après ; mesuré 307,9 et 242,0 dans les deux états. Un découpage
+  « inoffensif » qui change le cas simple est une régression silencieuse.
+  Corollaire : les tests de régression doivent ÉCHOUER sans le correctif —
+  vérifié ici, et ils tombaient sur les volumes exacts du bug (153,938 ;
+  147,781).
+- **La bibliothèque tierce accusée peut l'être vraiment — vérifier, pas
+  supposer.** L'issue #12 semblait viser à côté (l'ordre des arguments de
+  `manifold3d`) ; l'issue #13 accuse la même famille et a RAISON :
+  `Manifold.rotate(v)` est un EULER x-y-z en degrés (sa propre docstring le
+  dit), pas un axe-angle, donc `rotate(axe × angle)` dérive de 0° à 6,7° selon
+  la direction — 0° pour les directions « faciles » du plan YZ, ce qui masque
+  le piège. Le réflexe utile reste le même : lire la docstring de la fonction
+  réellement installée (`inspect.getdoc` sur l'objet), mesurer, et ne pas
+  conclure « pas notre bug » avant d'avoir reproduit le BESOIN avec nos moyens.
+- **Un sweep à coude est un assemblage de jambes, pas un seul balayage.**
+  Découper en jambes tangent-continues maximales (tangente d'arête par arête,
+  `gp_Dir::IsEqual` à 1e-6) et réorienter le profil sur la tangente ET le
+  départ de SA jambe — réutiliser la tangente globale centre la première jambe
+  seulement. Le manque de quelques pour cent sur un coude est normal (l'angle
+  est taillé) ; 50 % ne l'est pas.
+
+## 2026-09-24 — Issue #12 : l'annulation silencieuse, et la demande qui vise à côté
+
+- **« ok:true » peut cacher une annulation.** Un stage de sélection affamé
+  (le glouton `EntitySet` a tout donné au stage précédent) retourne
+  `Step::cancelled()`, que `drive()` traduisait en `{true, {}, false, {}}` —
+  un succès parfaitement indistinguable d'une réussite pour un appelant
+  headless. `SWEEP 1 2` sur une ligne répondait donc `ok:true` avec un
+  document intact et ZÉRO message. Le refus explicite existait déjà pour le
+  cas VOISIN (un token non-numérique, issue #2) mais pas pour la famine d'un
+  stage : quand on écrit un garde-fou pour une forme d'échec, chercher les
+  AUTRES formes du même échec. C'est un état de la machine à états, pas un
+  cas particulier de commande — le correctif appartient au processeur, pas à
+  SWEEP. Mesuré après coup, trois commandes vivantes tombaient dans le
+  silence (`SWEEP` profil→chemin, `EXTRUDE … CUT` cible→profils,
+  `PATTERN3D`), tandis que `MATE`/`SPLITFACE`/`CHAMFEREDGES` consommaient
+  leurs ids autrement et que `LOFT` refusait déjà en s'expliquant — la
+  frontière ne se devine pas, elle se sonde.
+- **Un garde-fou headless doit connaître son mode.** Transformer toute
+  annulation en erreur aurait cassé la GUI, où un Échap EST la réponse de
+  l'utilisateur. La condition utile n'est pas « annulé » mais « annulé SANS
+  UN MOT » : une commande qui s'est expliquée (LOFT nomme sa cause) a rendu
+  son verdict et ne doit pas être réécrite. Mesurer le nombre de messages
+  AVANT et APRÈS l'appel est plus robuste que de tester le type d'erreur.
+- **La demande peut viser à côté, et le vérifier fait partie du travail.**
+  L'issue accusait `manifold3d` (`cylinder(height, radius)`) — un piège
+  réel, mais dans le GÉNÉRATEUR PYTHON du demandeur : `grep -ri manifold`
+  dans le dépôt ne rend AUCUNE dépendance. Répondre « pas notre bug » aurait
+  laissé l'agent coincé ; reproduire son BESOIN (un tube r=1,4 sur 85 mm)
+  avec les moyens natifs a révélé le vrai bug, à nous, et la réponse utile :
+  SWEEP construit le tube directement, sans STL ni bibliothèque tierce. Le
+  bug rapporté et le bug trouvé n'étaient pas le même — chercher le second.
+

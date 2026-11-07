@@ -346,6 +346,151 @@ out="$(rpc exec "FEATEDIT thickness 2 1 $solid_id")"
 assert_eq "featedit: kind mismatch reports" True "$(jget "$out" \
     "any('no editable' in m for m in d['result']['messages'])")"
 
+# SETCOLOR over IPC (issue #6): the reply must come back promptly (never
+# waiting on the deferred 3D rebuild) AND the colour must really land.
+out="$(rpc exec "SETCOLOR $solid_id #E8AD23 30")"
+assert_eq "setcolor: exec replies ok (issue #6)" True "$(jget "$out" "d.get('ok')")"
+assert_eq "setcolor: recoloured message" True "$(jget "$out" \
+    "any('recoloured (#e8ad23), 30% alpha' in m for m in d['result']['messages'])")"
+out="$(rpc query entities)"
+assert_eq "setcolor: colour persisted in document" "#e8ad23" "$(jget "$out" \
+    "next(e['color'] for e in d['result']['entities'] if e['id'] == $solid_id)")"
+gexec "setcolor: bare colour keeps alpha" "SETCOLOR $solid_id red"
+out="$(rpc query entities)"
+assert_eq "setcolor: red applied" "#ff0000" "$(jget "$out" \
+    "next(e['color'] for e in d['result']['entities'] if e['id'] == $solid_id)")"
+gexec "setcolor: UNDO" "UNDO"
+out="$(rpc query entities)"
+assert_eq "setcolor: UNDO restores previous colour" "#e8ad23" "$(jget "$out" \
+    "next(e['color'] for e in d['result']['entities'] if e['id'] == $solid_id)")"
+
+# CLI --timeout argument handling (issue #10): the reply wait window is
+# flag/env tunable. Pure CLI side (no GUI call): bad values and unknown
+# options must refuse with E_ARGS BEFORE any socket work, and the parsed
+# method must still dispatch. That last part is asserted on the error the
+# DISPATCH produces, which depends on whether a GUI is up: E_CONNECT with no
+# socket, E_RPC when the GUI answers and the file is missing. Both prove the
+# flag was consumed instead of being mistaken for the method — pinning
+# E_CONNECT alone made the phase red whenever it ran with the GUI alive
+# (i.e. inside this very harness, where step (2) already started it).
+timeout_dispatch() {
+    local code
+    code="$(jget "$1" "d['error']['code']")"
+    [[ "$code" == "E_CONNECT" || "$code" == "E_RPC" ]] && echo True || echo "$code"
+}
+out="$("$CLI" connect open nope.vkd --timeout 900000 2>/dev/null)"
+assert_eq "cli timeout: parsed after the path" True "$(timeout_dispatch "$out")"
+out="$("$CLI" connect --timeout 900000 open nope.vkd 2>/dev/null)"
+assert_eq "cli timeout: parsed before the method" True "$(timeout_dispatch "$out")"
+out="$("$CLI" connect --timeout abc ping 2>/dev/null)"
+assert_eq "cli timeout: bad value refuses" "E_ARGS" "$(jget "$out" "d['error']['code']")"
+out="$("$CLI" connect --timeout 2>/dev/null)"
+assert_eq "cli timeout: missing value refuses" "E_ARGS" "$(jget "$out" "d['error']['code']")"
+out="$("$CLI" connect --frobnicate ping 2>/dev/null)"
+assert_eq "cli timeout: unknown option refuses" "E_ARGS" "$(jget "$out" "d['error']['code']")"
+
+# Offline `open` dispatch (issue #11): the CLI verb must accept every file the
+# GUI's File>Open accepts. Pure CLI side (no GUI), self-contained fixtures:
+# build a box, export it as STL, then prove `open` takes it while the OLD
+# behaviour (native-store-only) would have answered "not a VikiCAD file".
+"$CLI" new --exec "RECT 0,0 10,10" --exec "EXTRUDE 10 1" \
+    --save-as "$TMP/dispatch.vkd" >/dev/null 2>&1
+"$CLI" export "$TMP/dispatch.vkd" "$TMP/dispatch.stl" >/dev/null 2>&1
+if [[ -s "$TMP/dispatch.stl" ]]; then
+    out="$("$CLI" open "$TMP/dispatch.stl" --save-as "$TMP/dispatch-round.vkd" 2>/dev/null)"
+    assert_eq "open dispatch: .stl accepted by the CLI open verb" True \
+        "$(jget "$out" "d.get('ok')")"
+    assert_eq "open dispatch: reply names the arm taken" "stl" \
+        "$(jget "$out" "d['result']['dispatch']")"
+    # The counters mirror the `import` verb, so the two verbs read alike.
+    assert_eq "open dispatch: STL triangle count" 12 \
+        "$(jget "$out" "d['result']['triangles']")"
+    assert_eq "open dispatch: one mesh solid" 1 "$(jget "$out" "d['result']['solids']")"
+
+    # The document that landed matches what `import` would have written.
+    out="$("$CLI" import "$TMP/dispatch.stl" --save-as "$TMP/dispatch-import.vkd" 2>/dev/null)"
+    assert_eq "open dispatch: import still works and agrees" 12 \
+        "$(jget "$out" "d['result']['triangles']")"
+    assert_eq "open dispatch: same entity count as import" True \
+        "$(jget "$("$CLI" query "$TMP/dispatch-round.vkd" --entities 2>/dev/null)" \
+            "d['result']['count'] == 1")"
+
+    # A .vkd is still native, and says so.
+    out="$("$CLI" open "$TMP/dispatch.vkd" 2>/dev/null)"
+    assert_eq "open dispatch: .vkd stays native" "vkd" \
+        "$(jget "$out" "d['result']['dispatch']")"
+
+    # A bare --save on an imported document is refused (it would overwrite the
+    # SOURCE with .vkd bytes) and the message names the working verb.
+    out="$("$CLI" open "$TMP/dispatch.stl" --save 2>/dev/null)"
+    assert_eq "open dispatch: --save over the source refuses" "E_ARGS" \
+        "$(jget "$out" "d['error']['code']")"
+    assert_eq "open dispatch: the refusal names --save-as" True \
+        "$(jget "$out" "'--save-as' in d['error']['message']")"
+    # An unknown extension that is no document either keeps the historical
+    # native-store diagnostic instead of a vague "unsupported".
+    printf 'just text\n' >"$TMP/dispatch.txt"
+    out="$("$CLI" open "$TMP/dispatch.txt" 2>/dev/null)"
+    assert_eq "open dispatch: unknown extension keeps the native message" True \
+        "$(jget "$out" "'not a VikiCAD file' in d['error']['message']")"
+else
+    record SKIP "open dispatch: CLI open phase" "STL export produced nothing"
+fi
+
+# Silent self-cancellation (issue #12): `SWEEP 1 2` on ONE line feeds both ids
+# to the profile stage, starves the path stage, and the command cancels itself.
+# Before the fix the CLI answered {"ok":true} with an untouched document — the
+# exact "looks fine, did nothing" trap. The tube itself (the reporter's real
+# need) is built natively by SWEEP, verified here end to end: pi*r^2*L.
+out="$("$CLI" new --exec "CIRCLE 0,0 1.4" --exec "LINE 0,0 0,50" \
+    --exec "SWEEP 1 2" 2>/dev/null)"
+assert_eq "silent cancel: one-line two-stage SWEEP refuses" False \
+    "$(jget "$out" "d.get('ok')")"
+assert_eq "silent cancel: the error names the command" True \
+    "$(jget "$out" "'SWEEP' in d['error']['message']")"
+assert_eq "silent cancel: the error names the dead prompt" True \
+    "$(jget "$out" "'Select path' in d['error']['message']")"
+assert_eq "silent cancel: the error names the .vks cure" True \
+    "$(jget "$out" "'.vks' in d['error']['message']")"
+
+# The documented two-line form still builds the tube, and DESCRIBE agrees
+# with the closed-form volume (pi * 1.4^2 * 50 = 307.9 mm3).
+printf 'SWEEP\n1\n2\n' >"$TMP/tube.vks"
+out="$("$CLI" new --exec "CIRCLE 0,0 1.4" --exec "LINE 0,0 0,50" \
+    --run "$TMP/tube.vks" --exec "DESCRIBE" --save-as "$TMP/tube.vkd" 2>/dev/null)"
+assert_eq "tube: the working two-line SWEEP is ok" True "$(jget "$out" "d.get('ok')")"
+assert_eq "tube: volume = pi*r^2*L (307.9 mm3)" True \
+    "$(jget "$out" "'volume=307.9' in ' '.join(d['result']['messages'])")"
+assert_eq "tube: r=1.4 section in the bbox" True \
+    "$(jget "$out" "'bbox=(-1.4,0.0,-1.4)-(1.4,50.0,1.4)' in ' '.join(d['result']['messages'])")"
+assert_eq "tube: it did NOT hit the silent-cancel guard" False \
+    "$(jget "$out" "'cancelled itself' in ' '.join(d['result']['messages'])")"
+assert_eq "tube: the document was saved" True \
+    "$(jget "$out" "d['result']['savedTo'].endswith('tube.vkd')")"
+
+# Cornered spine (issue #13): BRepOffsetAPI_MakePipe over a wire whose
+# direction BREAKS keeps only the first leg — a shape OCCT calls valid and
+# closed holding exactly half of pi*r^2*L, reported as a plain success.
+# Measured before the fix: 153.9 mm3 out of 307.9 on a 0,0 -> 0,25 -> 25,25
+# spine, and 147.8 out of 295.6 on a 4-leg staircase. sweepProfile now sweeps
+# one tangent-continuous leg at a time and fuses them.
+printf 'SWEEP\n1\n2\n' >"$TMP/tube2.vks"
+out="$("$CLI" new --exec "CIRCLE 0,0 1.4" --exec "PLINE 0,0 0,25 25,25" \
+    --run "$TMP/tube2.vks" --exec "DESCRIBE" --save-as "$TMP/elbow.vkd" 2>/dev/null)"
+assert_eq "elbow: SWEEP along a cornered PLINE is ok" True "$(jget "$out" "d.get('ok')")"
+assert_eq "elbow: every leg kept (volume ~304, not 153)" True \
+    "$(jget "$out" "any(m.startswith('solid') and 'volume=30' in m for m in d['result']['messages'])")"
+assert_eq "elbow: NOT the 50% signature (153.9)" False \
+    "$(jget "$out" "'volume=153.9' in ' '.join(d['result']['messages'])")"
+assert_eq "elbow: bbox covers the whole spine plus r" True \
+    "$(jget "$out" "'bbox=(-1.4,0.0,-1.4)-(25.0,26.4,1.4)' in ' '.join(d['result']['messages'])")"
+out="$("$CLI" new --exec "CIRCLE 0,0 1.4" --exec "PLINE 0,0 0,12 12,12 12,24 24,24" \
+    --run "$TMP/tube2.vks" --exec "DESCRIBE" 2>/dev/null)"
+assert_eq "elbow: 4-leg staircase keeps every leg (~285, not 147.8)" True \
+    "$(jget "$out" "any(m.startswith('solid') and 'volume=284.6' in m for m in d['result']['messages'])")"
+assert_eq "elbow: staircase is NOT the 50% signature" False \
+    "$(jget "$out" "'volume=147.8' in ' '.join(d['result']['messages'])")"
+
 # DESCRIBE + query describe: the agent's "understand the model" view, both
 # renderings. The live solid is the 40x30x10 box with the d=12 through-hole
 # at (20,15) -> volume = 12000 - pi*36*10, and the feature line/JSON must
@@ -881,6 +1026,28 @@ if [[ -s "$TMP/stlbox.stl" ]]; then
 
     gexec "meshimp: UNDO the conversion" "UNDO"
     assert_eq "meshimp: still one entity after undo" 1 "$(count)"
+
+    # --- insertstep over IPC (issue #7): the reply must carry the inserted
+    # solids' ids/names plus triangle counts for mesh components (the agent's
+    # MESH2SOLID cost estimate), and the 3D view must still sync afterwards.
+    # The same box is inserted ADDITIVELY as a component (open replaced the
+    # document; insertstep adds to it).
+    out="$(rpc insertstep "$TMP/stlbox.stl")"
+    assert_eq "meshimp: insertstep replies ok" True "$(jget "$out" "d['result'].get('ok')")"
+    assert_eq "meshimp: insertstep names the component" "stlbox" \
+        "$(jget "$out" "d['result']['inserted'][0]['name']")"
+    assert_eq "meshimp: insertstep counts mesh triangles" 12 \
+        "$(jget "$out" "d['result']['inserted'][0]['triangles']")"
+    assert_eq "meshimp: insertstep totals triangles" 12 \
+        "$(jget "$out" "d['result']['triangles']")"
+    ins_id="$(jget "$out" "d['result']['inserted'][0]['id']")"
+    assert_eq "meshimp: insertstep entity landed in the document" 2 "$(count)"
+    # The deferred 3D sync must have run by now: the new component shows up in
+    # a scene observation (flush-before-observe contract, issue #6 follow-up).
+    assert_eq "meshimp: inserted component visible in describe" 2 \
+        "$(jget "$(rpc query describe)" "len(d['result']['describe']['solids'])")"
+    gexec "meshimp: ERASE the inserted component" "ERASE $ins_id"
+    assert_eq "meshimp: back to one entity" 1 "$(count)"
 else
     record PASS "meshimp: SKIP (STL export produced nothing)" "no fixture"
 fi

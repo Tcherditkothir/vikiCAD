@@ -199,4 +199,15 @@ void SolidEntity::geomFromJson(const QJsonObject& obj)
     }
 }
 
+// Issue #9 fallback: the component name may sit at the TOP level of the
+// entity JSON (scripts that assemble .vkd documents by SQL write it there
+// next to "color", while vikiCAD's own writer puts it in
+// "geom.component"). Only adopt it when the canonical field came back
+// empty — an entity whose geom.component is set keeps it untouched.
+void SolidEntity::postFromJson(const QJsonObject& obj)
+{
+    if (component.isEmpty())
+        component = obj[QStringLiteral("component")].toString();
+}
+
 } // namespace viki

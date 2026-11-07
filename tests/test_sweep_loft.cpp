@@ -4,7 +4,10 @@
 #include <cmath>
 
 #include <BRepGProp.hxx>
+#include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
@@ -116,6 +119,90 @@ TEST_CASE("SWEEP command builds a solid from profile + path", "[sweep]")
     REQUIRE(s != nullptr);
     const double expected = M_PI * 2.0 * 2.0 * 50.0;
     REQUIRE(volumeOf(s->shape()) == Approx(expected).epsilon(0.01));
+}
+
+TEST_CASE("issue13: SWEEP along a cornered polyline keeps every leg", "[issue13]")
+{
+    // A 25 mm leg, a right-angle corner, another 25 mm leg. BRepOffsetAPI_MakePipe
+    // over the whole cornered spine builds a shape OCCT calls VALID and CLOSED
+    // that holds only the FIRST leg — measured 153.938 mm3 out of 307.876
+    // (exactly 50 %), reported as a plain success. sweepProfile now sweeps one
+    // tangent-continuous leg at a time and fuses them.
+    Rig rig;
+    std::vector<PolyVertex> vs = {{{0, 0}, 0.0}, {{0, 25}, 0.0}, {{25, 25}, 0.0}};
+    const EntityId circle = rig.add(std::make_unique<CircleEntity>(Vec2d{0, 0}, 1.4));
+    const EntityId poly =
+        rig.add(std::make_unique<PolylineEntity>(std::move(vs), /*closed=*/false));
+
+    rig.selection.add(circle);
+    REQUIRE(rig.run(QStringLiteral("SWEEP %1").arg(poly)));
+    REQUIRE(rig.solidCount() == 1);
+    const auto* s = rig.firstSolid();
+    REQUIRE(s != nullptr);
+
+    const double expected = M_PI * 1.4 * 1.4 * 50.0; // 307.876
+    // A faithful sweep of a cornered spine falls a little short of pi*r^2*L
+    // (the elbow is trimmed, not filled), but it must be nowhere near the
+    // 50 % MakePipe used to return.
+    const double v = volumeOf(s->shape());
+    CHECK(v > 0.95 * expected);
+    CHECK(v <= 1.01 * expected);
+
+    // And the result is a genuinely closed solid, not a leg plus a stump.
+    int shells = 0;
+    bool closed = true;
+    for (TopExp_Explorer e(s->shape(), TopAbs_SHELL); e.More(); e.Next()) {
+        ++shells;
+        closed = closed && BRep_Tool::IsClosed(e.Current());
+    }
+    CHECK(shells == 1);
+    CHECK(closed);
+}
+
+TEST_CASE("issue13: a multi-corner staircase keeps every leg too", "[issue13]")
+{
+    // Four 12 mm legs, three right-angle corners — the reporter's many-segment
+    // tube. Before the fix this measured 147.781 mm3 out of 295.561 (50 %).
+    Rig rig;
+    std::vector<PolyVertex> vs = {{{0, 0}, 0.0},
+                                 {{0, 12}, 0.0},
+                                 {{12, 12}, 0.0},
+                                 {{12, 24}, 0.0},
+                                 {{24, 24}, 0.0}};
+    const EntityId circle = rig.add(std::make_unique<CircleEntity>(Vec2d{0, 0}, 1.4));
+    const EntityId poly =
+        rig.add(std::make_unique<PolylineEntity>(std::move(vs), /*closed=*/false));
+
+    rig.selection.add(circle);
+    REQUIRE(rig.run(QStringLiteral("SWEEP %1").arg(poly)));
+    REQUIRE(rig.solidCount() == 1);
+    const auto* s = rig.firstSolid();
+    REQUIRE(s != nullptr);
+
+    const double expected = M_PI * 1.4 * 1.4 * 48.0; // 295.56
+    const double v = volumeOf(s->shape());
+    CHECK(v > 0.93 * expected);
+    CHECK(v <= 1.01 * expected);
+}
+
+TEST_CASE("issue13: a curved (tangent-continuous) spine is untouched", "[issue13]")
+{
+    // The fix must not disturb the shape that always worked: a single arc is
+    // ONE leg, so it still takes exactly one MakePipe over the whole spine.
+    Rig rig;
+    const EntityId circle = rig.add(std::make_unique<CircleEntity>(Vec2d{0, 0}, 1.4));
+    // Quarter circle centred at (25,0): (0,0) at 180 deg sweeping to (25,25) at 90 deg.
+    const EntityId arc = rig.add(std::make_unique<ArcEntity>(
+        Vec2d{25, 0}, 25.0, M_PI, -M_PI / 2.0));
+    rig.selection.add(circle);
+    const auto r = rig.processor.submit(QStringLiteral("SWEEP %1").arg(arc), false);
+    REQUIRE(rig.solidCount() == 1);
+    const auto* s = rig.firstSolid();
+    REQUIRE(s != nullptr);
+    // Nominal for a quarter circle of radius 25: pi*r^2 * (pi*25/2).
+    const double expected = M_PI * 1.4 * 1.4 * (M_PI * 25.0 / 2.0);
+    CHECK(volumeOf(s->shape()) == Approx(expected).epsilon(0.02));
+    (void)r;
 }
 
 TEST_CASE("loftProfiles: two concentric squares (10 at z0, 6 at z20)", "[loft]")

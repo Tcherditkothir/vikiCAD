@@ -53,6 +53,9 @@ void Entity::fromJson(const QJsonObject& obj)
             continue;
         m_extra[it.key()] = it.value();
     }
+    // Second pass: entities with cross-level state (e.g. a top-level
+    // component fallback on solids) get the whole root object here.
+    postFromJson(obj);
 }
 
 QJsonArray pointToJson(const Vec2d& p)

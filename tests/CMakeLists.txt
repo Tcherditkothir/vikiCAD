@@ -1,5 +1,7 @@
 find_package(Catch2 3 REQUIRED)
 find_package(PkgConfig REQUIRED)
+# test_solid_component hot-patches a saved .vkd (SQLite rows) directly.
+find_package(SQLite3 REQUIRED)
 # Independent decoder for the animated-WebP round-trip tests.
 pkg_check_modules(WebPDemux REQUIRED IMPORTED_TARGET libwebpdemux)
 
@@ -13,10 +15,13 @@ add_executable(vikicad-tests
     test_transaction_scope.cpp
     test_commands.cpp
     test_store.cpp
+    test_file_open.cpp
+    test_solid_component.cpp
     test_entities2.cpp
     test_gear.cpp
     test_m2_commands.cpp
     test_cmd_ergonomics.cpp
+    test_setcolor.cpp
     test_rect_profile.cpp
     test_snap.cpp
     test_editops.cpp
@@ -31,6 +36,7 @@ add_executable(vikicad-tests
     test_pattern3d.cpp
     test_move3d_points.cpp
     test_sweep_loft.cpp
+    test_silent_cancel.cpp
     test_stl_export.cpp
     test_stl_import.cpp
     test_step_color.cpp
@@ -85,6 +91,9 @@ endif()
 
 target_link_libraries(vikicad-tests PRIVATE vikicore vikioffscreen
     Catch2::Catch2WithMain viki_warnings PkgConfig::WebPDemux)
+# test_solid_component patches a saved .vkd's SQLite rows directly (the same
+# hot-patch the PSY1014 build script performed), so it links SQLite itself.
+target_link_libraries(vikicad-tests PRIVATE SQLite::SQLite3)
 
 include(Catch)
 catch_discover_tests(vikicad-tests)

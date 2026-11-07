@@ -2,6 +2,126 @@
 
 ## Unreleased
 
+- **Issue #12: a command that cancels itself while saying NOTHING is now an
+  error in headless mode, and the tube the reporter needed is built natively
+  by SWEEP.** The report was about the `manifold3d` Python wrapper taking
+  `cylinder(height, radius_low, ...)` — a hand-written tube generator built
+  100 mm discs instead of r=1.4 tubes. VikiCAD has no manifold3d dependency;
+  the trap was upstream. But reproducing the need natively exposed a real
+  VikiCAD trap of its own: `SWEEP 1 2` (profile and path on ONE line) fed
+  both ids to the greedy `EntitySet` gulp, starved the path stage, and the
+  command cancelled itself — the CLI answered `{"ok":true}` with an
+  untouched document and zero messages, indistinguishable from success.
+  `EXTRUDE 10 CUT 3` (target then profiles) had the same silence. Fix:
+  `drive()` records where a command gave up (name + prompt) and
+  `submit()` in STRICT mode turns an unexplained cancellation into a named
+  error naming the cure (a `.vks` script, AGENT.md §2 rule 5). Two guards:
+  the interactive GUI stays silent (an Escape IS the user's answer) and a
+  command that already explained itself (LOFT names its refusal) is left
+  untouched. Docs: AGENT.md §2 rule 5 + §7 gotchas — the manifold3d
+  argument-order warning the issue asked for, AND the native answer:
+  `CIRCLE` section + `LINE`/`ARC`/`PLINE` spine + a two-line `.vks` SWEEP
+  builds the tube exactly (verified volume = pi·r²·L, 307.9 mm3 for
+  r=1.4 × 50 mm; 773.8 mm3 across a curved 125.66 mm arc). Tests:
+  `tests/test_silent_cancel.cpp` (6 cases, tag `[issue12]`, 29 assertions);
+  gui-smoke `silent cancel:` + `tube:` phases.
+
+- **Issue #9: a solid whose component name lives at the TOP level of its
+  .vkd JSON (as scripts assembling documents by SQL write it) no longer
+  loses it.** The canonical home is `geom.component` — what the STEP
+  writer reads to name PRODUCT and what `DESCRIBE` shows. A script-built
+  file with the name top-level only used to load an UNNAMED solid: the
+  STEP export then stamped the XCAF auto-names (`SOLID`/`SHELL`/
+  `COMPOUND`) instead of the real part names. Fix is a read-side
+  fallback, not a writer change: `Entity::fromJson` gains a
+  `postFromJson(obj)` second pass (virtual, no-op by default) and
+  `SolidEntity` adopts the top-level `component` ONLY when
+  `geom.component` came back empty — the canonical field wins when both
+  levels carry a name, and the next save converges the file (the name
+  migrates into `geom.component`). Real-world check on the 112-solid
+  PSY1014 v4 document: before = 27 named PRODUCTs + 85 generic; after =
+  112 PRODUCTs, 112 unique names, 0 generic. Tests:
+  `tests/test_solid_component.cpp` (5 cases: load survival, canonical
+  precedence, anonymity, .vkd round-trip with a SQL-style hot-patch,
+  STEP PRODUCT naming). ctest 464/464.
+
+- **Issue #11: the CLI `open` verb now dispatches by extension, exactly like
+  the GUI's File>Open.** `$CLI open file.stl --save-as out.vkd` used to fail
+  with `not a VikiCAD file (no entities table): file.stl` while
+  `$CLI import file.stl --save-as out.vkd` and the GUI accepted the very same
+  file — three copies of one policy, only two of them knowing the imported
+  formats. `open` now goes through a single shared dispatch
+  (`core/io/FileOpen.{h,cpp}`, `openFileAny()`): directory = Gerber kit,
+  `.vkd` native, `.dxf`/`.dwg`, `.step`/`.stp`, `.igs`/`.iges`, `.stl`,
+  EAGLE `.brd`/`.sch`/`.lbr`, a lone Gerber/Excellon file by content sniff,
+  and the native store as the fallback so a renamed or extensionless `.vkd`
+  keeps opening. Component tagging (file stem where STEP/IGES carried no part
+  name, always for STL) is identical to File>Open. The `open` reply gains a
+  `dispatch` field naming the arm taken AND mirrors the `import` verb's
+  counters (`solids` `triangles` `imported` `skipped` `files` `entities`
+  `layers` `warnings`), so the two verbs read alike. New guard: `open f.stl
+  --save` is refused with `E_ARGS` (a bare `--save` would overwrite the
+  SOURCE file with `.vkd` bytes) and the message names `--save-as`;
+  `--save` on a natively-opened `.vkd` is unchanged. Docs: §1a/§1b rows now
+  name the shared routing, plus a §7 gotcha explaining `open` vs `import`.
+  Tests: `tests/test_file_open.cpp` (7 cases, tag `[issue11]`); gui-smoke
+  `open dispatch:` phase. ctest 464/464.
+
+- **Issue #10: `connect` reply wait window is tunable
+  (`--timeout MS` / `VIKICAD_CONNECT_TIMEOUT`).** The CLI is a
+  synchronous RPC client and the GUI answers only once the whole method
+  finished — the fixed 10 s silence window made heavy `connect open`
+  calls (>100 MB .vkd: 112 OCC solids took ~1-5 min) fail with a fake
+  `E_TIMEOUT` while the load was progressing fine (the model WAS mounted
+  — the client just gave up early). The window is now a per-call flag
+  (`connect open big.vkd --timeout 900000`, positioned anywhere on the
+  line) and an env var (`VIKICAD_CONNECT_TIMEOUT`, wins over the flag);
+  bad values and unknown `--` options refuse with `E_ARGS`; the
+  E_TIMEOUT message names both levers. The window is a silence budget
+  re-armed by every reply chunk, so a large `query entities` flowing in
+  chunks is never killed mid-transfer while a wedged GUI still aborts.
+  Doc: AGENT.md §1c. gui-smoke: `cli timeout:` argument-handling phase.
+
+- **Issue #8 — MESH2SOLID: signed volume normalised, and every shell of a
+  concatenated mesh kept.** A mesh whose triangles wind INWARD sewed into
+  a watertight solid whose volume came out NEGATIVE (measured −1000 mm³
+  on a 10 mm cube, −353 on the reporter's tubes), so every downstream
+  consumer saw anti-material. A concatenated union (two overlapping
+  bodies sharing no vertex — the naive trimesh export) sewed into a
+  COMPOUND of disjoint closed shells, which the single-shell code path
+  reported as an "open shell" and never made a solid of. Both are fixed
+  per shell: a closed shell becomes a solid, a solid measuring negative
+  is reoriented outward (`BRepLib::OrientClosedSolid`, with an explicit
+  shell reversal as a fallback), and everything — solids plus any
+  genuinely open shell — is collected into one compound, nothing
+  dropped. The MESH2SOLID report now gives the body count ("2 closed
+  solids") instead of a bare "open shell", and names the flip when one
+  happened. Measured: 28/28 real trimesh meshes of the SNC model set now
+  convert to a positive volume — `tronc-cerebral.stl` was 19 104.76 mm³
+  (14 of its 24 shells subtractive) and is 21 465.58 mm³ (its real
+  material); `arachnoide` 2 579 743.52 → 2 579 782.83. 4 new regression
+  test cases in tests/test_stl_import.cpp (inside-out cube, two disjoint
+  shells, mixed winding, message wording).
+
+- **Issues #1-#4 from the headless drawing agent (SNC session).** One
+  batch, four fixes: (1) the one-invocation-one-document CLI contract is
+  spelled out (AGENT.md §1a) and `SKETCH CLOSE` with no sketch now
+  explains the fresh-document cause instead of a bare "no sketch is
+  open"; (2) the empty-gulp EntitySet refusal names the command still
+  waiting and its prompt ("expected entity ids for command EXTRUDE
+  (waiting at \"Select profiles:\")..."), `--exec` accepts `;`-separated
+  complete commands, and E_EXEC messages carry the failing segment; (3)
+  new `SETCOLOR <ids> <#RRGGBB|name> [alpha]` command (hex or basic
+  names, alpha = percent transparent, pickfirst, one-transaction undo)
+  feeding the existing per-entity colour/transparency path — .vkd,
+  viewer and STEP STYLED_ITEM/COLOUR_RGB all honoured (AGENT.md §2b,
+  tests/test_setcolor.cpp); (4) STL import returns a `warnings` array
+  (CLI JSON + GUI history) telling the caller a mesh cannot cross STEP
+  (empty MANIFOLD_SURFACE_SHAPE_REPRESENTATION) and naming MESH2SOLID
+  as the cure — no implicit conversion, the explicit choice stays the
+  rule. ctest 448/448; gui-smoke 333/334 (the single failure is a stale
+  GUI holding the IPC socket, not the code).
+
 - **Sculpted avatar build, studio lighting, hands (aesthetic worksite).**
   The rigid manikin gains a `build: "sculpted"` mode (schema-v1-tolerated
   extension fields, proposed for v2): limbs are single revolved fusiform

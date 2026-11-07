@@ -1239,8 +1239,8 @@ void OcctViewWidget::showContextMenu(const QPoint& globalPos)
         const Entity* profileEnt = m_doc->entity(m_pickedSolid);
         if (profileEnt && !dynamic_cast<const SolidEntity*>(profileEnt)) {
             WorkPlane plane = documentWorkplane(*m_doc);
-            if (const int64_t sk = m_doc->entitySketch(m_pickedSolid))
-                if (const SketchInfo* info = m_doc->sketchById(sk))
+            if (const int64_t skId = m_doc->entitySketch(m_pickedSolid))
+                if (const SketchInfo* info = m_doc->sketchById(skId))
                     plane = info->plane;
             if (solidops::wiresFromEntities(*m_doc, {m_pickedSolid}, plane).ok)
                 extrudeAct = menu.addAction(QStringLiteral("Extrude…"));

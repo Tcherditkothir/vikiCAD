@@ -25,7 +25,7 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 | Verb | One-line example |
 |---|---|
 | `new` | `$CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" --save-as part.vkd` |
-| `open` | `$CLI open part.vkd --exec "INSPECT 2 All"` — add `--save` / `--save-as out.vkd` to persist |
+| `open` | `$CLI open part.vkd --exec "INSPECT 2 All"` — add `--save` / `--save-as out.vkd` to persist. **`open` dispatches by extension exactly like the GUI's File>Open** (`.vkd` natively; `.dxf` `.dwg` `.step` `.igs` `.stl`; EAGLE `.brd`/`.sch`/`.lbr`; a Gerber kit directory or a lone fab file), so `open file.stl` works wherever `import file.stl` did — it is the same import behind the same routing. The reply carries a `dispatch` field naming the arm taken (`vkd` `dxf` `dwg` `step` `iges` `stl` `eagle` `gerberkit`) plus the `import` verb's counters (`solids` `triangles` `imported` `skipped` `files` `entities` `layers`…). An imported document needs `--save-as` — a bare `--save` is refused, because it would overwrite the SOURCE file with a `.vkd` payload |
 | `query` | `$CLI query part.vkd --entities --bounds` (also `--layers --notes --blocks --layouts --describe`) |
 | `export` | `$CLI export part.vkd part.step` (extension picks the format: `.dxf` `.pdf` `.step` `.stl` `.obj`, fab extensions `.gtl`...`.gko`/`.gbr`/`.txt` for one layer — §7d; a DIRECTORY target exports the whole Gerber kit) |
 | `import` | `$CLI import drawing.dxf --save-as drawing.vkd` (also `.dwg`, `.step` and `.stl`) |
@@ -33,8 +33,18 @@ Exit code is 0 on ok, 1 on error. Geometry is **millimetres everywhere**.
 | `anim` | `$CLI anim render --pose p.json --avatar a.json --out DIR` — animated GLB + transparent looping WebP of a kinematic chain (§8; CLI-native, not a CommandProcessor command) |
 
 `--exec` runs ONE complete command per flag, in order, left to right; the
-first failure aborts with `E_EXEC`. `--run` feeds a script file where a
-command may span several lines (see §2 on when you need that).
+first failure aborts with `E_EXEC` (the message names the failing line).
+A `;` inside one `--exec` value separates complete commands —
+`--exec "RECT 0,0 40,30; EXTRUDE 10 1"` runs both, still first-failure
+aborts. **One invocation = one document**: every `new`/`open` process
+starts from a FRESH in-memory document, so state (an open sketch, the
+selection, ids just created) never carries across invocations — put the
+WHOLE sequence in one call (chain `--exec` flags, `;`-separate them, or
+use `--run script.vks`). When you forget, errors say so: `SKETCH CLOSE`
+after a sketch was opened in an EARLIER invocation answers "no sketch is
+open — each CLI invocation starts from a fresh document...". `--run`
+feeds a script file where a command may span several lines (see §2 on
+when you need that).
 
 ### 1b. Live IPC — drive the running GUI over the `vikicad` local socket
 
@@ -53,7 +63,7 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `ping` | `$CLI connect ping` | `{"pong":true}` — poll this after starting the unit |
 | `exec` | `$CLI connect exec "CIRCLE 50,50 10"` | run any command; result carries `messages` |
 | `query` | `$CLI connect query bounds` | kinds: `entities` (default), `layers`, `bounds`, `notes`, `blocks`, `layouts`, `describe` (§4), `ui` |
-| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.igs` `.stl`, EAGLE `.brd`/`.sch`/`.lbr`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array |
+| `open` | `$CLI connect open part.vkd` | File>Open dispatch by extension: `.vkd` `.dxf` `.dwg` `.step` `.igs` `.stl`, EAGLE `.brd`/`.sch`/`.lbr`; Gerber kit dir or lone fab file too. Importer warnings (e.g. valid-but-empty fab file) come back in the reply's `warnings` array. **The reply only travels once the whole file finished loading** — on heavy documents raise the wait window first (see §1c below). The offline `open` verb takes the SAME routing (issue #11), so both channels accept the same files |
 | `save` | `$CLI connect save out.vkd` | save the live document |
 | `export` | `$CLI connect export out.step` | File>Export by extension: `.step` `.dxf` `.stl` `.obj`, fab extensions (one layer, optional layer-name arg), directory = Gerber kit (§7d) |
 | `screenshot` | `$CLI connect screenshot shot.png` | 2D canvas grab, or the OCCT framebuffer when in 3D. Add `clean` (`… screenshot shot.png clean`) for the 2D document WITHOUT overlays (grid/UCS/crosshair) — image-diff friendly, works even while the 3D view is up |
@@ -61,12 +71,46 @@ systemd-run --user --unit=vikicad-gui --collect \
 | `viewdir` | `$CLI connect viewdir FRONT` | aim the 3D camera along `TOP BOTTOM FRONT BACK LEFT RIGHT ISO` and refit the scene (3D view only — §5a) |
 | `pick3d` | `$CLI connect pick3d 400 300` | click at physical view pixels; no coords = view centre; returns e.g. `"picked face 2 of solid #3"` |
 | `sketchface` | `$CLI connect sketchface` | start a sketch on the currently selected face (pick3d a face first) |
-| `insertstep` | `$CLI connect insertstep other.step` | additive STEP **or STL** import as an assembly component (the verb name predates STL) |
+| `insertstep` | `$CLI connect insertstep other.step` | additive STEP **or STL** import as an assembly component (the verb name predates STL). The reply names every inserted solid: `inserted[{id,name,triangles}]` + `triangles` total — the mesh triangle count is your MESH2SOLID cost estimate (sewing ≈ one face per triangle, 20k cap); the 3D refresh runs AFTER the reply (deferred, coalesced — issue #7). A heavy mesh may still need a raised wait window (§1c) or the offline `import` |
 | `anim` | `$CLI connect anim load pose.json avatar.json [chain.json]` | drive the Timeline dock: `load` (chain resolves like §8 unless given), `frame N` (scrub), `play` / `stop`, `clear`, `status` (JSON state: loaded/frames/frame/playing/keyframes) |
 
 Everything registered in the single CommandProcessor is available through
 BOTH channels — a command that works in `--exec` works in `connect exec`
 and in the GUI command line, unchanged.
+
+### 1c. The reply wait window: `--timeout` / `VIKICAD_CONNECT_TIMEOUT`
+
+The CLI is a SYNCHRONOUS RPC client: it sends the request, then keeps
+waiting for the reply (in chunks) until a window of socket SILENCE
+expires — and the GUI answers only once the whole method finished
+(`open`/`insertstep` finish when the file fully loaded and its OCC shapes
+built; `save`/`export` when everything is serialized). The default
+window is 10 s of silence: plenty for every interactive method, but a
+100+ MB `.vkd` (112 OCC solids took ~1-5 min here) blows through it and
+the caller used to see a FAKE `E_TIMEOUT` while the open was still
+progressing fine — issue #10. The window is now tunable per call:
+
+```sh
+$CLI connect open big.vkd --timeout 900000     # 15 min, flag anywhere on the line
+VIKICAD_CONNECT_TIMEOUT=900000 $CLI connect open big.vkd   # or the env var
+$CLI connect --timeout 900000 open big.vkd     # same thing, flag first
+```
+
+- Value in MILLISECONDS (`--timeout 900` = 0.9 s). Bad values refuse
+  with `E_ARGS` naming the accepted form; unknown `--` options refuse
+  too. The env var wins over the flag (export once, forget the flag).
+- The window is a SILENCE budget re-armed by every chunk: a big `query
+  entities` reply flowing in chunks is never killed mid-transfer; a
+  silent/hung GUI still aborts after the window. Timeout errors now say
+  so: `no response within 900000 ms (tune with connect --timeout MS or
+  VIKICAD_CONNECT_TIMEOUT)`.
+- Rule of thumb: interactive methods (`ping exec query screenshot`)
+  keep the 10 s default — a timeout there means something is genuinely
+  wrong. Heavy whole-document methods (`open` on >50 MB, `save`,
+  `export` of a big kit, `insertstep` of a big mesh) deserve a raised
+  window sized to the file. A still-running open that outlived your
+  window keeps running in the GUI: re-poll with `connect ping` + `query
+  entities` to see the document it finished loading.
 
 ---
 
@@ -108,6 +152,20 @@ Commands are state machines fed by whitespace-separated tokens. The rules:
    $CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" \
             --exec "CIRCLE 30,15 4" --run cut.vks --save-as cut.vkd
    ```
+
+   When a line's tokens land inside a command that is STILL WAITING (the
+   classic: a script line after an `EXTRUDE h id` that parked at "Select
+   profiles"), the refusal names it:
+   `expected entity ids for command EXTRUDE (waiting at "Select profiles:")
+   — put the ids on their own line, or a blank line before the next
+   command`. A blank `.vks` line = Enter = finishes the pending command.
+
+   And when the SAME line feeds two selection stages (`SWEEP 1 2`,
+   `EXTRUDE 10 CUT 3`), the greedy gulp leaves the second stage starved, the
+   command cancels itself, and — since issue #12 — headless mode refuses
+   instead of returning a silent `ok:true` with an untouched document:
+   `SWEEP cancelled itself with nothing done and no explanation (waiting at
+   "Select path:")`. Give each stage its own `.vks` line.
 6. **Optional stages hand foreign tokens back.** A command waiting at an
    optional keyword stage (`WORKPLANE XZ` at its `[OFFSET]` prompt)
    finishes on its default when the next token is not one of its keywords,
@@ -141,8 +199,33 @@ pasted, so clear with a bare `SELECT` before the next id-explicit command,
 or pickfirst eats the typed ids), 3D
 `WORKPLANE (WP) EXTRUDE (EXT) REVOLVE (REV) UNION SUBTRACT (SUB)
 INTERSECT (INT) HOLE (HO) SHELL (SH) SPLIT COMBINE SWEEP (SW) LOFT (LO)
-FILLET3D (F3D) CHAMFER3D (CH3D) MOVE3D (M3) ROTATE3D (RO3)`, and the
+FILLET3D (F3D) CHAMFER3D (CH3D) MOVE3D (M3) ROTATE3D (RO3)
+SETCOLOR TRANSPARENCY (TRANS)`, and the
 index-addressed set in §3.
+
+### 2b. Coloring solids headlessly: SETCOLOR
+
+`SETCOLOR <ids> <#RRGGBB|name> [alpha]` styles entities for 3D output —
+the colour and alpha land in the entity JSON (`color`/`transparency`),
+which the .vkd persists, the 3D viewer honours, and the STEP writer turns
+into STYLED_ITEM/COLOUR_RGB (the same path §"STEP couleurs" uses). alpha
+is 0-100 percent TRANSPARENT (Enter = opaque, 2D entities have no alpha
+channel and are ignored for it). Names: `black white red green blue
+yellow cyan magenta gray/orange`. Pickfirst works: `SELECT 3` then bare
+`SETCOLOR red 50`. A bad colour refuses with the accepted forms in the
+message. Both channels (verified):
+
+```sh
+$CLI new --exec "RECT 0,0 40,30" --exec "EXTRUDE 10 1" \
+         --exec "SETCOLOR 2 #E8AD23 30" --save-as colored.vkd
+#   messages: [..., "1 entity(ies) recoloured (#e8ad23), 30% alpha"]
+$CLI open colored.vkd --exec "SETCOLOR 2 red"      # named, alpha kept
+$CLI open colored.vkd --exec "SELECT 2" --exec "SETCOLOR blue 50"  # pickfirst
+$CLI open colored.vkd --exec "SETCOLOR 2 notacolor"
+#   ok:true BUT messages: ["bad colour \"NOTACOLOR\" — use #RRGGBB ..."]
+```
+
+(TRANSPARENCY remains the selection-based sibling: `TRANS <pct> <ids>`.)
 
 ### 2a. Starting a blank 3D project: WORKPLANE plane → SKETCH → draw → EXTRUDE
 
@@ -325,6 +408,16 @@ Never trust a mutation you did not observe. After each step:
    "file":"part.vkd"}}
    ```
 
+   Trust `describe` (the LIVE field) over `query entities` for an
+   entity's component name: `query entities` serializes the RAW entity
+   JSON including the extra bag, so a script-built file can show a
+   top-level `component` there that the entity itself never carried
+   (issue #9 — the STEP writer reads the live field, and used to stamp
+   `SOLID`/`SHELL`/`COMPOUND` auto-names as a result). Both levels are
+   now accepted at load (top-level name adopted only when the canonical
+   `geom.component` is empty), so a fresh `describe` after `open` is the
+   verdict that matches what an export will write.
+
    (The 1e-7 bbox fringe is the OCCT `Bnd_Box` gap — the text view rounds
    it away; treat it as exact-zero when matching.)
 1. **Counts and bounds** — `$CLI query part.vkd --bounds` offline, or
@@ -480,6 +573,119 @@ an assembly exploded across the scene).
   `{"ok":true,...}` with the explanation only in `messages`
   (e.g. `"that id is not a solid"`). Always check `messages`; in
   `gui-smoke.sh` see how every `gexec` is followed by a state assertion.
+  Since issue #12, a command that cancels itself while saying NOTHING is a
+  hard error in headless (`--exec`/`--run`) mode instead of a silent
+  `ok:true`: the message names the command, the prompt it died at, and the
+  cure (`.vks` script). `SWEEP 1 2` — two selection stages fed on one line
+  — is the canonical case (§2 rule 5); the interactive GUI stays silent,
+  because there a cancellation is the user's own Escape.
+- **Building a TUBE (a round bar along a path): SWEEP, not a hand-rolled
+  mesh.** `CIRCLE <centre> <radius>` for the section, then a `LINE`/`ARC`/
+  `PLINE` for the spine, then a two-line `SWEEP` script (§2 rule 5). This is
+  native and exact — no STL, no MESH2SOLID, no third-party mesh library.
+  Verified, r=1.4 along a 50 mm line:
+
+  ```sh
+  printf 'SWEEP\n1\n2\n' > sw.vks     # 1 = profile (circle), 2 = path (line)
+  $CLI new --exec "CIRCLE 0,0 1.4" --exec "LINE 0,0 0,50" \
+           --run sw.vks --exec "DESCRIBE" --save-as tube.vkd
+  #   "solid 3: volume=307.9 mm3 … bbox=(-1.4,0.0,-1.4)-(1.4,50.0,1.4)"
+  #   pi*r^2*L = pi*1.4^2*50 = 307.88 mm3 — the section area times the length.
+  ```
+
+  A curved spine works the same way (`ARC cx,cy mx,my ex,ey` or a
+  multi-segment `PLINE`), and the spine may sit on a `WORKPLANE`. A profile
+  that does not touch the spine start still sweeps (the section is carried
+  along the path). `SWEEP` accepts `LINE ARC PLINE` spines only — a `SPLINE`
+  or a CLOSED polyline refuses by name ("no path geometry (need
+  lines/arcs/polyline)", "path is not a single chain"). Sanity-check the
+  result with `DESCRIBE`: for a tube, `volume ≈ pi*r^2*L` and the bbox is
+  the spine's plus `r` on each side — a tube that comes back with a tiny
+  volume and a huge bbox is a DISC, i.e. the section was read as the wrong
+  thing.
+
+  **A spine with SHARP CORNERS is supported, and now really keeps every
+  leg** (issue #13). A multi-segment `PLINE` (the reporters' anatomical
+  markers) used to come back with roughly HALF its material: before the
+  fix, `0,0 → 0,25 → 25,25` with r=1.4 measured `volume=153.9` out of a
+  nominal 307.9 (exactly 50 %), a 4-leg staircase 147.8 out of 295.6, and
+  the shape was nonetheless reported `ok:true` as a normal success. The
+  cause was OCCT's `BRepOffsetAPI_MakePipe`: over a spine whose direction
+  breaks it builds a shape `BRepCheck` calls valid and whose shell is
+  closed, holding only the FIRST leg. `SWEEP` now splits the spine at every
+  direction break, sweeps one tangent-continuous leg at a time and fuses
+  them — verified 304.2 (98.8 %) on the 2-leg corner, 284.6 (96.3 %) on a
+  4 × 12 mm staircase and 454.5 (98.4 %) on a 3 × 25 mm one, while a
+  straight or single-arc spine is untouched (307.9 / 100 %). Faithful sweeps
+  of a corner fall a few percent short of `pi*r^2*L` because the elbow is
+  trimmed, not filled; what matters is the order of magnitude:
+
+  ```sh
+  $CLI new --exec "CIRCLE 0,0 1.4" --exec "PLINE 0,0 0,25 25,25" \
+           --run sw.vks --exec "DESCRIBE" --save-as elbow.vkd
+  #   "solid 3: volume=304.2 mm3 … bbox=(-1.4,0.0,-1.4)-(26.4,25.0,1.4)"
+  #   NOT 153.9 — a 50 % tube means the sweep stopped at the first corner.
+  ```
+
+  The old 50 % signature is still the diagnostic to keep in mind: if a
+  cornered tube returns almost exactly half of `pi*r^2*L`, check that the
+  `PLINE` really is a single chain (a disconnected spine refuses by name)
+  and that every segment is `LINE`/`ARC`.
+- **If you DO build meshes outside VikiCAD, watch the argument order.**
+  The `manifold3d` Python wrapper is
+  `Manifold.cylinder(height, radius_low, radius_high=-1, circular_segments=0,
+  center=False)` — the FIRST argument is the HEIGHT (the Z extent), the
+  second the radius. Writing the visually natural `cylinder(radius, length)`
+  builds a huge flat disc instead of a tube: the reporter's r=1.4 × 85 mm
+  groove tubes came out as 100 mm discs 1.4 mm thick, i.e. 30-60× oversized
+  blobs, and only a numeric check caught it. Same family of trap in
+  mesh helpers that take `(radius, height)`. This bites a hand-rolled
+  generator, not VikiCAD — and inside VikiCAD the answer is the bullet
+  above: SWEEP builds the tube directly, so there is nothing to export to
+  Python in the first place.
+- **`Manifold.rotate` does NOT align an axis — use `Manifold.transform`
+  (issue #13).** The other half of the same mesh-generator story. The
+  `manifold3d` wrapper's `rotate(v: Doublex3)` takes **Euler angles in
+  degrees**, applied in `x-y-z` order ("*From the global reference frame, a
+  model will be rotated in x-y-z order*" — its own docstring), NOT an
+  axis-angle rotation. Handing it the natural Rodrigues vector
+  `axis × angle_deg` therefore aligns the part only when the rotation
+  happens to be a single-axis one; the general case drifts. Measured here
+  (fit of the resulting cylinder's own axis, mesh covariance) on a
+  `Manifold.cylinder(20, 1.4, 1.4, 32, center=True)`:
+
+  | target direction | error with `rotate(axis*angle)` | error with `transform(3x4)` |
+  |---|---|---|
+  | pure YZ-plane polar angles (1…179°) | 0.0000° | 0.0000° |
+  | `[1,-2,3]` normalized | 1.7801° | 0.0043° |
+  | `[0.3,-0.7,0.65]` | 3.9045° | 0.0000° |
+  | `[1,1,1]` normalized | 6.0905° | 0.0000° |
+  | `[-2,1,1]` normalized | **6.7051°** | 0.0008° |
+
+  A 6.7° misalignment on a 50 mm segment displaces the end disc sideways by
+  `50·sin(6.7°) ≈ 5.8 mm` — half a radius and more, hence the "renflements
+  aux coudes" (bulges at the elbows) and the ~150 % delivered volume the
+  reporter measured. The cure is a manual orthonormal basis in a 3×4
+  matrix, exactly as reported:
+
+  ```py
+  v = seg / np.linalg.norm(seg)                 # the direction to align onto
+  seed = [0,0,1] if abs(v[2]) < 0.9 else [1,0,0]
+  u = np.cross(seed, v); u /= np.linalg.norm(u)  # 1st basis vector
+  w = np.cross(v, u)                             # 2nd (+Z maps to v)
+  m = np.zeros((3, 4))
+  m[:, 0], m[:, 1], m[:, 2] = u, w, v            # rotation
+  m[:, 3] = midpoint                             # translation
+  piece = Manifold.cylinder(dist, r, r, sections, center=True).transform(m)
+  ```
+
+  This is a trap in a THIRD-PARTY library, not in VikiCAD — but it is the
+  trap that produced issue #13's report, and inside VikiCAD the answer
+  stays the SWEEP bullet above. If you must orient one 3D part onto a
+  direction (also true of OCCT's own `gp_Trsf::SetRotation(gp_Ax1, angle)`,
+  which `ROTATE3D` uses), prefer building the basis and setting a
+  `gp_Quaternion`/matrix over composing single-axis rotations.
+
 - **DWG goes both ways, through LibreDWG.** Import: `$CLI import file.dwg
   --save-as out.vkd` (R14–2013 natively, 2018+ via the `dwg2dxf` fallback).
   Export: `$CLI export part.vkd out.dwg` (r2000) shells out to `dxf2dwg` —
@@ -515,6 +721,19 @@ an assembly exploded across the scene).
   `.top/.bot/.smt/.smb/.sst/.ssb/.spt/.spb` map to their kit roles. If a
   kit still skips a layer, read the `skipped` array — it names the file
   and the reason.
+- **One routing for every open channel (issue #11).** The offline `open`
+  verb, the IPC `open` method and the GUI's File>Open all go through the
+  SAME dispatch: the file's extension picks the importer, the fallback for
+  an unrecognised extension is the native store. Before #11 the CLI `open`
+  was native-store-only (`open file.stl` died with *not a VikiCAD file (no
+  entities table)* while `import file.stl` and the GUI took the very same
+  file), which is a trap when an agent reaches for `open` out of habit.
+  So `$CLI open file.stl --save-as out.vkd` and `$CLI import file.stl
+  --save-as out.vkd` now produce the SAME document; `import` remains the
+  explicit verb, `open` is the "just take this file" one. Read the reply's
+  `dispatch` field when you need to know which arm ran. `--save` is
+  REFUSED on an imported document (it would overwrite the SOURCE file with
+  a `.vkd` payload) — name `--save-as OUT.vkd`.
 - **An imported STL is a MESH, not a solid.** It arrives as one face carrying
   a triangulation and no surface — enough to view, measure, place
   (`MOVE3D`/`ROTATE3D`), section and re-export, but booleans, fillets and
@@ -524,6 +743,25 @@ an assembly exploded across the scene).
   because sewing 50 k cost 39 s and 800 MB here, and the result is faceted
   either way. Both dialects are detected by content — a binary STL whose
   80-byte header happens to start with the word `solid` does not fool it.
+  The sewn result never carries anti-material: mesh winding is arbitrary (a
+  naive union of `trimesh` solids often exports inward-facing triangles), so
+  every closed shell is checked and flipped outward when its signed volume
+  comes out negative. A mesh may also hold SEVERAL bodies — a concatenated
+  union sews into disjoint closed shells sharing no vertex — so the report
+  counts them instead of calling the whole thing an "open shell", and one
+  shape with 24 shells yields 24 solids:
+  `solid 1: 5992 triangles sewn into 5992 faces (24 closed solids)`.
+  A mesh with real holes keeps those as shells and still converts the rest
+  (nothing is dropped), then the report reads e.g. `(2 closed solids, 1 open
+  shell)`. The reply names the flip when one happened:
+  `  1 shell(s) had inward-facing normals — reoriented so the volume comes
+  out positive` — a positive volume is guaranteed, not silently fudged.
+  **STEP export of a mesh loses the geometry silently** (the XCAF writer
+  emits an EMPTY `MANIFOLD_SURFACE_SHAPE_REPRESENTATION` for a surface-less
+  face) — which is why every STL import now warns: `import` returns a
+  `warnings` array, the GUI history and `insertstep` print the same line
+  ("...STEP export of a mesh writes no geometry — run MESH2SOLID <id>
+  first"). Heed it before shipping a STEP of a downloaded part.
 - **The unsaved-changes prompt is a MOUSE-only thing.** The GUI asks
   Save/Discard/Cancel on window close, New, Open and imports when the
   document is dirty — but the IPC `open` verb replaces the document with NO
